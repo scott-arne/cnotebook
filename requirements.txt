@@ -1,0 +1,4 @@
+pandas
+oepandas>=1.3.0
+openeye-toolkits
+

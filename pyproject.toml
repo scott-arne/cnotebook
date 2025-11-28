@@ -1,0 +1,102 @@
+# Packaging configuration file for cnotebook
+# ----------------------------------------------------------------------------------------------------------------------
+#   Guide: https://packaging.python.org/en/latest/guides/writing-pyproject-toml/
+#   Spec:  https://packaging.python.org/en/latest/specifications/pyproject-toml/
+
+
+# Choosing a build backend:
+# https://packaging.python.org/en/latest/tutorials/packaging-projects/#choosing-a-build-backend
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+
+# Project name (how users will pip install this project)
+name = "cnotebook"
+
+# Dynamic variables that are populated from other standard locations
+dynamic = ["version", "dependencies"]
+
+# One-line description or tagline
+description = "Chemistry visualization in Jupyter Notebooks with the OpenEye Toolkits"
+
+# Longer description or project README file
+# https://packaging.python.org/specifications/core-metadata/#description-optional
+readme = "README.md"
+
+# Specify which Python versions you support (enforced by pip)
+# https://packaging.python.org/guides/distributing-packages-using-setuptools/#python-requires
+requires-python = ">=3.10"
+
+# This is either text indicating the license for the distribution, or a file
+# that contains the license.
+# https://packaging.python.org/en/latest/specifications/core-metadata/#license
+license = {text = "MIT License"}
+
+# Search keywords
+keywords = ["science"]
+
+# Project authors and contact information
+authors = [
+    {name = "Scott Arne Johnson", email = "scott.arne.johnson@gmail.com" }
+]
+
+# Classifiers help users find your project by categorizing it
+# https://pypi.org/classifiers/
+classifiers = [
+    # How mature is this project? Common values are
+    #   3 - Alpha
+    #   4 - Beta
+    #   5 - Production/Stable
+    "Development Status :: 5 - Production/Stable",
+
+    # Python versions that are supported (not enforced by pip)
+    "Programming Language :: Python :: 3 :: Only"
+]
+
+# Additional groups of dependencies
+# https://packaging.python.org/en/latest/specifications/dependency-specifiers/#extras
+[project.optional-dependencies]
+dev = ["invoke", "build", "pytest"]
+test = ["pytest", "pytest-cov"]
+
+# ----------------------------------------------------------------------------------------
+# These configurations are specific to the `setuptools` build backend
+# ----------------------------------------------------------------------------------------
+
+[tool.setuptools.packages.find]
+
+# Indicate the name of our package
+include = ["cnotebook*"]
+
+# Exclude any test directory
+exclude = ["*test*"]
+
+
+[tool.setuptools.dynamic]
+
+# Get the version from a "single source of truth"
+version = {attr = "cnotebook.__version__"}
+
+# Package dependencies (these will be installed by pip)
+# https://packaging.python.org/discussions/install-requires-vs-requirements/
+dependencies = {file = ["requirements.txt"]}
+
+# ----------------------------------------------------------------------------------------
+# Pytest configuration
+# ----------------------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

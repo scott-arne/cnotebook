@@ -1,0 +1,12 @@
+0000000000000000000000000000000000000000 a81c2dc433153928fb2eb6fee7651273425c87b1 Scott Arne Johnson <scott.johnson@bms.com> 1731448747 -0800	clone: from https://scsgit.rdcloud.bms.com/CADD/cnotebook.git
+a81c2dc433153928fb2eb6fee7651273425c87b1 2a2189d0be04276bac227602c6d89ae6186071b3 Scott Arne Johnson <scott.johnson@bms.com> 1738342645 -0800	commit: Added CNotebookContext.title to allow hiding molecule titles
+2a2189d0be04276bac227602c6d89ae6186071b3 d903903d6d902ab809222ee3c470dc3d0bff23ee Scott Arne Johnson <scott.johnson@bms.com> 1738342854 -0800	commit: Upgraded to pyproject.toml
+d903903d6d902ab809222ee3c470dc3d0bff23ee 33e35a1433c76a676ffd1e6443828382299f642d Scott Arne Johnson <scott.johnson@bms.com> 1738360726 -0800	commit: Minor bug fixes. OEScale_AutoScale will now produce an svg that is not wrapped in a <div>
+33e35a1433c76a676ffd1e6443828382299f642d d336e32561146c2d157799d42bde89508e55795c Scott Arne Johnson <scott.johnson@bms.com> 1738361279 -0800	commit: Added requirements.txt
+d336e32561146c2d157799d42bde89508e55795c 137291099155b379779f808992ad14df3d7a1052 Scott Arne Johnson <scott.johnson@bms.com> 1738361965 -0800	commit: Updated fingerprint similarity example
+137291099155b379779f808992ad14df3d7a1052 1d8f7a7735441f8a05c6c8680c66493ef5024688 Scott Arne Johnson <scott.johnson@bms.com> 1741194383 -0700	commit: Minor fix to render_molecule_grid where it would change the coordinates of the input molecules
+1d8f7a7735441f8a05c6c8680c66493ef5024688 a8c5567e5883ee11cd62f2d23b217d1b56b818b6 Scott Arne Johnson <scott.johnson@bms.com> 1742335185 -0700	commit: Fixed an issue where cnotebook would modify the original molecules while rendering. Everything happens on a copy of the DataFrame now.
+a8c5567e5883ee11cd62f2d23b217d1b56b818b6 ad6869a0496f1c58eb50622895f2a1fd55ba6845 Scott Arne Johnson <scott.johnson@bms.com> 1742347237 -0700	commit: Minor fixes to index issues with slicing and depiction
+ad6869a0496f1c58eb50622895f2a1fd55ba6845 4659095d2fb07ddabd9e7ec116f6c45bf22056f0 Scott Arne Johnson <scott.johnson@bms.com> 1754007710 -0700	commit: Initial Marimo support
+4659095d2fb07ddabd9e7ec116f6c45bf22056f0 369c843da90aaacf5b110300231f9e5d95cd8961 Scott Arne Johnson <scott.johnson@bms.com> 1757737662 -0400	commit: - Migrated to pytest
+369c843da90aaacf5b110300231f9e5d95cd8961 ded985a02cdce3fffbac640612e9ce953ccd79e1 Scott Arne Johnson <scott.johnson@bms.com> 1757737916 -0400	commit: Updated README.md
