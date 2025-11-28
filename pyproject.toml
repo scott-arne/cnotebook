@@ -36,24 +36,60 @@ requires-python = ">=3.10"
 license = {text = "MIT License"}
 
 # Search keywords
-keywords = ["science"]
+keywords = [
+    "chemistry",
+    "cheminformatics",
+    "computational-chemistry",
+    "molecular-visualization",
+    "jupyter",
+    "marimo",
+    "openeye",
+    "scientific-computing"
+]
 
 # Project authors and contact information
 authors = [
     {name = "Scott Arne Johnson", email = "scott.arne.johnson@gmail.com" }
 ]
 
+# Project URLs
+[project.urls]
+"Homepage" = "https://github.com/[username]/cnotebook"
+"Bug Reports" = "https://github.com/[username]/cnotebook/issues"
+"Source" = "https://github.com/[username]/cnotebook"
+"Documentation" = "https://github.com/[username]/cnotebook#readme"
+"Changelog" = "https://github.com/[username]/cnotebook/blob/master/CHANGELOG.md"
+
 # Classifiers help users find your project by categorizing it
 # https://pypi.org/classifiers/
 classifiers = [
-    # How mature is this project? Common values are
-    #   3 - Alpha
-    #   4 - Beta
-    #   5 - Production/Stable
+    # Development status
     "Development Status :: 5 - Production/Stable",
 
-    # Python versions that are supported (not enforced by pip)
-    "Programming Language :: Python :: 3 :: Only"
+    # Intended audience
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+
+    # License
+    "License :: OSI Approved :: MIT License",
+
+    # Topic
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Visualization",
+
+    # Python versions
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+
+    # Operating systems
+    "Operating System :: OS Independent",
+
+    # Environment
+    "Framework :: Jupyter",
+    "Framework :: IPython"
 ]
 
 # Additional groups of dependencies

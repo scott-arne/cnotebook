@@ -64,3 +64,4 @@ target/
 # Mac Stuff
 .DS_Store
 /openeye/
+.git_backup/
