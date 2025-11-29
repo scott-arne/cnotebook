@@ -31,10 +31,10 @@ def create_img_tag(
     if image_mime_type == "image/svg+xml":
         if wrap_svg:
             return '<div style=\'width:{}px;max-width:{}px;height:{}px;max-height:{}px\'>\n\t{}\n</div>'.format(
-                width,
-                width,
-                height,
-                height,
+                int(width),
+                int(width),
+                int(height),
+                int(height),
                 image_bytes.decode("utf-8")
             )
         else:
@@ -43,10 +43,10 @@ def create_img_tag(
     return '<img src=\'data:{};base64,{}\' style=\'width:{}px;max-width:{}px;height:{}px;max-height:{}px\' />'.format(
         image_mime_type,
         base64.b64encode(image_bytes).decode("utf-8"),
-        width,
-        width,
-        height,
-        height
+        int(width),
+        int(width),
+        int(height),
+        int(height)
     )
 
 
@@ -63,14 +63,15 @@ def oedisp_to_html(
     :return: HTML image tag
     """
     # Convert the display object to an <img> tag
-    oss = oechem.oeosstream()
-    oedepict.OERenderMolecule(oss, ctx.image_format, disp)
+    image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
+    oedepict.OERenderMolecule(image, disp)
+    image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
 
     return create_img_tag(
         disp.GetWidth(),
         disp.GetHeight(),
         image_mime_type=ctx.image_mime_type,
-        image_bytes=oss.str(),
+        image_bytes=image_bytes,
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
     )
 
@@ -145,9 +146,9 @@ def oemol_to_disp(
     """
     # Only recalculate coordinates if we don't have a 2D structure
     if mol.GetDimension() == 2:
-        oedepict.OEPrepareDepiction(mol, False, True)
+        oedepict.OEPrepareDepiction(mol, False)
     else:
-        oedepict.OEPrepareDepiction(mol, True, True)
+        oedepict.OEPrepareDepiction(mol, True)
 
     return ctx.create_molecule_display(mol)
 
@@ -187,12 +188,11 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext) -> str:
     :return: HTML string
     """
     # Convert the image to an <img> tag
-    oss = oechem.oeosstream()
-    oedepict.OEWriteImage(oss, ctx.image_format, image)
+    image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
     return create_img_tag(
         image.GetWidth(),
         image.GetHeight(),
         image_mime_type=ctx.image_mime_type,
-        image_bytes=oss.str(),
+        image_bytes=image_bytes,
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
     )

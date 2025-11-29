@@ -70,11 +70,13 @@ def render_molecule_grid(
 
     # Make a copy of the molecules (so we do not modify them)
     # We can use OEGraphMol here because we don't care about conformers
-    mols = [oechem.OEGraphMol(mol) for mol in mols]
+    # Filter out None values first
+    mols = [oechem.OEGraphMol(mol) for mol in mols if mol is not None]
 
     if len(mols) == 0:
         log.warning("No molecules or display objects to render into a grid")
-        return oedepict.OEImage(0, 0)
+        # Return a minimal 1x1 image instead of 0x0 to avoid OpenEye bug
+        return oedepict.OEImage(1, 1)
 
     # Get the subset of molecules that will actually be displayed
     valid = []
@@ -92,7 +94,8 @@ def render_molecule_grid(
 
     if len(valid) == 0:
         log.warning("No valid molecules or display objects to render into a grid")
-        return oedepict.OEImage(0, 0)
+        # Return a minimal 1x1 image instead of 0x0 to avoid OpenEye bug
+        return oedepict.OEImage(1, 1)
 
     # ---------------------------------------------------------------
     # For highlighting SMARTS

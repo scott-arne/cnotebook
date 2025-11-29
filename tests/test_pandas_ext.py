@@ -543,12 +543,12 @@ class TestExistingFunctionality:
     def test_render_molecule_grid_empty_list(self):
         """Test rendering empty molecule list"""
         result = cnotebook.render_molecule_grid([])
-        
+
         from openeye import oedepict
         assert isinstance(result, oedepict.OEImage)
-        # Should be a 0x0 image
-        assert result.GetWidth() == 0
-        assert result.GetHeight() == 0
+        # Should be a minimal 1x1 image (0x0 causes OpenEye to hang)
+        assert result.GetWidth() == 1
+        assert result.GetHeight() == 1
     
     def test_render_molecule_grid_single_molecule(self):
         """Test rendering single molecule"""

@@ -30,7 +30,7 @@ class TestCreateImgTag:
             wrap_svg=True
         )
         
-        expected = ('<div style=\'width:300.0px;max-width:300.0px;height:200.0px;max-height:200.0px\'>\n'
+        expected = ('<div style=\'width:300px;max-width:300px;height:200px;max-height:200px\'>\n'
                    '\t<svg>test</svg>\n'
                    '</div>')
         assert result == expected
@@ -63,7 +63,7 @@ class TestCreateImgTag:
         
         expected_b64 = base64.b64encode(png_bytes).decode("utf-8")
         expected = (f'<img src=\'data:image/png;base64,{expected_b64}\' '
-                   'style=\'width:300.0px;max-width:300.0px;height:200.0px;max-height:200.0px\' />')
+                   'style=\'width:300px;max-width:300px;height:200px;max-height:200px\' />')
         assert result == expected
     
     def test_create_img_tag_jpeg(self):
@@ -79,27 +79,39 @@ class TestCreateImgTag:
         
         expected_b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
         expected = (f'<img src=\'data:image/jpeg;base64,{expected_b64}\' '
-                   'style=\'width:400.0px;max-width:400.0px;height:300.0px;max-height:300.0px\' />')
+                   'style=\'width:400px;max-width:400px;height:300px;max-height:300px\' />')
         assert result == expected
 
 
 class TestOedispToHtml:
     """Test the oedisp_to_html function"""
-    
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('openeye.oedepict.OERenderMolecule')
+    @patch('openeye.oedepict.OEImage')
     @patch('cnotebook.render.create_img_tag')
-    def test_oedisp_to_html_basic(self, mock_create_img):
+    def test_oedisp_to_html_basic(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
         """Test converting OE2DMolDisplay to HTML - basic functionality"""
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
         mock_disp.GetWidth.return_value = 300
         mock_disp.GetHeight.return_value = 200
-        
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+        mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img>test</img>'
-        
+
         ctx = CNotebookContext(image_format="png", structure_scale=oedepict.OEScale_Default)
-        
+
         # Test that the function exists and can be called
         result = oedisp_to_html(mock_disp, ctx=ctx)
-        
+
+        # Should create OEImage with correct dimensions
+        mock_oeimage.assert_called_once_with(300, 200)
+        # Should render molecule to image
+        mock_render.assert_called_once_with(mock_image, mock_disp)
+        # Should write image to string
+        mock_write_image.assert_called_once_with(ctx.image_format, mock_image)
         # Should call create_img_tag
         mock_create_img.assert_called_once()
         assert result == '<img>test</img>'
@@ -143,33 +155,39 @@ class TestRenderEmptyMessage:
 
 class TestOemolToDisp:
     """Test the oemol_to_disp function - basic functionality"""
-    
-    def test_oemol_to_disp_2d_molecule(self):
+
+    @patch('openeye.oedepict.OEPrepareDepiction')
+    def test_oemol_to_disp_2d_molecule(self, mock_prepare):
         """Test converting 2D molecule to display"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.GetDimension.return_value = 2
-        
+
         ctx = MagicMock(spec=CNotebookContext)
         mock_disp = MagicMock()
         ctx.create_molecule_display.return_value = mock_disp
-        
+
         result = oemol_to_disp(mock_mol, ctx=ctx)
-        
+
+        # Should call OEPrepareDepiction with False for 2D molecules
+        mock_prepare.assert_called_once_with(mock_mol, False)
         # Should call create_molecule_display
         ctx.create_molecule_display.assert_called_once_with(mock_mol)
         assert result == mock_disp
-    
-    def test_oemol_to_disp_3d_molecule(self):
+
+    @patch('openeye.oedepict.OEPrepareDepiction')
+    def test_oemol_to_disp_3d_molecule(self, mock_prepare):
         """Test converting 3D molecule to display"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.GetDimension.return_value = 3
-        
+
         ctx = MagicMock(spec=CNotebookContext)
         mock_disp = MagicMock()
         ctx.create_molecule_display.return_value = mock_disp
-        
+
         result = oemol_to_disp(mock_mol, ctx=ctx)
-        
+
+        # Should call OEPrepareDepiction with True for 3D molecules
+        mock_prepare.assert_called_once_with(mock_mol, True)
         # Should call create_molecule_display
         ctx.create_molecule_display.assert_called_once_with(mock_mol)
         assert result == mock_disp
@@ -233,20 +251,24 @@ class TestOemolToHtml:
 
 class TestOeimageToHtml:
     """Test the oeimage_to_html function"""
-    
+
+    @patch('openeye.oedepict.OEWriteImageToString')
     @patch('cnotebook.render.create_img_tag')
-    def test_oeimage_to_html_basic(self, mock_create_img):
+    def test_oeimage_to_html_basic(self, mock_create_img, mock_write_image):
         """Test converting OEImage to HTML"""
         mock_image = MagicMock(spec=oedepict.OEImage)
         mock_image.GetWidth.return_value = 400
         mock_image.GetHeight.return_value = 300
-        
+
+        mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img>image</img>'
-        
+
         ctx = CNotebookContext(image_format="png", structure_scale=oedepict.OEScale_Default)
-        
+
         result = oeimage_to_html(mock_image, ctx=ctx)
-        
+
+        # Should write image to string
+        mock_write_image.assert_called_once_with(ctx.image_format, mock_image)
         # Should call create_img_tag with correct dimensions
         mock_create_img.assert_called_once()
         call_args = mock_create_img.call_args

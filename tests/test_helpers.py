@@ -113,16 +113,22 @@ class TestRemoveOmegaConformerId:
 
 class TestCreateStructureHighlighter:
     """Test the create_structure_highlighter function"""
-    
+
     def test_create_highlighter_exists(self):
         """Test that create_structure_highlighter function exists"""
         assert callable(create_structure_highlighter)
-    
+
     def test_create_highlighter_basic(self):
         """Test basic functionality without calling OpenEye functions"""
         # Just test that we can create a highlighter and it's callable
         highlighter = create_structure_highlighter("CCO")
         assert callable(highlighter)
+
+    def test_create_highlighter_invalid_type(self):
+        """Test that invalid query type raises TypeError"""
+        with pytest.raises(TypeError) as exc_info:
+            create_structure_highlighter(123)  # Invalid type
+        assert "Cannot create structure highlighter" in str(exc_info.value)
 
 
 class TestIntegration:
