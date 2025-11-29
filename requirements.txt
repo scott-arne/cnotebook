@@ -5,9 +5,8 @@
 pandas>=2.0.0,<3.0.0
 
 # OpenEye pandas integration
-oepandas>=1.3.0
+oepandas>=2.0.0
 
 # OpenEye Toolkits (requires commercial license)
-# Note: Version management handled by OpenEye installer
 openeye-toolkits
 

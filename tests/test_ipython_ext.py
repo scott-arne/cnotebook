@@ -129,6 +129,45 @@ class TestRenderMoleculeGrid:
         assert isinstance(result, oedepict.OEImage)
         assert result.GetWidth() > 0
 
+    def test_render_molecule_grid_with_invalid_and_valid(self):
+        """Test rendering with mix of invalid and valid molecules"""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "CCO")  # valid
+
+        mol2 = oechem.OEGraphMol()  # invalid (empty)
+
+        # Should filter out invalid and render only valid molecule
+        result = render_molecule_grid([mol1, mol2])
+
+        from openeye import oedepict
+        assert isinstance(result, oedepict.OEImage)
+        # Should still render the valid molecule
+        assert result.GetWidth() > 0
+
+    def test_render_molecule_grid_all_invalid(self):
+        """Test rendering with all invalid molecules"""
+        # Create invalid molecules (empty)
+        mol1 = oechem.OEGraphMol()
+        mol2 = oechem.OEGraphMol()
+
+        # All molecules are invalid, should return minimal image
+        result = render_molecule_grid([mol1, mol2])
+
+        from openeye import oedepict
+        assert isinstance(result, oedepict.OEImage)
+        # Should return minimal 1x1 image
+        assert result.GetWidth() == 1
+        assert result.GetHeight() == 1
+
+    def test_render_molecule_grid_invalid_align_type(self):
+        """Test rendering with invalid align parameter"""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "CCO")
+
+        # Pass an invalid align parameter (not bool or OEMolBase)
+        with pytest.raises(TypeError, match="Cannot initialize MCSS alignment reference"):
+            render_molecule_grid([mol1], align="invalid_type")
+
 
 class TestRegisterIpythonFormatters:
     """Test the register_ipython_formatters function"""
