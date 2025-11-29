@@ -333,22 +333,44 @@ class TestOESubSearchAligner:
 
 class TestOEMCSSearchAligner:
     """Test the OEMCSSearchAligner class - basic functionality only"""
-    
+
     def test_validate_method_exists(self):
         """Test that validation method exists"""
         aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
         aligner.mcss = MagicMock()
-        
+
         assert hasattr(aligner, 'validate')
         assert callable(aligner.validate)
-    
+
     def test_alignment_method_exists(self):
         """Test that align method exists"""
         aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
         aligner.mcss = MagicMock()
-        
+
         assert hasattr(aligner, 'align')
         assert callable(aligner.align)
+
+    def test_mcssearch_aligner_with_molecules(self):
+        """Test MCS aligner with real molecules"""
+        # Create molecules
+        ref_mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref_mol, "c1ccccc1")  # benzene
+        oedepict.OEPrepareDepiction(ref_mol)
+
+        target_mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target_mol, "c1ccc(O)cc1")  # phenol
+        oedepict.OEPrepareDepiction(target_mol)
+
+        # Create aligner with explicit func parameter
+        aligner = OEMCSSearchAligner(ref_mol, func="bonds")
+
+        # Test validation
+        result = aligner.validate(target_mol)
+        assert result is True
+
+        # Test alignment
+        result = aligner.align(target_mol)
+        assert result is True
 
 
 class TestOEFingerprintAligner:

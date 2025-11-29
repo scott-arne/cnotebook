@@ -2,6 +2,8 @@ import pytest
 from unittest.mock import MagicMock, patch
 from openeye import oechem
 from cnotebook.marimo_ext import _display_mol
+# Import the other display functions for testing
+import cnotebook.marimo_ext
 
 
 class TestDisplayMol:
@@ -342,3 +344,48 @@ class TestEdgeCases:
         # Should propagate the exception
         with pytest.raises(Exception, match="Copy error"):
             _display_mol(mock_mol)
+
+class TestDisplayDisplay:
+    """Test the _display_display function for Marimo OE2DMolDisplay rendering"""
+
+    @patch('cnotebook.marimo_ext.oedisp_to_html')
+    @patch('cnotebook.marimo_ext.cnotebook_context')
+    def test_display_display_basic(self, mock_context_var, mock_oedisp_to_html):
+        """Test basic display rendering"""
+        from openeye import oedepict
+        
+        mock_ctx = MagicMock()
+        mock_context_var.get.return_value = mock_ctx
+        mock_ctx.copy.return_value = mock_ctx
+        mock_oedisp_to_html.return_value = '<img>display</img>'
+        
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        
+        mime_type, html_content = cnotebook.marimo_ext._display_display(mock_disp)
+        
+        assert mime_type == "text/html"
+        assert html_content == '<img>display</img>'
+        assert mock_ctx.image_format == "png"
+
+
+class TestDisplayImage:
+    """Test the _display_image function for Marimo OEImage rendering"""
+
+    @patch('cnotebook.marimo_ext.oeimage_to_html')
+    @patch('cnotebook.marimo_ext.cnotebook_context')
+    def test_display_image_basic(self, mock_context_var, mock_oeimage_to_html):
+        """Test basic image rendering"""
+        from openeye import oedepict
+        
+        mock_ctx = MagicMock()
+        mock_context_var.get.return_value = mock_ctx
+        mock_ctx.copy.return_value = mock_ctx
+        mock_oeimage_to_html.return_value = '<img>image</img>'
+        
+        mock_img = MagicMock(spec=oedepict.OEImage)
+        
+        mime_type, html_content = cnotebook.marimo_ext._display_image(mock_img)
+        
+        assert mime_type == "text/html"
+        assert html_content == '<img>image</img>'
+        assert mock_ctx.image_format == "png"
