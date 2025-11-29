@@ -216,19 +216,26 @@ class TestCreateDispFormatter:
         assert result == "not_a_display_object"  # Should return unchanged
     
     def test_create_disp_formatter_with_callbacks(self):
-        """Test formatter with callbacks"""
+        """Test formatter with callbacks using real OpenEye objects"""
         ctx = CNotebookContext()
         mock_callback = MagicMock()
         callbacks = [mock_callback]
-        
+
+        # Create a real molecule and display
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        oedepict.OEPrepareDepiction(mol)
+
+        disp = ctx.create_molecule_display(mol)
+
         formatter = create_disp_formatter(callbacks=callbacks, ctx=ctx)
-        
-        # Test that the formatter exists and is callable
-        assert callable(formatter)
-        
-        # Test with a simple non-display object
-        result = formatter("not_a_display_object")
-        assert result == "not_a_display_object"
+        result = formatter(disp)
+
+        # Callback should have been called
+        assert mock_callback.call_count == 1
+        # Should return HTML
+        assert isinstance(result, str)
+        assert len(result) > 0
     
     def test_create_disp_formatter_invalid_display(self):
         """Test formatter with invalid display object"""

@@ -76,6 +76,14 @@ class TestGetAtomMask:
         with pytest.raises(KeyError, match="unknown is not a known OEAtomFPType"):
             get_atom_mask("unknown")
 
+    def test_get_atom_mask_empty_mask_error(self):
+        """Test error when atom mask is None/empty after processing"""
+        # Mock the typemap to return None type initially
+        with patch('cnotebook.align.oegraphsim.OEFPAtomType_None', 0):
+            with patch.dict(atom_fp_typemap, {'none': 0}):
+                with pytest.raises(ValueError, match="No atom fingerprint types configured"):
+                    get_atom_mask("none")
+
 
 class TestGetBondMask:
     """Test the get_bond_mask function"""
@@ -109,6 +117,14 @@ class TestGetBondMask:
         with pytest.raises(KeyError, match="unknown is not a known OEBondFPType"):
             get_bond_mask("unknown")
 
+    def test_get_bond_mask_empty_mask_error(self):
+        """Test error when bond mask is None/empty after processing"""
+        # Mock the typemap to return None type initially
+        with patch('cnotebook.align.oegraphsim.OEFPBondType_None', 0):
+            with patch.dict(bond_fp_typemap, {'none': 0}):
+                with pytest.raises(ValueError, match="No bond fingerprint types configured"):
+                    get_bond_mask("none")
+
 
 class TestFingerprintMaker:
     """Test the fingerprint_maker function - logic only"""
@@ -139,6 +155,60 @@ class TestFingerprintMaker:
                 atom_type=1,
                 bond_type=2
             )
+
+    def test_fingerprint_maker_path(self):
+        """Test path fingerprint creation"""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        maker = fingerprint_maker(
+            fptype="path",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=5,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.GetSize() == 1024
+
+    def test_fingerprint_maker_circular(self):
+        """Test circular fingerprint creation"""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        maker = fingerprint_maker(
+            fptype="circular",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=3,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.GetSize() == 1024
+
+    def test_fingerprint_maker_tree(self):
+        """Test tree fingerprint creation"""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        maker = fingerprint_maker(
+            fptype="tree",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=4,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.GetSize() == 1024
 
 
 class TestAlignerBase:
@@ -199,26 +269,66 @@ class TestAlignerBase:
 
 class TestOESubSearchAligner:
     """Test the OESubSearchAligner class - basic functionality only"""
-    
+
     def test_validate_method_exists(self):
         """Test that validation method exists"""
         aligner = OESubSearchAligner.__new__(OESubSearchAligner)
         aligner.ss = MagicMock()
-        
+
         mock_mol = MagicMock()
         # Just test that the method can be called
         assert hasattr(aligner, 'validate')
         assert callable(aligner.validate)
-    
+
     def test_align_method_exists(self):
         """Test that align method exists"""
         aligner = OESubSearchAligner.__new__(OESubSearchAligner)
         aligner.ss = MagicMock()
         aligner.refmol = None
         aligner.alignment_options = MagicMock()
-        
+
         assert hasattr(aligner, 'align')
         assert callable(aligner.align)
+
+    def test_subsearch_aligner_with_smarts(self):
+        """Test SubSearch aligner with SMARTS pattern"""
+        # Create molecules
+        ref_mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref_mol, "c1ccccc1")  # benzene
+        oedepict.OEPrepareDepiction(ref_mol)  # Prepare 2D coordinates
+
+        target_mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target_mol, "c1ccc(O)cc1")  # phenol
+        oedepict.OEPrepareDepiction(target_mol)  # Prepare 2D coordinates
+
+        # Create aligner with reference molecule
+        aligner = OESubSearchAligner(ref_mol)
+
+        # Test validation
+        assert aligner.validate(target_mol) is True
+
+        # Test alignment
+        result = aligner.align(target_mol)
+        assert result is True
+
+    def test_subsearch_aligner_init_with_oesubsearch(self):
+        """Test SubSearch aligner initialization with OESubSearch"""
+        ss = oechem.OESubSearch("[#6]")  # carbon pattern
+        aligner = OESubSearchAligner(ss)
+
+        # Should have created the aligner
+        assert hasattr(aligner, 'ss')
+        assert hasattr(aligner, 'refmol')
+
+    def test_subsearch_aligner_init_with_oeqmol(self):
+        """Test SubSearch aligner initialization with OEQMol"""
+        ref_mol = oechem.OEQMol()
+        oechem.OESmilesToMol(ref_mol, "CCO")
+
+        aligner = OESubSearchAligner(ref_mol)
+
+        # Should have created the aligner with refmol set
+        assert aligner.refmol is not None
 
 
 class TestOEMCSSearchAligner:
