@@ -155,146 +155,142 @@ class Aligner(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class OESubSearchAligner(Aligner):
-    """
-    2D molecule substructure alignment
-    """
-    def __init__(self, ref: oechem.OESubSearch | oechem.OEMolBase, **_kwargs):
-
-        # Reference molecule with 2D coordinates
-        self.refmol = None
-
-        # In the future, make these configurable
-        self.alignment_options = oedepict.OEAlignmentOptions()
-
-        if isinstance(ref, oechem.OESubSearch):
-            self.ss = oechem.OESubSearch(ref)
-
-        elif isinstance(ref, oechem.OEQMol):
-            self.refmol = ref.CreateCopy()
-            self.ss = oechem.OESubSearch(self.refmol)
-
-        else:
-            self.refmol = oechem.OEQMol(ref)
-            self.refmol.BuildExpressions(oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
-            self.ss = oechem.OESubSearch(self.refmol)
-
-    def validate(self, mol: oechem.OEMolBase) -> bool:
-        """
-        Validate that the molecule has a match to this substructure search
-        :param mol: Molecule to search
-        :return: True if there is a match to this substructure search
-        """
-        oechem.OEPrepareSearch(mol, self.ss)
-        return self.ss.SingleMatch(mol)
-
-    def align(self, mol: oechem.OEMolBase) -> bool:
-        """
-        Align to this substructure trying the following
-
-        1. If we had a reference molecule, then try to maximize the alignment to that reference molecule using the
-           OpenEye multiple aligner (this works VERY WELL even if there are multiple matches to the reference)
-
-        2. Standard aligned depiction, which fails if there are multiple matches to the substructure
-
-        :param mol: Molecule to align
-        :return: True if the alignment was successful
-        """
-        ok = False
-
-        if self.refmol is not None:
-            oechem.OEPrepareSearch(mol, self.ss)
-            ok = oedepict.OEPrepareMultiAlignedDepiction(
-                mol,
-                self.refmol,
-                self.ss.Match(mol)
-            )
-
-        if not ok:
-
-            alignres = oedepict.OEPrepareAlignedDepiction(
-                mol,
-                self.ss,
-                self.alignment_options
-            )
-
-            ok = alignres.IsValid()
-
-        return ok
-
-
-class OEMCSSearchAligner(Aligner):
-    """
-    2D molecule MCS alignment
-    """
-    def __init__(
-            self,
-            ref: oechem.OEMCSSearch | oechem.OEMolBase,
-            *,
-            func: Literal["atoms", "bonds", "atoms_and_cycles", "bonds_and_cycles"] = "bonds_cycles",
-            min_atoms: int = 1,
-            **_kwargs
-    ):
-
-        self.refmol = None
-
-        # In the future, make these configurable
-        self.alignment_options = oedepict.OEAlignmentOptions()
-
-        if isinstance(ref, oechem.OEMCSSearch):
-            self.mcss = oechem.OEMCSSearch(ref)
-
-        else:
-            self.refmol = ref.CreateCopy()
-
-            # Currently just using default parameters
-            self.mcss = oechem.OEMCSSearch(oechem.OEMCSType_Approximate)
-            self.mcss.Init(self.refmol, oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
-
-            if func == "atoms":
-                self.mcss.SetMCSFunc(oechem.OEMCSMaxAtoms())
-            elif func == "bonds":
-                self.mcss.SetMCSFunc(oechem.OEMCSMaxBonds())
-            elif func == "atoms_and_cycles":
-                self.mcss.SetMCSFunc(oechem.OEMCSMaxAtomsCompleteCycles())
-            elif func == "bonds_and_cycles":
-                self.mcss.SetMCSFunc(oechem.OEMCSMaxBondsCompleteCycles())
-            else:
-                raise ValueError(f'Unknown MCS evaluation function name: {func}')
-
-            # Other options
-            self.mcss.SetMinAtoms(min_atoms)
-
-    def validate(self, mol: oechem.OEMolBase) -> bool:
-        """
-        Validate that a maximum common substructure exists in a query molecule (within a threshold)
-        :param mol: Molecule to search
-        :return: True if the molecule contains the maximum common substructure
-        """
-        return self.mcss.SingleMatch(mol)
-
-    def align(self, mol: oechem.OEMolBase) -> bool:
-        ok = False
-
-        if self.refmol is not None:
-
-            ok = oedepict.OEPrepareMultiAlignedDepiction(
-                mol,
-                self.refmol,
-                self.mcss.Match(mol)
-            )
-
-        if not ok:
-
-            alignres = oedepict.OEPrepareAlignedDepiction(
-                mol,
-                self.mcss,
-                self.alignment_options
-            )
-
-            ok = alignres.IsValid()
-
-        return ok
+# FIXME: Bug reported OpenEye on 11/30/2025 regarding using OESubSearch matches in OEPrepareMultiAlignedDepiction
+# class OESubSearchAligner(Aligner):
+#     """
+#     2D molecule substructure alignment
+#     """
+#     def __init__(self, ref: oechem.OESubSearch | oechem.OEMolBase, **_kwargs):
+#
+#         # Reference molecule with 2D coordinates
+#         self.refmol = None
+#
+#         # In the future, make these configurable
+#         self.alignment_options = oedepict.OEAlignmentOptions()
+#
+#         if isinstance(ref, (oechem.OESubSearch, str)):
+#             self.ss = oechem.OESubSearch(ref)
+#
+#         else:
+#             self.refmol = oechem.OEGraphMol(ref)
+#             self.ss = oechem.OESubSearch(self.refmol, oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
+#
+#     def validate(self, mol: oechem.OEMolBase) -> bool:
+#         """
+#         Validate that the molecule has a match to this substructure search
+#         :param mol: Molecule to search
+#         :return: True if there is a match to this substructure search
+#         """
+#         oechem.OEPrepareSearch(mol, self.ss)
+#         return self.ss.SingleMatch(mol)
+#
+#     def align(self, mol: oechem.OEMolBase) -> bool:
+#         """
+#         Align to this substructure trying the following
+#
+#         1. If we had a reference molecule, then try to maximize the alignment to that reference molecule using the
+#            OpenEye multiple aligner (this works VERY WELL even if there are multiple matches to the reference)
+#
+#         2. Standard aligned depiction, which fails if there are multiple matches to the substructure
+#
+#         :param mol: Molecule to align
+#         :return: True if the alignment was successful
+#         """
+#         ok = False
+#
+#         if self.refmol is not None:
+#             oechem.OEPrepareSearch(mol, self.ss)
+#             ok = oedepict.OEPrepareMultiAlignedDepiction(
+#                 mol,
+#                 self.refmol,
+#                 self.ss.Match(mol)
+#             )
+#
+#         if not ok:
+#             alignres = oedepict.OEPrepareAlignedDepiction(
+#                 mol,
+#                 self.ss,
+#                 self.alignment_options
+#             )
+#
+#             ok = alignres.IsValid()
+#
+#         return ok
+#
+#
+# FIXME: Bug reported OpenEye on 11/30/2025 regarding using OEMCSSearch matches in OEPrepareMultiAlignedDepiction
+# class OEMCSSearchAligner(Aligner):
+#     """
+#     2D molecule MCS alignment
+#     """
+#     def __init__(
+#             self,
+#             ref: oechem.OEMCSSearch | oechem.OEMolBase,
+#             *,
+#             func: Literal["atoms", "bonds", "atoms_and_cycles", "bonds_and_cycles"] = "bonds_cycles",
+#             min_atoms: int = 1,
+#             **_kwargs
+#     ):
+#
+#         self.refmol = None
+#
+#         # In the future, make these configurable
+#         self.alignment_options = oedepict.OEAlignmentOptions()
+#
+#         if isinstance(ref, oechem.OEMCSSearch):
+#             self.mcss = oechem.OEMCSSearch(ref)
+#
+#         else:
+#             self.refmol = ref.CreateCopy()
+#
+#             # Currently just using default parameters
+#             self.mcss = oechem.OEMCSSearch(oechem.OEMCSType_Approximate)
+#             self.mcss.Init(self.refmol, oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
+#
+#             if func == "atoms":
+#                 self.mcss.SetMCSFunc(oechem.OEMCSMaxAtoms())
+#             elif func == "bonds":
+#                 self.mcss.SetMCSFunc(oechem.OEMCSMaxBonds())
+#             elif func == "atoms_and_cycles":
+#                 self.mcss.SetMCSFunc(oechem.OEMCSMaxAtomsCompleteCycles())
+#             elif func == "bonds_and_cycles":
+#                 self.mcss.SetMCSFunc(oechem.OEMCSMaxBondsCompleteCycles())
+#             else:
+#                 raise ValueError(f'Unknown MCS evaluation function name: {func}')
+#
+#             # Other options
+#             self.mcss.SetMinAtoms(min_atoms)
+#
+#     def validate(self, mol: oechem.OEMolBase) -> bool:
+#         """
+#         Validate that a maximum common substructure exists in a query molecule (within a threshold)
+#         :param mol: Molecule to search
+#         :return: True if the molecule contains the maximum common substructure
+#         """
+#         return self.mcss.SingleMatch(mol)
+#
+#     def align(self, mol: oechem.OEMolBase) -> bool:
+#         ok = False
+#
+#         if self.refmol is not None:
+#
+#             ok = oedepict.OEPrepareMultiAlignedDepiction(
+#                 mol,
+#                 self.refmol,
+#                 self.mcss.Match(mol)
+#             )
+#
+#         if not ok:
+#
+#             alignres = oedepict.OEPrepareAlignedDepiction(
+#                 mol,
+#                 self.mcss,
+#                 self.alignment_options
+#             )
+#
+#             ok = alignres.IsValid()
+#
+#         return ok
 
 
 class OEFingerprintAligner(Aligner):
@@ -355,76 +351,40 @@ class OEFingerprintAligner(Aligner):
 
 # Substructure aligners
 _ALIGNERS = {
-    "substructure": OESubSearchAligner,
+    # "substructure": OESubSearchAligner,
     "fingerprint": OEFingerprintAligner,
-    "mcss": OEMCSSearchAligner
+    # "mcss": OEMCSSearchAligner
 }
 
 
 def create_aligner(
-        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase,
-        method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] = None,
+        ref: oechem.OEMolBase,
+        method: Literal["fp", "fingerprint"] = None,
         **kwargs
 ) -> Aligner:
     """
-    Add a depiction reference to the rendering current context
-    :param ref: Alignment reference
-    :param method: Alignment method
-    :param kwargs: Keyword arguments for the aligner
+    Create an aligner for the given reference molecule.
+
+    Note: Only fingerprint alignment is currently supported. Substructure and MCS aligners
+    are disabled due to OpenEye bugs reported on 11/30/2025.
+
+    :param ref: Alignment reference molecule
+    :param method: Alignment method (only "fp" or "fingerprint" supported)
+    :param kwargs: Keyword arguments for the OEFingerprintAligner
+    :return: Configured aligner instance
     """
     # Normalize the method
     if method is not None:
         _method = method.lower()
 
-        if _method in ("substructure", "ss"):
-            method = "substructure"
-
-        elif _method in ("fingerprint", "fp"):
+        if _method in ("fingerprint", "fp"):
             method = "fingerprint"
-
-        elif _method == "mcss":
-            method = "mcss"
-
         else:
-            raise ValueError(f'Unknown depiction alignment method: {method}')
+            raise ValueError(f'Unknown depiction alignment method: {method}. Only "fingerprint"/"fp" is currently supported.')
 
-    # -----------------------------------------------------------------------------
-    # Cases where we do not care about the method, because it can only be one thing
-    # -----------------------------------------------------------------------------
-    if isinstance(ref, oechem.OESubSearch):
-
-        if method is not None and method != "ss":
-            log.warning("Ignoring requested alignment method %s for oechem.OESubSearch object", method)
-
-        return OESubSearchAligner(ref, **kwargs)
-
-    elif isinstance(ref, oechem.OEMCSSearch):
-
-        if method is not None and method != "mcss":
-            log.warning("Ignoring requested alignment method %s for oechem.OEMCSSearch object", method)
-
-        return OEMCSSearchAligner(ref, **kwargs)
-
-    # -----------------------------------------------------------------------------
-    # Ambiguous cases
-    # -----------------------------------------------------------------------------
-
-    elif isinstance(ref, oechem.OEQMol):
-
-        if method is not None:
-            return _ALIGNERS[method](ref, **kwargs)
-
-        # Default is substructure search with an OEQMol
-        else:
-            log.debug("Using default substructure aligner for oechem.OEQMol alignment reference")
-            return OESubSearchAligner(ref, **kwargs)
-
-    elif isinstance(ref, oechem.OEMolBase):
-
-        if method is not None:
-            return _ALIGNERS[method](ref, **kwargs)
-
-        # Default is fingerprint aligner
-        else:
-            log.debug("Using default fingerprint aligner for oechem.OEMolBase alignment reference")
-            return OEFingerprintAligner(ref, **kwargs)
+    # Only fingerprint aligner is currently available
+    if isinstance(ref, oechem.OEMolBase):
+        log.debug("Using fingerprint aligner for oechem.OEMolBase alignment reference")
+        return OEFingerprintAligner(ref, **kwargs)
+    else:
+        raise TypeError(f'Unsupported alignment reference type: {type(ref)}. Only oechem.OEMolBase is currently supported.')

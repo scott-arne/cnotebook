@@ -6,8 +6,6 @@ from cnotebook.align import (
     get_bond_mask,
     fingerprint_maker,
     Aligner,
-    OESubSearchAligner,
-    OEMCSSearchAligner,
     OEFingerprintAligner,
     create_aligner,
     atom_fp_typemap,
@@ -267,110 +265,112 @@ class TestAlignerBase:
         assert result is False
 
 
-class TestOESubSearchAligner:
-    """Test the OESubSearchAligner class - basic functionality only"""
-
-    def test_validate_method_exists(self):
-        """Test that validation method exists"""
-        aligner = OESubSearchAligner.__new__(OESubSearchAligner)
-        aligner.ss = MagicMock()
-
-        mock_mol = MagicMock()
-        # Just test that the method can be called
-        assert hasattr(aligner, 'validate')
-        assert callable(aligner.validate)
-
-    def test_align_method_exists(self):
-        """Test that align method exists"""
-        aligner = OESubSearchAligner.__new__(OESubSearchAligner)
-        aligner.ss = MagicMock()
-        aligner.refmol = None
-        aligner.alignment_options = MagicMock()
-
-        assert hasattr(aligner, 'align')
-        assert callable(aligner.align)
-
-    def test_subsearch_aligner_with_smarts(self):
-        """Test SubSearch aligner with SMARTS pattern"""
-        # Create molecules
-        ref_mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(ref_mol, "c1ccccc1")  # benzene
-        oedepict.OEPrepareDepiction(ref_mol)  # Prepare 2D coordinates
-
-        target_mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(target_mol, "c1ccc(O)cc1")  # phenol
-        oedepict.OEPrepareDepiction(target_mol)  # Prepare 2D coordinates
-
-        # Create aligner with reference molecule
-        aligner = OESubSearchAligner(ref_mol)
-
-        # Test validation
-        assert aligner.validate(target_mol) is True
-
-        # Test alignment
-        result = aligner.align(target_mol)
-        assert result is True
-
-    def test_subsearch_aligner_init_with_oesubsearch(self):
-        """Test SubSearch aligner initialization with OESubSearch"""
-        ss = oechem.OESubSearch("[#6]")  # carbon pattern
-        aligner = OESubSearchAligner(ss)
-
-        # Should have created the aligner
-        assert hasattr(aligner, 'ss')
-        assert hasattr(aligner, 'refmol')
-
-    def test_subsearch_aligner_init_with_oeqmol(self):
-        """Test SubSearch aligner initialization with OEQMol"""
-        ref_mol = oechem.OEQMol()
-        oechem.OESmilesToMol(ref_mol, "CCO")
-
-        aligner = OESubSearchAligner(ref_mol)
-
-        # Should have created the aligner with refmol set
-        assert aligner.refmol is not None
-
-
-class TestOEMCSSearchAligner:
-    """Test the OEMCSSearchAligner class - basic functionality only"""
-
-    def test_validate_method_exists(self):
-        """Test that validation method exists"""
-        aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
-        aligner.mcss = MagicMock()
-
-        assert hasattr(aligner, 'validate')
-        assert callable(aligner.validate)
-
-    def test_alignment_method_exists(self):
-        """Test that align method exists"""
-        aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
-        aligner.mcss = MagicMock()
-
-        assert hasattr(aligner, 'align')
-        assert callable(aligner.align)
-
-    def test_mcssearch_aligner_with_molecules(self):
-        """Test MCS aligner with real molecules"""
-        # Create molecules
-        ref_mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(ref_mol, "c1ccccc1")  # benzene
-        oedepict.OEPrepareDepiction(ref_mol)
-
-        target_mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(target_mol, "c1ccc(O)cc1")  # phenol
-        oedepict.OEPrepareDepiction(target_mol)
-
-        # Create aligner with explicit func parameter
-        aligner = OEMCSSearchAligner(ref_mol, func="bonds")
-
-        # Test validation
-        result = aligner.validate(target_mol)
-        assert result is True
-
-        # Test alignment
-        result = aligner.align(target_mol)
-        assert result is True
+# FIXME: Bug reported OpenEye on 11/30/2025 regarding using OESubSearch matches in OEPrepareMultiAlignedDepiction
+# class TestOESubSearchAligner:
+#     """Test the OESubSearchAligner class - basic functionality only"""
+#
+#     def test_validate_method_exists(self):
+#         """Test that validation method exists"""
+#         aligner = OESubSearchAligner.__new__(OESubSearchAligner)
+#         aligner.ss = MagicMock()
+#
+#         mock_mol = MagicMock()
+#         # Just test that the method can be called
+#         assert hasattr(aligner, 'validate')
+#         assert callable(aligner.validate)
+#
+#     def test_align_method_exists(self):
+#         """Test that align method exists"""
+#         aligner = OESubSearchAligner.__new__(OESubSearchAligner)
+#         aligner.ss = MagicMock()
+#         aligner.refmol = None
+#         aligner.alignment_options = MagicMock()
+#
+#         assert hasattr(aligner, 'align')
+#         assert callable(aligner.align)
+#
+#     def test_subsearch_aligner_with_smarts(self):
+#         """Test SubSearch aligner with SMARTS pattern"""
+#         # Create molecules
+#         ref_mol = oechem.OEGraphMol()
+#         oechem.OESmilesToMol(ref_mol, "c1ccccc1")  # benzene
+#         oedepict.OEPrepareDepiction(ref_mol)  # Prepare 2D coordinates
+#
+#         target_mol = oechem.OEGraphMol()
+#         oechem.OESmilesToMol(target_mol, "c1ccc(O)cc1")  # phenol
+#         oedepict.OEPrepareDepiction(target_mol)  # Prepare 2D coordinates
+#
+#         # Create aligner with reference molecule
+#         aligner = OESubSearchAligner(ref_mol)
+#
+#         # Test validation
+#         assert aligner.validate(target_mol) is True
+#
+#         # Test alignment
+#         result = aligner.align(target_mol)
+#         assert result is True
+#
+#     def test_subsearch_aligner_init_with_oesubsearch(self):
+#         """Test SubSearch aligner initialization with OESubSearch"""
+#         ss = oechem.OESubSearch("[#6]")  # carbon pattern
+#         aligner = OESubSearchAligner(ss)
+#
+#         # Should have created the aligner
+#         assert hasattr(aligner, 'ss')
+#         assert hasattr(aligner, 'refmol')
+#
+#     def test_subsearch_aligner_init_with_oeqmol(self):
+#         """Test SubSearch aligner initialization with OEQMol"""
+#         ref_mol = oechem.OEQMol()
+#         oechem.OESmilesToMol(ref_mol, "CCO")
+#
+#         aligner = OESubSearchAligner(ref_mol)
+#
+#         # Should have created the aligner with refmol set
+#         assert aligner.refmol is not None
+#
+#
+# FIXME: Bug reported OpenEye on 11/30/2025 regarding using OEMCSSearch matches in OEPrepareMultiAlignedDepiction
+# class TestOEMCSSearchAligner:
+#     """Test the OEMCSSearchAligner class - basic functionality only"""
+#
+#     def test_validate_method_exists(self):
+#         """Test that validation method exists"""
+#         aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
+#         aligner.mcss = MagicMock()
+#
+#         assert hasattr(aligner, 'validate')
+#         assert callable(aligner.validate)
+#
+#     def test_alignment_method_exists(self):
+#         """Test that align method exists"""
+#         aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
+#         aligner.mcss = MagicMock()
+#
+#         assert hasattr(aligner, 'align')
+#         assert callable(aligner.align)
+#
+#     def test_mcssearch_aligner_with_molecules(self):
+#         """Test MCS aligner with real molecules"""
+#         # Create molecules
+#         ref_mol = oechem.OEGraphMol()
+#         oechem.OESmilesToMol(ref_mol, "c1ccccc1")  # benzene
+#         oedepict.OEPrepareDepiction(ref_mol)
+#
+#         target_mol = oechem.OEGraphMol()
+#         oechem.OESmilesToMol(target_mol, "c1ccc(O)cc1")  # phenol
+#         oedepict.OEPrepareDepiction(target_mol)
+#
+#         # Create aligner with explicit func parameter
+#         aligner = OEMCSSearchAligner(ref_mol, func="bonds")
+#
+#         # Test validation
+#         result = aligner.validate(target_mol)
+#         assert result is True
+#
+#         # Test alignment
+#         result = aligner.align(target_mol)
+#         assert result is True
 
 
 class TestOEFingerprintAligner:
@@ -414,30 +414,32 @@ class TestOEFingerprintAligner:
 
 class TestCreateAligner:
     """Test the create_aligner function - logic only"""
-    
-    @patch('cnotebook.align.OESubSearchAligner')
-    def test_create_aligner_subsearch(self, mock_aligner_class):
-        """Test creating aligner with OESubSearch"""
-        mock_ss = MagicMock(spec=oechem.OESubSearch)
-        mock_aligner = MagicMock()
-        mock_aligner_class.return_value = mock_aligner
-        
-        result = create_aligner(mock_ss, method="fingerprint")  # Method should be ignored
-        
-        mock_aligner_class.assert_called_once_with(mock_ss)
-        assert result == mock_aligner
-    
-    @patch('cnotebook.align.OEMCSSearchAligner')
-    def test_create_aligner_mcssearch(self, mock_aligner_class):
-        """Test creating aligner with OEMCSSearch"""
-        mock_mcss = MagicMock(spec=oechem.OEMCSSearch)
-        mock_aligner = MagicMock()
-        mock_aligner_class.return_value = mock_aligner
-        
-        result = create_aligner(mock_mcss, method="substructure")  # Method should be ignored
-        
-        mock_aligner_class.assert_called_once_with(mock_mcss)
-        assert result == mock_aligner
+
+    # FIXME: Bug reported OpenEye on 11/30/2025 regarding using OESubSearch matches in OEPrepareMultiAlignedDepiction
+    # @patch('cnotebook.align.OESubSearchAligner')
+    # def test_create_aligner_subsearch(self, mock_aligner_class):
+    #     """Test creating aligner with OESubSearch"""
+    #     mock_ss = MagicMock(spec=oechem.OESubSearch)
+    #     mock_aligner = MagicMock()
+    #     mock_aligner_class.return_value = mock_aligner
+    #
+    #     result = create_aligner(mock_ss, method="fingerprint")  # Method should be ignored
+    #
+    #     mock_aligner_class.assert_called_once_with(mock_ss)
+    #     assert result == mock_aligner
+
+    # FIXME: Bug reported OpenEye on 11/30/2025 regarding using OEMCSSearch matches in OEPrepareMultiAlignedDepiction
+    # @patch('cnotebook.align.OEMCSSearchAligner')
+    # def test_create_aligner_mcssearch(self, mock_aligner_class):
+    #     """Test creating aligner with OEMCSSearch"""
+    #     mock_mcss = MagicMock(spec=oechem.OEMCSSearch)
+    #     mock_aligner = MagicMock()
+    #     mock_aligner_class.return_value = mock_aligner
+    #
+    #     result = create_aligner(mock_mcss, method="substructure")  # Method should be ignored
+    #
+    #     mock_aligner_class.assert_called_once_with(mock_mcss)
+    #     assert result == mock_aligner
     
     @patch('cnotebook.align.OEFingerprintAligner')
     def test_create_aligner_molbase_default(self, mock_aligner_class):
@@ -456,15 +458,22 @@ class TestCreateAligner:
     def test_create_aligner_unknown_method(self):
         """Test error for unknown alignment method"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
-        with pytest.raises(ValueError, match="Unknown depiction alignment method: unknown"):
+
+        with pytest.raises(ValueError, match="Unknown depiction alignment method"):
             create_aligner(mock_mol, method="unknown")
-    
-    @patch('cnotebook.align.log.warning')
-    def test_create_aligner_method_warning_subsearch(self, mock_log_warning):
-        """Test warning when method conflicts with OESubSearch"""
-        mock_ss = MagicMock(spec=oechem.OESubSearch)
-        
-        with patch('cnotebook.align.OESubSearchAligner'):
-            create_aligner(mock_ss, method="mcss")
-            mock_log_warning.assert_called_once()
+
+    def test_create_aligner_unsupported_type(self):
+        """Test error for unsupported alignment reference type"""
+        # Pass something that's not an OEMolBase
+        with pytest.raises(TypeError, match="Unsupported alignment reference type"):
+            create_aligner("not a molecule")
+
+    # FIXME: Bug reported OpenEye on 11/30/2025 - OESubSearch aligners are disabled
+    # @patch('cnotebook.align.log.warning')
+    # def test_create_aligner_method_warning_subsearch(self, mock_log_warning):
+    #     """Test warning when method conflicts with OESubSearch"""
+    #     mock_ss = MagicMock(spec=oechem.OESubSearch)
+    #
+    #     with patch('cnotebook.align.OESubSearchAligner'):
+    #         create_aligner(mock_ss, method="mcss")
+    #         mock_log_warning.assert_called_once()
