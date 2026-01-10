@@ -10,7 +10,7 @@ from .ipython_ext import (
 # to avoid confusion
 from cnotebook.pandas_ext import register_pandas_formatters as _register_pandas_formatters
 
-__version__ = '1.0.0'
+__version__ = '1.0.1'
 
 ###########################################
 
