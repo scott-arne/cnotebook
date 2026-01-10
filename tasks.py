@@ -1,5 +1,9 @@
-from invoke import task
+import sys
+# noinspection PyPackageRequirements
+from invoke.tasks import task
+from pathlib import Path
 
+ROOT = Path(__file__).parent.absolute()
 
 @task
 def test(c):
@@ -20,3 +24,8 @@ def upload(c):
     c.run("rm -rf dist")
     c.run("python -m build")
     c.run("python -m twine upload dist/*")
+
+
+@task
+def publish(c):
+    c.run(f'cd {ROOT} && rm -rf dist/ && python -m build --wheel && {sys.executable} -m twine upload dist/*')

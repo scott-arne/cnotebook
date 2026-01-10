@@ -82,11 +82,11 @@ classifiers = [
 
 # Project URLs
 [project.urls]
-"Homepage" = "https://github.com/[username]/cnotebook"
-"Bug Reports" = "https://github.com/[username]/cnotebook/issues"
-"Source" = "https://github.com/[username]/cnotebook"
-"Documentation" = "https://github.com/[username]/cnotebook#readme"
-"Changelog" = "https://github.com/[username]/cnotebook/blob/master/CHANGELOG.md"
+"Homepage" = "https://github.com/scott-arne/cnotebook"
+"Bug Reports" = "https://github.com/scott-arne/cnotebook/issues"
+"Source" = "https://github.com/scott-arne/cnotebook"
+"Documentation" = "https://github.com/scott-arne/cnotebook#readme"
+"Changelog" = "https://github.com/scott-arne/cnotebook/blob/master/CHANGELOG.md"
 
 # Additional groups of dependencies
 # https://packaging.python.org/en/latest/specifications/dependency-specifiers/#extras
