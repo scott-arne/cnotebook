@@ -242,6 +242,26 @@ class TestIntegration:
     def test_function_availability(self):
         """Test that all expected functions are available"""
         import cnotebook.ipython_ext as ipython_ext
-        
+
         assert hasattr(ipython_ext, 'render_molecule_grid')
         assert hasattr(ipython_ext, 'register_ipython_formatters')
+
+
+class TestBackwardCompatibility:
+    """Test backward compatibility after moving render_molecule_grid"""
+
+    def test_import_from_ipython_ext(self):
+        """Test render_molecule_grid can still be imported from ipython_ext"""
+        from cnotebook.ipython_ext import render_molecule_grid
+        assert callable(render_molecule_grid)
+
+    def test_import_from_render(self):
+        """Test render_molecule_grid can be imported from render"""
+        from cnotebook.render import render_molecule_grid
+        assert callable(render_molecule_grid)
+
+    def test_both_imports_same_function(self):
+        """Test both imports reference the same function"""
+        from cnotebook.ipython_ext import render_molecule_grid as rmg_ipython
+        from cnotebook.render import render_molecule_grid as rmg_render
+        assert rmg_ipython is rmg_render
