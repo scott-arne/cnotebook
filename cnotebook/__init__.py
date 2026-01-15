@@ -1,10 +1,8 @@
 import logging
 from .pandas_ext import render_dataframe
 from .context import cnotebook_context
-from .ipython_ext import (
-    register_ipython_formatters as _register_ipython_formatters,
-    render_molecule_grid
-)
+from .ipython_ext import register_ipython_formatters as _register_ipython_formatters
+from .render import render_molecule_grid
 
 # Only import formatter registration from the Pandas module, otherwise have users import functionality from there
 # to avoid confusion

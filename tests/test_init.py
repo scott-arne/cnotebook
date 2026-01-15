@@ -478,3 +478,18 @@ class TestDocstring:
         """Test LevelSpecificFormatter has docstring"""
         assert LevelSpecificFormatter.__doc__ is not None
         assert len(LevelSpecificFormatter.__doc__.strip()) > 0
+
+
+class TestRenderMoleculeGridImport:
+    """Test render_molecule_grid import from package root"""
+
+    def test_import_from_package(self):
+        """Test render_molecule_grid can be imported from cnotebook"""
+        from cnotebook import render_molecule_grid
+        assert callable(render_molecule_grid)
+
+    def test_import_comes_from_render(self):
+        """Test the import comes from render module"""
+        from cnotebook import render_molecule_grid as rmg_pkg
+        from cnotebook.render import render_molecule_grid as rmg_render
+        assert rmg_pkg is rmg_render
