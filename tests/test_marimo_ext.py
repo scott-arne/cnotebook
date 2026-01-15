@@ -17,47 +17,46 @@ class TestDisplayMol:
         mock_ctx = MagicMock()
         mock_context_var.get.return_value = mock_ctx
         mock_ctx.copy.return_value = mock_ctx
-        
+
         mock_oemol_to_html.return_value = '<img>molecule</img>'
-        
+
         # Create mock molecule
         mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
+
         # Call the display function
         mime_type, html_content = _display_mol(mock_mol)
-        
+
         # Verify results
         assert mime_type == "text/html"
         assert html_content == '<img>molecule</img>'
-        
-        # Verify context was copied and modified
+
+        # Verify context was copied
         mock_context_var.get.assert_called_once()
         mock_ctx.copy.assert_called_once()
-        assert mock_ctx.image_format == "png"
-        
+
         # Verify oemol_to_html was called with correct parameters
         mock_oemol_to_html.assert_called_once_with(mock_mol, ctx=mock_ctx)
     
     @patch('cnotebook.marimo_ext.oemol_to_html')
     @patch('cnotebook.marimo_ext.cnotebook_context')
-    def test_display_mol_png_format(self, mock_context_var, mock_oemol_to_html):
-        """Test that PNG format is enforced for Marimo"""
+    def test_display_mol_format_preserved(self, mock_context_var, mock_oemol_to_html):
+        """Test that user's image format preference is preserved"""
         # Setup mocks
         mock_ctx = MagicMock()
         mock_ctx.image_format = "svg"  # Start with SVG
         mock_context_var.get.return_value = mock_ctx
         mock_ctx.copy.return_value = mock_ctx
-        
-        mock_oemol_to_html.return_value = '<img>molecule</img>'
-        
+
+        mock_oemol_to_html.return_value = '<svg>molecule</svg>'
+
         # Create mock molecule
         mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
+
         # Call the display function
         mime_type, html_content = _display_mol(mock_mol)
-        
-        # Verify PNG format was set
-        assert mock_ctx.image_format == "png"
+
+        # Verify format was preserved (not changed to PNG)
+        assert mock_ctx.image_format == "svg"
         assert mime_type == "text/html"
     
     @patch('cnotebook.marimo_ext.oemol_to_html')
@@ -70,30 +69,30 @@ class TestDisplayMol:
         mock_ctx.height = 200
         mock_ctx.image_format = "svg"
         mock_context_var.get.return_value = mock_ctx
-        
+
         # Copy should return a new context
         mock_ctx_copy = MagicMock()
         mock_ctx_copy.width = 300
         mock_ctx_copy.height = 200
+        mock_ctx_copy.image_format = "svg"  # Copy preserves format
         mock_ctx.copy.return_value = mock_ctx_copy
-        
-        mock_oemol_to_html.return_value = '<img>custom_molecule</img>'
-        
+
+        mock_oemol_to_html.return_value = '<svg>custom_molecule</svg>'
+
         # Create mock molecule
         mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
+
         # Call the display function
         mime_type, html_content = _display_mol(mock_mol)
-        
-        # Verify the copy was used and modified
+
+        # Verify the copy was used
         mock_ctx.copy.assert_called_once()
-        assert mock_ctx_copy.image_format == "png"  # Should be set to PNG
-        
+
         # Verify oemol_to_html was called with the copied context
         mock_oemol_to_html.assert_called_once_with(mock_mol, ctx=mock_ctx_copy)
-        
+
         assert mime_type == "text/html"
-        assert html_content == '<img>custom_molecule</img>'
+        assert html_content == '<svg>custom_molecule</svg>'
     
     @patch('cnotebook.marimo_ext.oemol_to_html')
     @patch('cnotebook.marimo_ext.cnotebook_context')
@@ -223,26 +222,26 @@ class TestModuleImports:
 
 class TestMarimoBehavior:
     """Test Marimo-specific behavior and integration"""
-    
+
     @patch('cnotebook.marimo_ext.oemol_to_html')
     @patch('cnotebook.marimo_ext.cnotebook_context')
-    def test_png_enforced_for_marimo(self, mock_context_var, mock_oemol_to_html):
-        """Test that PNG format is always used for Marimo compatibility"""
+    def test_format_preserved_for_marimo(self, mock_context_var, mock_oemol_to_html):
+        """Test that user's image format preference is preserved in Marimo"""
         # Setup context with SVG format
         mock_ctx = MagicMock()
         mock_ctx.image_format = "svg"
         mock_context_var.get.return_value = mock_ctx
         mock_ctx.copy.return_value = mock_ctx
-        
-        mock_oemol_to_html.return_value = '<img>svg_to_png</img>'
-        
+
+        mock_oemol_to_html.return_value = '<svg>molecule</svg>'
+
         mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
+
         # Call display function
         mime_type, content = _display_mol(mock_mol)
-        
-        # Should force PNG format
-        assert mock_ctx.image_format == "png"
+
+        # Format should be preserved (not forced to PNG)
+        assert mock_ctx.image_format == "svg"
         assert mime_type == "text/html"
     
     def test_marimo_mime_format_compatibility(self):
@@ -276,25 +275,22 @@ class TestMarimoBehavior:
         mock_global_ctx = MagicMock()
         mock_global_ctx.image_format = "svg"
         mock_context_var.get.return_value = mock_global_ctx
-        
+
         # Copy should return a separate object
         mock_local_ctx = MagicMock()
         mock_local_ctx.image_format = "svg"
         mock_global_ctx.copy.return_value = mock_local_ctx
-        
-        mock_oemol_to_html.return_value = '<img>isolated</img>'
-        
+
+        mock_oemol_to_html.return_value = '<svg>isolated</svg>'
+
         mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
+
         # Call display function
         _display_mol(mock_mol)
-        
-        # Local context should be modified
-        assert mock_local_ctx.image_format == "png"
-        
-        # Global context should remain unchanged
+
+        # Both contexts should retain their original format (no forced change)
         assert mock_global_ctx.image_format == "svg"
-        
+
         # Copy should have been called to create isolation
         mock_global_ctx.copy.assert_called_once()
 
@@ -353,19 +349,20 @@ class TestDisplayDisplay:
     def test_display_display_basic(self, mock_context_var, mock_oedisp_to_html):
         """Test basic display rendering"""
         from openeye import oedepict
-        
+
         mock_ctx = MagicMock()
         mock_context_var.get.return_value = mock_ctx
         mock_ctx.copy.return_value = mock_ctx
         mock_oedisp_to_html.return_value = '<img>display</img>'
-        
+
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
-        
+
         mime_type, html_content = cnotebook.marimo_ext._display_display(mock_disp)
-        
+
         assert mime_type == "text/html"
         assert html_content == '<img>display</img>'
-        assert mock_ctx.image_format == "png"
+        # Context should be copied but format is no longer forced
+        mock_ctx.copy.assert_called_once()
 
 
 class TestDisplayImage:
@@ -376,19 +373,20 @@ class TestDisplayImage:
     def test_display_image_basic(self, mock_context_var, mock_oeimage_to_html):
         """Test basic image rendering"""
         from openeye import oedepict
-        
+
         mock_ctx = MagicMock()
         mock_context_var.get.return_value = mock_ctx
         mock_ctx.copy.return_value = mock_ctx
         mock_oeimage_to_html.return_value = '<img>image</img>'
-        
+
         mock_img = MagicMock(spec=oedepict.OEImage)
-        
+
         mime_type, html_content = cnotebook.marimo_ext._display_image(mock_img)
-        
+
         assert mime_type == "text/html"
         assert html_content == '<img>image</img>'
-        assert mock_ctx.image_format == "png"
+        # Context should be copied but format is no longer forced
+        mock_ctx.copy.assert_called_once()
 
 
 class TestRenderMoleculeGridMarimo:
@@ -424,7 +422,8 @@ class TestRenderMoleculeGridMarimo:
 
         assert mime_type == "text/html"
         assert html_content == '<img>grid</img>'
-        assert mock_ctx.image_format == "png"
+        # Context should be copied but format is no longer forced
+        mock_ctx.copy.assert_called_once()
 
     def test_grid_with_multiple_molecules_for_marimo(self):
         """Test grid with multiple molecules returns valid OEImage for Marimo"""
