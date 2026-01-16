@@ -26,7 +26,7 @@ class TestFeatureParity:
     def test_oeimage_has_mime_handler(self):
         """Test OEImage has MIME handler for Marimo after import"""
         import cnotebook.marimo_ext
-        assert hasattr(oedepict.OEImage, '__mime__')
+        assert hasattr(oedepict.OEImage, '_mime_')
 
     def test_oemolbase_has_mime_handler(self):
         """Test OEMolBase has MIME handler for Marimo after import"""
@@ -36,7 +36,7 @@ class TestFeatureParity:
     def test_display_has_mime_handler(self):
         """Test OE2DMolDisplay has MIME handler for Marimo after import"""
         import cnotebook.marimo_ext
-        assert hasattr(oedepict.OE2DMolDisplay, '__mime__')
+        assert hasattr(oedepict.OE2DMolDisplay, '_mime_')
 
     def test_grid_output_compatible_with_both(self):
         """Test grid output (OEImage) works in both environments"""
@@ -51,7 +51,7 @@ class TestFeatureParity:
         assert isinstance(result, oedepict.OEImage)
 
         # Jupyter: uses registered HTML formatter
-        # Marimo: uses __mime__ attribute
+        # Marimo: uses _mime_ attribute
         # Both should work with OEImage
 
 

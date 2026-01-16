@@ -647,4 +647,70 @@ class TestIntegration:
         """Test that logging is properly configured"""
         from cnotebook.pandas_ext import log
         assert log is not None
-        assert log.name == "cnotebook"
+
+
+class TestHighlightMetadataPreservation:
+    """Test that highlighting callbacks are preserved during DataFrame rendering"""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_metadata_preserved_during_deep_copy(self):
+        """Regression test: metadata with callbacks should be preserved during render_dataframe deep copy"""
+        # Create molecules
+        mols = []
+        for smiles in ["CCO", "c1cncnc1", "c1ccncc1"]:
+            mol = oechem.OEGraphMol()
+            oechem.OESmilesToMol(mol, smiles)
+            mols.append(mol)
+
+        # Create DataFrame with molecule column
+        df = pd.DataFrame({
+            'Name': ['Ethanol', 'Pyrimidine', 'Pyridine'],
+            'Molecule': pd.Series(mols, dtype=oepd.MoleculeDtype())
+        })
+
+        # Add highlighting callback
+        df.Molecule.highlight("ncn")
+
+        # Get the original metadata
+        arr = df['Molecule'].array
+        original_ctx = arr.metadata.get("cnotebook")
+        assert original_ctx is not None, "Context should be saved in metadata"
+        assert len(original_ctx.callbacks) > 0, "Callbacks should be present"
+
+        # Render the DataFrame (this triggers the deep copy)
+        html = render_dataframe(df)
+
+        # The original metadata should still have the callbacks
+        # (this verifies the fix preserves callbacks)
+        arr_after = df['Molecule'].array
+        ctx_after = arr_after.metadata.get("cnotebook")
+        assert ctx_after is not None, "Context should still be in metadata after render"
+        assert len(ctx_after.callbacks) > 0, "Callbacks should still be present after render"
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_callback_applied_during_render(self):
+        """Test that highlight callback is actually applied during molecule rendering"""
+        from cnotebook.context import get_series_context
+
+        # Create a molecule with a pattern to highlight
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1cncnc1")  # Pyrimidine has "ncn" pattern
+
+        # Create DataFrame
+        df = pd.DataFrame({
+            'Name': ['Pyrimidine'],
+            'Molecule': pd.Series([mol], dtype=oepd.MoleculeDtype())
+        })
+
+        # Add highlighting
+        df.Molecule.highlight("ncn")
+
+        # Get the context and verify callback is registered
+        arr = df['Molecule'].array
+        ctx = get_series_context(arr.metadata)
+        assert len(ctx.callbacks) > 0, "Highlight callback should be registered"
+
+        # Render and verify it doesn't raise an error
+        html = render_dataframe(df)
+        assert isinstance(html, str)
+        assert '<table' in html

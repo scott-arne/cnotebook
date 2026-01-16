@@ -390,10 +390,10 @@ class TestDisplayImage:
 
 
 class TestRenderMoleculeGridMarimo:
-    """Test render_molecule_grid works in Marimo context via OEImage.__mime__"""
+    """Test render_molecule_grid works in Marimo context via OEImage._mime_"""
 
     def test_grid_returns_oeimage(self):
-        """Test that render_molecule_grid returns OEImage which has __mime__ handler"""
+        """Test that render_molecule_grid returns OEImage which has _mime_ handler"""
         from cnotebook.render import render_molecule_grid
         from openeye import oedepict
 
@@ -404,13 +404,13 @@ class TestRenderMoleculeGridMarimo:
 
         # Result should be OEImage
         assert isinstance(result, oedepict.OEImage)
-        # OEImage should have __mime__ attribute (set by marimo_ext)
-        assert hasattr(oedepict.OEImage, '__mime__')
+        # OEImage should have _mime_ attribute (set by marimo_ext)
+        assert hasattr(oedepict.OEImage, '_mime_')
 
     @patch('cnotebook.marimo_ext.oeimage_to_html')
     @patch('cnotebook.marimo_ext.cnotebook_context')
     def test_oeimage_mime_renders_grid(self, mock_context_var, mock_oeimage_to_html):
-        """Test that OEImage.__mime__ renders grid output correctly"""
+        """Test that OEImage._mime_ renders grid output correctly"""
         mock_ctx = MagicMock()
         mock_context_var.get.return_value = mock_ctx
         mock_ctx.copy.return_value = mock_ctx

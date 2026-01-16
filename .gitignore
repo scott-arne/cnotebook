@@ -2,6 +2,7 @@
 
 .idea
 .ipynb_checkpoints
+docs/plans
 
 ### Python template
 # Byte-compiled / optimized / DLL files

@@ -126,9 +126,17 @@ def render_dataframe(
     # Render columns with MoleculeDtype
     molecule_columns = set()
 
+    # Capture metadata from ORIGINAL DataFrame BEFORE copying
+    # (df.copy() may not preserve array metadata)
+    original_metadata_by_col = {}
+
     for col in df.columns:
         if isinstance(df.dtypes[col], oepd.MoleculeDtype):
             molecule_columns.add(col)
+            # Get metadata from the original array before any copying
+            arr = df[col].array
+            if hasattr(arr, 'metadata') and arr.metadata:
+                original_metadata_by_col[col] = arr.metadata.copy()
 
     # We need to copy both the DataFrame and the molecules, because we modify them in-place to render them
     df = df.copy()
@@ -137,7 +145,11 @@ def render_dataframe(
         # Direct assignment to help IDE understand this is a MoleculeArray
         arr = df[col].array
         assert isinstance(arr, oepd.MoleculeArray)
-        df[col] = pd.Series(arr.deepcopy(), index=df[col].index, dtype=oepd.MoleculeDtype())
+        # Use preserved metadata from original DataFrame (not the copy which may have lost it)
+        original_metadata = original_metadata_by_col.get(col, {})
+        new_arr = arr.deepcopy()
+        new_arr.metadata.update(original_metadata)
+        df[col] = pd.Series(new_arr, index=df[col].index, dtype=oepd.MoleculeDtype())
 
     # ---------------------------------------------------
     # Molecule columns
@@ -522,7 +534,7 @@ class SeriesRecalculateDepictionCoordinatesAccessor:
 
 
 @register_dataframe_accessor("reset_depictions")
-class SeriesResetDepictionsAccessor:
+class DataFrameResetDepictionsAccessor:
     def __init__(self, pandas_obj: pd.DataFrame):
         self._obj = pandas_obj
 
