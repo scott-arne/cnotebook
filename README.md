@@ -1,4 +1,9 @@
-# CNotebook - Chemistry Visualization for Jupyter & Marimo
+# CNotebook
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![OpenEye Toolkits](https://img.shields.io/badge/OpenEye-2025.2.1+-green.svg)](https://www.eyesopen.com/toolkits)
+[![Pandas 2.2+](https://img.shields.io/badge/pandas-2.2+-orange.svg)](https://pandas.pydata.org/)
+
 
 **Author:** Scott Arne Johnson ([scott.arne.johnson@gmail.com](mailto:scott.arne.johnson@gmail.com))
 
@@ -30,33 +35,33 @@ mol
 
 That's it! CNotebook automatically registers formatters so that OpenEye molecule objects display as chemical structures instead of cryptic text representations.
 
-## 📚 Features
+## Features
 
-### ✨ Automatic Rendering
+### Automatic Rendering
 - **Zero Configuration**: Just import and go - molecules automatically render as structures
 - **Multiple Formats**: Supports both Jupyter Notebooks and Marimo environments
 - **Smart Detection**: Automatically detects your notebook environment
 
-### 🧪 Molecule Support
+### Molecule Support
 - **OEMol Objects**: Direct rendering of `oechem.OEMolBase` derived objects
 - **OE2DMolDisplay**: Advanced rendering with custom depiction options
 - **Pandas Integration**: Seamless rendering in DataFrames with oepandas
 
-### 🎨 Visualization Options
+### Visualization Options
 - **Multiple Formats**: PNG (default) or SVG output
 - **Customizable Sizing**: Configurable width, height, and scaling
 - **Grid Layouts**: Multi-molecule grid displays
 - **Substructure Highlighting**: SMARTS pattern highlighting
 - **Molecular Alignment**: Align molecules to reference structures
 
-### 📊 Pandas Integration
+### Pandas Integration
 - **DataFrame Rendering**: Automatic molecule column detection and rendering
 - **Column Highlighting**: Highlight different patterns per row
 - **Alignment Tools**: Align molecular depictions in DataFrames
 - **Fingerprint Similarity**: Visual similarity coloring
 - **Property Calculation**: Chemistry-aware DataFrame operations
 
-## 🛠️ Environment Support
+## Environment Support
 
 ### Jupyter Notebooks
 CNotebook automatically integrates with Jupyter when imported:
@@ -86,7 +91,7 @@ oechem.OESmilesToMol(mol, "c1ccccc1")
 mol  # Automatically renders as PNG for Marimo compatibility
 ```
 
-## 📖 Advanced Usage
+## Advanced Usage
 
 ### Rendering Configuration
 
@@ -164,7 +169,7 @@ df.fingerprint_similarity("Molecule", reference_mol, inplace=True)
 df  # Shows similarity coloring and Tanimoto coefficients
 ```
 
-## 📁 Demo Notebooks
+## Demo Notebooks
 
 Explore comprehensive examples in the `demos/` directory:
 
@@ -188,7 +193,7 @@ Explore comprehensive examples in the `demos/` directory:
 - High-quality crisp molecular graphics
 - SVG compatibility considerations
 
-## 🔧 Configuration Options
+## Configuration Options
 
 ### Global Context Settings
 
@@ -214,7 +219,7 @@ ctx.scale = 1.0          # Scaling factor
 - **Marimo**: Automatically uses PNG format for compatibility
 - **Console**: Falls back to string representations
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please ensure your code:
 - Follows existing code style and conventions
@@ -222,11 +227,11 @@ We welcome contributions! Please ensure your code:
 - Works with both Jupyter and Marimo environments
 - Maintains compatibility with OpenEye Toolkits
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-## 🐛 Issues & Support
+## Issues & Support
 
 For bug reports, feature requests, or general support, please open an issue on GitHub or contact the author at [scott.arne.johnson@gmail.com](mailto:scott.arne.johnson@gmail.com).
 

@@ -2,11 +2,11 @@
 # Last updated: 2025-11-28
 
 # Data manipulation and analysis
-pandas>=2.0.0,<3.0.0
+pandas>=2.2.0
 
 # OpenEye pandas integration
 oepandas>=2.0.0
 
 # OpenEye Toolkits (requires commercial license)
-openeye-toolkits
+openeye-toolkits>=2025.2.1
 
