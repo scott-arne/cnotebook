@@ -9,10 +9,12 @@ def _():
     import marimo as mo
     import cnotebook
     import pandas as pd
+    import oepandas as oepd
+    from pathlib import Path
     from openeye import oechem, oedepict
 
-    cnotebook.enable_debugging()
-    return cnotebook, mo, oechem, oedepict, pd
+    DEMO_DIRECTORY = Path(__file__).parent
+    return DEMO_DIRECTORY, cnotebook, mo, oechem, oedepict, oepd, pd
 
 
 @app.cell
@@ -318,8 +320,187 @@ def _(df):
 
 
 @app.cell
-def _(df, mo):
-    mo.Html(df._mime_()[1])
+def _(df):
+    # Remove the highlighting (also removes any other display callbacks)
+    df.reset_depictions()
+
+    # Display it
+    df
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    You can also highlight based on another column. This is useful if you have different SMARTS patterns that you'd like to highlight in each molecule.
+    """)
+    return
+
+
+@app.cell
+def _(df, pd):
+    # Add a SMARTS column with patterns
+    df["SMARTS"] = pd.Series(["cc", "cnc", "ncn"], dtype=str)
+    df.head()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Let's highlight those patterns.
+    """)
+    return
+
+
+@app.cell
+def _(df):
+    df.highlight_using_column("Molecule", "SMARTS", inplace=True)
+    df
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Note that ```highlight_using_column``` produces a different kind of output column where the elements are no longer molecules (they are in fact ```oedepict.OE2DMolDisplay``` objects). This is required to enable highlighting different substructures on a per-cell basis, versus highlighting the same substructure for an entire column. You can always check the datatypes:
+    """)
+    return
+
+
+@app.cell
+def _(df):
+    print(df.dtypes)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    # Empty Molecules
+
+    Empty molecules render an image in blue text. By default the size is 200x200 px.
+    """)
+    return
+
+
+@app.cell
+def _(oechem):
+    _empty_mol = oechem.OEGraphMol()
+    _empty_mol
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    # Aligned Molecule Depictions
+
+    Sometimes you may have multiple molecules in a DataFrame that you may want to have aligned. There are two options:
+
+    1. Use ```align_depictions``` and you will regenerate the 2D coordinates of the molecules in a column based on a reference.
+    2. Use ```highlight``` with a reference, and it will both align and highlight the molecule.
+
+    Let's first take a look at our DataFrame. See how the bicyclic pyrimidine is not always in the same orientation?
+    """)
+    return
+
+
+@app.cell
+def _(DEMO_DIRECTORY, oepd):
+    egfr_df = oepd.read_smi(DEMO_DIRECTORY / "assets" / "egfr.smi")
+    egfr_df = egfr_df.rename(columns={"Molecule": "Original"})
+    egfr_df.head()
+    return (egfr_df,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Let's align based on the following template structure. This template was drawn in ChemDraw and saved as an MDL MOL file. We are going to read it in as an ```OEQMol```, which supports query features.
+    """)
+    return
+
+
+@app.cell
+def _(DEMO_DIRECTORY, oechem):
+    alignment_template = oechem.OEQMol()
+    with oechem.oemolistream(str(DEMO_DIRECTORY / "assets" / "egfr_template.mol")) as _ifs:
+        oechem.OEReadMDLQueryFile(_ifs, alignment_template)
+
+    # Show the template
+    alignment_template
+    return (alignment_template,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Let's take a look at the ```align_depictions``` route, first. We're creating a new column called ```Aligned``` so that we can compare it to the original structure.
+    """)
+    return
+
+
+@app.cell
+def _(alignment_template, egfr_df):
+    egfr_df["Aligned"] = egfr_df.Original.copy_molecules()
+    egfr_df.Aligned.align_depictions(alignment_template)
+    egfr_df.head()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Now lets look at the highlight route. Note that we are providing the template to the ```highlight``` function twice, once for actually highlighting the structure and once for aligning the structure. This allows you to align and highlight using different templates if you wish.
+    """)
+    return
+
+
+@app.cell
+def _(alignment_template, egfr_df):
+    egfr_df["Highlighted"] = egfr_df.Original.copy_molecules()
+    egfr_df.Highlighted.highlight(alignment_template, ref=alignment_template)
+    egfr_df.head()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    It should be noted that a column can only be aligned to a single reference (at the moment). Subsequent calls to functions that set an alignment reference will override previous references.
+
+    # Fingerprint Similarity
+
+    You can color the fingerprint similarity between two structures. By default, this uses OpenEye Tree fingerprints of size 4096 with default atom and bond definitions. Note that the resulting columns are ```display``` columns, so they cannot be manipulated as molecules any longer.
+
+    Note that the second argument is optional. If this argument is omitted, then the first valid molecule in the DataFrame will be used as a reference.
+    """)
+    return
+
+
+@app.cell
+def _(DEMO_DIRECTORY, oechem):
+    # Read a reference molecule
+    refmol = oechem.OEGraphMol()
+
+    with oechem.oemolistream(str(DEMO_DIRECTORY / "assets" / "egfr.smi")) as ifs:
+        oechem.OEReadMolecule(ifs, refmol)
+        refmol.SetTitle('')
+
+    # Display it
+    refmol
+    return (refmol,)
+
+
+@app.cell
+def _(DEMO_DIRECTORY, oepd, refmol):
+    # Re-read the EGFR DataFrame
+    egfr_fpsim_df = oepd.read_smi(str(DEMO_DIRECTORY / "assets" / "egfr.smi"))
+
+    # Calculate fingerprint similarity
+    egfr_fpsim_df.fingerprint_similarity("Molecule", refmol, inplace=True)
+    egfr_fpsim_df.head()
     return
 
 
