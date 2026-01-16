@@ -28,7 +28,7 @@ readme = "README.md"
 
 # Specify which Python versions you support (enforced by pip)
 # https://packaging.python.org/guides/distributing-packages-using-setuptools/#python-requires
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 # License using SPDX identifier
 # https://packaging.python.org/en/latest/specifications/core-metadata/#license
