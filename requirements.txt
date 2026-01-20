@@ -4,6 +4,12 @@
 # OpenEye Toolkits (requires commercial license) - REQUIRED
 openeye-toolkits>=2025.2.1
 
+# Widget framework for Jupyter/Marimo bidirectional communication
+anywidget>=0.9.0
+
+# Template rendering for HTML generation
+jinja2>=3.0.0
+
 # All other dependencies are OPTIONAL
 # CNotebook auto-detects available backends and environments
 
