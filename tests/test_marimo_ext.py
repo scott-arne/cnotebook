@@ -441,3 +441,39 @@ class TestRenderMoleculeGridMarimo:
         assert isinstance(result, oedepict.OEImage)
         assert result.GetWidth() > 0
         assert result.GetHeight() > 0
+
+
+class TestPolarsSupport:
+    """Test Polars DataFrame support in Marimo"""
+
+    def test_oepolars_available_flag(self):
+        """Test that oepolars_available flag is set correctly"""
+        import cnotebook.marimo_ext
+
+        try:
+            import polars
+            import oepolars
+            assert cnotebook.marimo_ext.oepolars_available is True
+        except ImportError:
+            assert cnotebook.marimo_ext.oepolars_available is False
+
+    def test_polars_dataframe_has_mime_method(self):
+        """Test that Polars DataFrame has _mime_ method when oepolars is available"""
+        import cnotebook.marimo_ext
+
+        if cnotebook.marimo_ext.oepolars_available:
+            import polars as pl
+            assert hasattr(pl.DataFrame, '_mime_')
+            assert callable(pl.DataFrame._mime_)
+
+    def test_marimo_polars_formatter_exists(self):
+        """Test that marimo_polars_formatter function exists when marimo is available"""
+        try:
+            import marimo
+            import cnotebook.marimo_ext
+
+            if cnotebook.marimo_ext.oepolars_available:
+                assert hasattr(cnotebook.marimo_ext, 'marimo_polars_formatter')
+                assert callable(cnotebook.marimo_ext.marimo_polars_formatter)
+        except ImportError:
+            pytest.skip("Marimo not installed")

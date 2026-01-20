@@ -2,14 +2,15 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![OpenEye Toolkits](https://img.shields.io/badge/OpenEye-2025.2.1+-green.svg)](https://www.eyesopen.com/toolkits)
-[![Pandas 2.2+](https://img.shields.io/badge/pandas-2.2+-orange.svg)](https://pandas.pydata.org/)
 
 
 **Author:** Scott Arne Johnson ([scott.arne.johnson@gmail.com](mailto:scott.arne.johnson@gmail.com))
 
 CNotebook provides ergonomic chemistry visualization in Jupyter Notebooks and Marimo with the OpenEye Toolkits. Simply import the package and your molecular data will be automatically rendered as beautiful chemical structures - no additional configuration required!
 
-## 🚀 Quick Start
+**Supports both Pandas and Polars DataFrames** - CNotebook auto-detects your environment and works with whichever DataFrame library you prefer.
+
+## Quick Start
 
 ### Installation
 
@@ -17,7 +18,12 @@ CNotebook provides ergonomic chemistry visualization in Jupyter Notebooks and Ma
 pip install cnotebook
 ```
 
-**Prerequisites:** Requires OpenEye Toolkits and oepandas to be installed and properly licensed.
+**Prerequisites:** Requires OpenEye Toolkits to be installed and properly licensed.
+
+**Optional backends:**
+- **Pandas**: `pip install pandas oepandas` - For Pandas DataFrame support
+- **Polars**: `pip install polars oepolars` - For Polars DataFrame support
+- Both can be installed together - CNotebook will work with either or both
 
 ### Basic Usage
 
@@ -40,12 +46,13 @@ That's it! CNotebook automatically registers formatters so that OpenEye molecule
 ### Automatic Rendering
 - **Zero Configuration**: Just import and go - molecules automatically render as structures
 - **Multiple Formats**: Supports both Jupyter Notebooks and Marimo environments
-- **Smart Detection**: Automatically detects your notebook environment
+- **Smart Detection**: Automatically detects your notebook environment and available backends
 
 ### Molecule Support
 - **OEMol Objects**: Direct rendering of `oechem.OEMolBase` derived objects
 - **OE2DMolDisplay**: Advanced rendering with custom depiction options
-- **Pandas Integration**: Seamless rendering in DataFrames with oepandas
+- **Pandas Integration**: Seamless rendering in DataFrames with OEPandas
+- **Polars Integration**: Native Polars DataFrame support with OEPolars
 
 ### Visualization Options
 - **Multiple Formats**: PNG (default) or SVG output
@@ -54,7 +61,7 @@ That's it! CNotebook automatically registers formatters so that OpenEye molecule
 - **Substructure Highlighting**: SMARTS pattern highlighting
 - **Molecular Alignment**: Align molecules to reference structures
 
-### Pandas Integration
+### DataFrame Integration (Pandas & Polars)
 - **DataFrame Rendering**: Automatic molecule column detection and rendering
 - **Column Highlighting**: Highlight different patterns per row
 - **Alignment Tools**: Align molecular depictions in DataFrames
@@ -68,7 +75,6 @@ CNotebook automatically integrates with Jupyter when imported:
 
 ```python
 import cnotebook
-import pandas as pd
 from openeye import oechem
 
 # Molecules will automatically render in cells
@@ -89,6 +95,65 @@ from openeye import oechem
 mol = oechem.OEGraphMol()
 oechem.OESmilesToMol(mol, "c1ccccc1")
 mol  # Automatically renders as PNG for Marimo compatibility
+```
+
+## DataFrame Usage
+
+### Pandas DataFrames
+
+```python
+import cnotebook
+import oepandas as oepd
+import pandas as pd
+
+# Create DataFrame with SMILES
+df = pd.DataFrame({
+    "Name": ["Benzene", "Pyridine", "Pyrimidine"],
+    "SMILES": ["c1ccccc1", "c1cnccc1", "n1cnccc1"]
+})
+
+# Convert to molecules
+df.chem.as_molecule("SMILES", inplace=True)
+
+# DataFrame automatically renders molecules as structures
+df  # Molecule column shows chemical structures!
+
+# Add substructure highlighting
+df.SMILES.chem.highlight("c1ccccc1")  # Highlight aromatic rings
+df
+
+# Align molecules to a reference
+df.SMILES.chem.align_depictions("first")  # Align to first molecule
+df
+```
+
+### Polars DataFrames
+
+```python
+import cnotebook
+import oepolars as oeplr
+import polars as pl
+
+# Read molecules from a SMILES file
+df = oeplr.read_smi("molecules.smi")
+
+# Or create from SMILES column
+df = pl.DataFrame({
+    "Name": ["Benzene", "Pyridine", "Pyrimidine"],
+    "smiles": ["c1ccccc1", "c1cnccc1", "n1cnccc1"]
+})
+df = df.chem.as_molecule("smiles")
+
+# DataFrame automatically renders molecules as structures
+df  # Molecule column shows chemical structures!
+
+# Add substructure highlighting
+df.get_column("smiles").chem.highlight("c1ccccc1")
+df
+
+# Align molecules to a reference
+df.get_column("smiles").chem.align_depictions("first")
+df
 ```
 
 ## Advanced Usage
@@ -122,50 +187,30 @@ cnotebook.render_molecule_grid(
 )
 ```
 
-### Pandas DataFrame Integration
-
-```python
-import oepandas as oepd
-import pandas as pd
-
-# Create DataFrame with SMILES
-df = pd.DataFrame({
-    "Name": ["Benzene", "Pyridine", "Pyrimidine"],
-    "SMILES": ["c1ccccc1", "c1cnccc1", "n1cnccc1"]
-})
-
-# Convert to molecules
-df.as_molecule("SMILES", inplace=True)
-
-# DataFrame automatically renders molecules as structures
-df  # Molecule column shows chemical structures!
-
-# Add substructure highlighting
-df.SMILES.highlight("c1ccccc1")  # Highlight aromatic rings
-df
-
-# Align molecules to a reference
-df.SMILES.align_depictions("first")  # Align to first molecule
-df
-```
-
 ### Substructure Highlighting
 
 ```python
-# Highlight SMARTS patterns
+# Highlight SMARTS patterns in Pandas
 df["Pattern"] = ["cc", "cnc", "ncn"]
-df.highlight_using_column("Molecule", "Pattern", inplace=True)
+df.chem.highlight_using_column("Molecule", "Pattern", inplace=True)
+df  # Shows molecules with different highlights per row
+
+# Highlight SMARTS patterns in Polars
+df = df.chem.highlight_using_column("Molecule", "Pattern")
 df  # Shows molecules with different highlights per row
 ```
 
 ### Fingerprint Similarity
 
 ```python
-# Color molecules by fingerprint similarity
+# Color molecules by fingerprint similarity (Pandas)
 reference_mol = oechem.OEGraphMol()
 oechem.OESmilesToMol(reference_mol, "c1ccc(N)cc1")
+df.chem.fingerprint_similarity("Molecule", reference_mol, inplace=True)
+df  # Shows similarity coloring and Tanimoto coefficients
 
-df.fingerprint_similarity("Molecule", reference_mol, inplace=True)
+# Polars version
+df = df.chem.fingerprint_similarity("Molecule", reference_mol)
 df  # Shows similarity coloring and Tanimoto coefficients
 ```
 
@@ -173,25 +218,13 @@ df  # Shows similarity coloring and Tanimoto coefficients
 
 Explore comprehensive examples in the `demos/` directory:
 
-### [Small_Molecules.ipynb](demos/Small_Molecules.ipynb)
-**Complete CNotebook Tutorial** - Comprehensive guide covering:
-- Basic molecule rendering and display options
-- OE2DMolDisplay objects with custom styling
-- Molecule grid layouts with highlighting
-- Advanced rendering configuration
-- Pandas DataFrame integration with oepandas
-- Substructure highlighting and SMARTS patterns
-- Column-based highlighting with different patterns per row
-- Molecular alignment techniques
-- Fingerprint similarity visualization
-- Empty and invalid molecule handling
+### Jupyter Demos
+- **[jupyter_demo.ipynb](demos/jupyter_demo.ipynb)** - Complete Pandas tutorial for Jupyter
+- **[polars_jupyter_demo.ipynb](demos/polars_jupyter_demo.ipynb)** - Complete Polars tutorial for Jupyter
 
-### [SVGs.ipynb](demos/SVGs.ipynb)
-**SVG Rendering Guide** - Learn how to:
-- Switch from PNG to SVG output format
-- Benefits and trade-offs of SVG vs PNG
-- High-quality crisp molecular graphics
-- SVG compatibility considerations
+### Marimo Demos
+- **[marimo_demo.py](demos/marimo_demo.py)** - Complete Pandas tutorial for Marimo
+- **[polars_marimo_demo.py](demos/polars_marimo_demo.py)** - Complete Polars tutorial for Marimo
 
 ## Configuration Options
 
@@ -219,6 +252,20 @@ ctx.scale = 1.0          # Scaling factor
 - **Marimo**: Automatically uses PNG format for compatibility
 - **Console**: Falls back to string representations
 
+### Backend Detection
+
+CNotebook auto-detects available backends:
+
+```python
+import cnotebook
+
+# Check what backends are available
+print(f"Pandas: {cnotebook._pandas_available}")
+print(f"Polars: {cnotebook._polars_available}")
+print(f"IPython: {cnotebook._ipython_available}")
+print(f"Marimo: {cnotebook._marimo_available}")
+```
+
 ## Contributing
 
 We welcome contributions! Please ensure your code:
@@ -226,6 +273,7 @@ We welcome contributions! Please ensure your code:
 - Includes appropriate tests
 - Works with both Jupyter and Marimo environments
 - Maintains compatibility with OpenEye Toolkits
+- Works with both Pandas and Polars when applicable
 
 ## License
 
@@ -237,4 +285,4 @@ For bug reports, feature requests, or general support, please open an issue on G
 
 ---
 
-*CNotebook makes chemical data visualization effortless. Import once, visualize everywhere!* 🧬✨
+*CNotebook makes chemical data visualization effortless. Import once, visualize everywhere!*

@@ -16,6 +16,14 @@ try:
 except ImportError:
     oepandas_available = False
 
+# Import oepolars for dtype checking
+try:
+    import polars as pl
+    import oepolars as oeplr
+    oepolars_available = True
+except ImportError:
+    oepolars_available = False
+
 from .context import cnotebook_context, get_series_context
 from .render import (
     oemol_to_html,
@@ -184,6 +192,48 @@ try:
     # Do the installation
     install_marimo_pandas_formatter()
 
+    def marimo_polars_formatter(df: pl.DataFrame):
+        """
+        Marimo DataFrame formatter for Polars DataFrames with molecule columns.
+        """
+        format_mapping = {}
+
+        # Check for MoleculeType / DisplayType (OEPolars specific)
+        if oepolars_available:
+            for col in df.columns:
+                dtype = df.schema[col]
+
+                if isinstance(dtype, oeplr.MoleculeType):
+                    series = df.get_column(col)
+                    metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                    ctx = get_series_context(metadata).copy()
+                    format_mapping[col] = _create_molecule_formatter(ctx)
+
+                elif isinstance(dtype, oeplr.DisplayType):
+                    series = df.get_column(col)
+                    metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                    ctx = get_series_context(metadata).copy()
+                    format_mapping[col] = _create_display_formatter(ctx)
+
+        # Return a Marimo table with our custom mapping
+        # noinspection PyProtectedMember,PyTypeChecker
+        return table(df, selection=None, format_mapping=format_mapping, pagination=True)._mime_()
+
+    def install_marimo_polars_formatter():
+        """Install the Polars DataFrame formatter if polars is available."""
+        if not oepolars_available:
+            return
+
+        # Check if we've already installed it to avoid duplicates
+        for typ, func in OPINIONATED_FORMATTERS.formatters.items():
+            if typ is pl.DataFrame and func.__name__ == "marimo_polars_formatter":
+                return  # Already installed
+
+        OPINIONATED_FORMATTERS.formatters[pl.DataFrame] = marimo_polars_formatter
+
+    if oepolars_available:
+        install_marimo_polars_formatter()
+
 except (ImportError, AttributeError) as ex:
     # Marimo not installed or API changed - skip formatter registration
     log.debug(f'Marimo formatter registration skipped: {ex}')
@@ -203,3 +253,17 @@ def _display_dataframe(self: pd.DataFrame):
     return "text/html", render_dataframe(df=self, formatters=None, col_space=None)
 
 pd.DataFrame._mime_ = _display_dataframe
+
+if oepolars_available:
+    from .polars_ext import render_polars_dataframe
+
+    def _display_polars_dataframe(self: pl.DataFrame):
+        """
+        Fallback MIME hook for Polars DataFrames in non-Marimo contexts.
+
+        In Marimo, the internal table patch handles DataFrame display.
+        This is used for static exports or other tools that check _mime_.
+        """
+        return "text/html", render_polars_dataframe(df=self, formatters=None, col_space=None)
+
+    pl.DataFrame._mime_ = _display_polars_dataframe

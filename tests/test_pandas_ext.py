@@ -10,12 +10,6 @@ from cnotebook.pandas_ext import (
     create_disp_formatter,
     escape_formatter,
     register_pandas_formatters,
-    SeriesHighlightAccessor,
-    SeriesRecalculateDepictionCoordinatesAccessor,
-    SeriesResetDepictionsAccessor,
-    SeriesAlignDepictionsAccessor,
-    HighlightUsingColumnAccessor,
-    FingerprintSimilaritySeriesAccessor,
     ColorBondByOverlapScore,
     SMARTS_DELIMITER_RE,
     ipython_present
@@ -471,54 +465,61 @@ class TestRegisterPandasFormatters:
             assert result is None
 
 
-class TestDataFrameAccessors:  
-    """Test DataFrame accessor classes"""
-    
+class TestDataFrameAccessors:
+    """Test DataFrame accessor classes via OEPandas .chem accessor"""
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_dataframe_recalculate_depictions_accessor(self):
-        """Test DataFrame recalculate_depiction_coordinates accessor"""
-        # This would require setting up a full DataFrame with molecule columns
-        # For now, just test that the accessor is registered
-        assert hasattr(pd.DataFrame, 'recalculate_depiction_coordinates')
-    
+        """Test DataFrame recalculate_depiction_coordinates accessor via .chem"""
+        # Test that the method is available via OEPandas .chem accessor
+        df = pd.DataFrame({'A': [1, 2]})
+        assert hasattr(df.chem, 'recalculate_depiction_coordinates')
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_dataframe_reset_depictions_accessor(self):
-        """Test DataFrame reset_depictions accessor"""
-        assert hasattr(pd.DataFrame, 'reset_depictions')
-    
+        """Test DataFrame reset_depictions accessor via .chem"""
+        df = pd.DataFrame({'A': [1, 2]})
+        assert hasattr(df.chem, 'reset_depictions')
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_dataframe_highlight_using_column_accessor(self):
-        """Test DataFrame highlight_using_column accessor"""
-        assert hasattr(pd.DataFrame, 'highlight_using_column')
-    
+        """Test DataFrame highlight_using_column accessor via .chem"""
+        df = pd.DataFrame({'A': [1, 2]})
+        assert hasattr(df.chem, 'highlight_using_column')
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_dataframe_fingerprint_similarity_accessor(self):
-        """Test DataFrame fingerprint_similarity accessor"""
-        assert hasattr(pd.DataFrame, 'fingerprint_similarity')
+        """Test DataFrame fingerprint_similarity accessor via .chem"""
+        df = pd.DataFrame({'A': [1, 2]})
+        assert hasattr(df.chem, 'fingerprint_similarity')
 
 
 class TestSeriesAccessors:
-    """Test Series accessor classes"""
-    
+    """Test Series accessor classes via OEPandas .chem accessor"""
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_series_highlight_accessor(self):
-        """Test Series highlight accessor"""
-        assert hasattr(pd.Series, 'highlight')
-    
+        """Test Series highlight accessor via .chem"""
+        series = pd.Series([1, 2, 3])
+        assert hasattr(series.chem, 'highlight')
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_series_recalculate_depiction_coordinates_accessor(self):
-        """Test Series recalculate_depiction_coordinates accessor"""
-        assert hasattr(pd.Series, 'recalculate_depiction_coordinates')
-    
+        """Test Series recalculate_depiction_coordinates accessor via .chem"""
+        series = pd.Series([1, 2, 3])
+        assert hasattr(series.chem, 'recalculate_depiction_coordinates')
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_series_reset_depictions_accessor(self):
-        """Test Series reset_depictions accessor"""
-        assert hasattr(pd.Series, 'reset_depictions')
-    
+        """Test Series reset_depictions accessor via .chem"""
+        series = pd.Series([1, 2, 3])
+        assert hasattr(series.chem, 'reset_depictions')
+
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_series_align_depictions_accessor(self):
-        """Test Series align_depictions accessor"""
-        assert hasattr(pd.Series, 'align_depictions')
+        """Test Series align_depictions accessor via .chem"""
+        series = pd.Series([1, 2, 3])
+        assert hasattr(series.chem, 'align_depictions')
 
 
 # Test for the existing functionality
@@ -669,7 +670,7 @@ class TestHighlightMetadataPreservation:
         })
 
         # Add highlighting callback
-        df.Molecule.highlight("ncn")
+        df.Molecule.chem.highlight("ncn")
 
         # Get the original metadata
         arr = df['Molecule'].array
@@ -703,7 +704,7 @@ class TestHighlightMetadataPreservation:
         })
 
         # Add highlighting
-        df.Molecule.highlight("ncn")
+        df.Molecule.chem.highlight("ncn")
 
         # Get the context and verify callback is registered
         arr = df['Molecule'].array

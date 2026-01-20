@@ -268,7 +268,7 @@ def _(mo):
 def _(df):
     # Convert the Pandas series to molecules
     # This can also take a list of columns to convert to molecule as well
-    df.as_molecule("Molecule", inplace=True)
+    df.chem.as_molecule("Molecule", inplace=True)
 
     # Display it
     df
@@ -312,7 +312,7 @@ def _(mo):
 @app.cell
 def _(df):
     # Highlight aromatic N-C-N bonds
-    df.Molecule.highlight("ncn")
+    df.Molecule.chem.highlight("ncn")
 
     # Display it
     df
@@ -322,7 +322,7 @@ def _(df):
 @app.cell
 def _(df):
     # Remove the highlighting (also removes any other display callbacks)
-    df.reset_depictions()
+    df.chem.reset_depictions()
 
     # Display it
     df
@@ -355,7 +355,7 @@ def _(mo):
 
 @app.cell
 def _(df):
-    df.highlight_using_column("Molecule", "SMARTS", inplace=True)
+    df.chem.highlight_using_column("Molecule", "SMARTS", inplace=True)
     df
     return
 
@@ -443,8 +443,8 @@ def _(mo):
 
 @app.cell
 def _(alignment_template, egfr_df):
-    egfr_df["Aligned"] = egfr_df.Original.copy_molecules()
-    egfr_df.Aligned.align_depictions(alignment_template)
+    egfr_df["Aligned"] = egfr_df.Original.chem.copy_molecules()
+    egfr_df.Aligned.chem.align_depictions(alignment_template)
     egfr_df.head()
     return
 
@@ -459,8 +459,8 @@ def _(mo):
 
 @app.cell
 def _(alignment_template, egfr_df):
-    egfr_df["Highlighted"] = egfr_df.Original.copy_molecules()
-    egfr_df.Highlighted.highlight(alignment_template, ref=alignment_template)
+    egfr_df["Highlighted"] = egfr_df.Original.chem.copy_molecules()
+    egfr_df.Highlighted.chem.highlight(alignment_template, ref=alignment_template)
     egfr_df.head()
     return
 
@@ -499,7 +499,7 @@ def _(DEMO_DIRECTORY, oepd, refmol):
     egfr_fpsim_df = oepd.read_smi(str(DEMO_DIRECTORY / "assets" / "egfr.smi"))
 
     # Calculate fingerprint similarity
-    egfr_fpsim_df.fingerprint_similarity("Molecule", refmol, inplace=True)
+    egfr_fpsim_df.chem.fingerprint_similarity("Molecule", refmol, inplace=True)
     egfr_fpsim_df.head()
     return
 

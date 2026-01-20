@@ -334,29 +334,39 @@ class TestModuleImports:
 
 class TestAutoRegistration:
     """Test automatic formatter registration"""
-    
-    @patch('cnotebook.is_jupyter_notebook')
-    @patch('cnotebook._register_ipython_formatters')
-    @patch('cnotebook._register_pandas_formatters')
-    def test_jupyter_registration(self, mock_pandas_reg, mock_ipython_reg, mock_is_jupyter):
-        """Test that formatters are registered in Jupyter environment"""
-        mock_is_jupyter.return_value = True
-        
-        # Re-import to trigger registration logic
-        import importlib
-        importlib.reload(cnotebook)
-        
-        # Note: This test is complex because the registration happens at import time
-        # In a real test, we'd need to mock the imports before the module is loaded
-    
-    @patch('cnotebook.is_marimo_notebook')
-    def test_marimo_registration(self, mock_is_marimo):
-        """Test that Marimo extension is imported in Marimo environment"""
-        mock_is_marimo.return_value = True
-        
-        # This test is also complex due to import-time behavior
-        # Would need to mock before module import
-    
+
+    def test_detection_flags_exist(self):
+        """Test that detection flags are exposed at module level"""
+        assert hasattr(cnotebook, '_pandas_available')
+        assert hasattr(cnotebook, '_polars_available')
+        assert hasattr(cnotebook, '_ipython_available')
+        assert hasattr(cnotebook, '_marimo_available')
+
+    def test_detection_flags_are_boolean(self):
+        """Test that detection flags are boolean values"""
+        assert isinstance(cnotebook._pandas_available, bool)
+        assert isinstance(cnotebook._polars_available, bool)
+        assert isinstance(cnotebook._ipython_available, bool)
+        assert isinstance(cnotebook._marimo_available, bool)
+
+    def test_pandas_available_reflects_imports(self):
+        """Test _pandas_available reflects actual pandas/oepandas availability"""
+        try:
+            import pandas
+            import oepandas
+            assert cnotebook._pandas_available is True
+        except ImportError:
+            assert cnotebook._pandas_available is False
+
+    def test_polars_available_reflects_imports(self):
+        """Test _polars_available reflects actual polars/oepolars availability"""
+        try:
+            import polars
+            import oepolars
+            assert cnotebook._polars_available is True
+        except ImportError:
+            assert cnotebook._polars_available is False
+
     def test_no_registration_in_plain_python(self):
         """Test that no formatters are registered in plain Python"""
         # This would test the case where neither Jupyter nor Marimo are detected

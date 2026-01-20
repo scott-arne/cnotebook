@@ -3,7 +3,6 @@ import logging
 import typing
 import pandas as pd
 import oepandas as oepd
-from pandas.api.extensions import register_dataframe_accessor, register_series_accessor
 from typing import Iterable, Any, Literal, Hashable
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from copy import copy as shallow_copy
@@ -257,427 +256,385 @@ else:
 
 
 ########################################################################################################################
-# Series accessors
+# CNotebook Series accessor extensions for OEPandas .chem accessor
 ########################################################################################################################
 
-@register_series_accessor("highlight")
-class SeriesHighlightAccessor:
-    def __init__(self, pandas_obj: pd.Series):
-        if not isinstance(pandas_obj.dtype, oepd.MoleculeDtype):
-            raise TypeError(
-                "subsearch only works on molecule columns (oepandas.MoleculeDtype). If this column has "
-                "molecules, use pd.Series.as_molecule to convert to a molecule column first."
+def _series_highlight(
+        self,
+        pattern: Iterable[str] | str | oechem.OESubSearch | Iterable[oechem.OESubSearch],
+        *,
+        color: oechem.OEColor = oechem.OEColor(oechem.OELightBlue),
+        style: int = oedepict.OEHighlightStyle_Stick,
+        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | None = None,
+        method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None
+) -> None:
+    """
+    Highlight chemical features in a structure
+
+    The pattern argument can be:
+        - SMARTS pattern
+        - oechem.OESubSearch or oechem.OEMCSSearch object
+        - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
+
+    :param pattern: Pattern(s) to highlight in the molecule
+    :param color: Highlight color
+    :param style: Highlight style
+    :param ref: Optional reference for alignment
+    :param method: Optional alignment method
+    :return: None
+    """
+    if not isinstance(self._obj.dtype, oepd.MoleculeDtype):
+        raise TypeError(
+            "highlight only works on molecule columns (oepandas.MoleculeDtype). If this column has "
+            "molecules, use series.chem.as_molecule() to convert to a molecule column first."
+        )
+
+    # Get the molecule array
+    arr = self._obj.array
+    assert isinstance(arr, oepd.MoleculeArray)
+
+    # Get / create a series context and save it (because we are modifying it locally)
+    ctx = get_series_context(arr.metadata, save=True)
+
+    # ********************************************************************************
+    # Highlighting
+    # ********************************************************************************
+
+    # Case: Pattern is a single SMARTS string or oechem.OESubSearch object
+    if isinstance(pattern, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
+        ctx.add_callback(
+            create_structure_highlighter(
+                query=pattern,
+                color=color,
+                style=style
             )
+        )
 
-        self._obj = pandas_obj
+    # Case: Pattern is an iterable
+    elif isinstance(pattern, Iterable):
+        for element in pattern:
 
-    def __call__(
-            self,
-            pattern: Iterable[str] | str | oechem.OESubSearch | Iterable[oechem.OESubSearch],
-            *,
-            color: oechem.OEColor = oechem.OEColor(oechem.OELightBlue),
-            style: int = oedepict.OEHighlightStyle_Stick,
-            ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | None = None,  # noqa
-            method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None
-    ) -> None:
-        """
-        Highlight chemical features in a structure
-
-        The pattern argument can be:
-            - SMARTS pattern
-            - oechem.OESubSearch or oechem.OEMCSSearch object
-            - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
-
-        :param pattern: Pattern(s) to highlight in the molecule
-        :param color: Highlight color
-        :param style: Highlight style
-        :return: Callback to highlight the pattern(s) in the molecule
-        """
-        # Get the molecule array
-        # Direct assignment to help IDE understand this is a MoleculeArray
-        arr = self._obj.array
-        assert isinstance(arr, oepd.MoleculeArray)
-
-        # Get / create a series context and save it (because we are modifying it locally)
-        ctx = get_series_context(arr.metadata, save=True)
-
-        # ********************************************************************************
-        # Highlighting
-        # ********************************************************************************
-
-        # Case: Pattern is a single SMARTS string or oechem.OESubSearch object
-        if isinstance(pattern, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
-            ctx.add_callback(
-                create_structure_highlighter(
-                    query=pattern,
-                    color=color,
-                    style=style
+            # Element is a SMARTS string or oechem.OESubSearch object
+            if isinstance(element, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
+                ctx.add_callback(
+                    create_structure_highlighter(
+                        query=element,
+                        color=color,
+                        style=style
+                    )
                 )
-            )
 
-        # Case: Pattern is an iterable
-        elif isinstance(pattern, Iterable):
-            for element in pattern:
+            # Unknown element
+            else:
+                raise TypeError(f'Do not know how to add molecule highlight for type {type(element).__name__}')
 
-                # Element is a SMARTS string or oechem.OESubSearch object
-                if isinstance(element, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
-                    ctx.add_callback(
-                        create_structure_highlighter(
-                            query=element,
-                            color=color,
-                            style=style
-                        )
-                    )
+    # Case: Pattern is an unknown type
+    else:
+        raise TypeError(f'Do not know how to add molecule highlight for type {type(pattern).__name__}')
 
-                # Unknown element
-                else:
-                    raise TypeError(f'Do not know how to add molecule highlight for type {type(element).__name__}')
+    # ********************************************************************************
+    # Alignment
+    # ********************************************************************************
 
-        # Case: Pattern is an unknown type
-        else:
-            raise TypeError(f'Do not know how to add molecule highlight for type {type(pattern).__name__}')
-
-        # ********************************************************************************
-        # Alignment
-        # ********************************************************************************
-
-        if ref is not None:
-            self._obj.align_depictions(ref=ref, method=method)
+    if ref is not None:
+        self._obj.chem.align_depictions(ref=ref, method=method)
 
 
-@register_series_accessor("recalculate_depiction_coordinates")
-class SeriesRecalculateDepictionCoordinatesAccessor:
-    def __init__(self, pandas_obj: pd.Series):
-        if not isinstance(pandas_obj.dtype, oepd.MoleculeDtype):
-            raise TypeError(
-                "recalculate_depiction_coordinates only works on molecule columns (oepandas.MoleculeDtype). If this "
-                "column has molecules, use pd.Series.as_molecule to convert to a molecule column first."
-            )
+def _series_recalculate_depiction_coordinates(
+        self,
+        *,
+        clear_coords: bool = True,
+        add_depction_hydrogens: bool = True,
+        perceive_bond_stereo: bool = True,
+        suppress_explicit_hydrogens: bool = True,
+        orientation: int = oedepict.OEDepictOrientation_Default
+) -> None:
+    """
+    Recalculate the depictions for a molecule series.
 
-        self._obj = pandas_obj
+    See the following link for more information:
+    https://docs.eyesopen.com/toolkits/python/depicttk/OEDepictClasses/OEPrepareDepictionOptions.html
 
-    def __call__(
-            self,
-            *,
-            clear_coords: bool = True,
-            add_depction_hydrogens: bool = True,
-            perceive_bond_stereo: bool = True,
-            suppress_explicit_hydrogens: bool = True,
-            orientation: int = oedepict.OEDepictOrientation_Default
-    ) -> None:
-        """
-        Recalculate the depictions for a molecule series.
+    :param clear_coords: Clear existing 2D coordinates
+    :param add_depction_hydrogens: Add explicit depiction hydrogens for faithful stereo depiction, etc.
+    :param perceive_bond_stereo: Perceive wedge/hash bond stereo
+    :param suppress_explicit_hydrogens: Suppress explicit hydrogens
+    :param orientation: Preferred 2D orientation
+    """
+    if not isinstance(self._obj.dtype, oepd.MoleculeDtype):
+        raise TypeError(
+            "recalculate_depiction_coordinates only works on molecule columns (oepandas.MoleculeDtype). If this "
+            "column has molecules, use series.chem.as_molecule() to convert to a molecule column first."
+        )
 
-        See the following link for more information:
-        https://docs.eyesopen.com/toolkits/python/depicttk/OEDepictClasses/OEPrepareDepictionOptions.html
+    # Create the depiction options
+    opts = oedepict.OEPrepareDepictionOptions()
+    opts.SetClearCoords(clear_coords)
+    opts.SetAddDepictionHydrogens(add_depction_hydrogens)
 
-        :param clear_coords: Clear existing 2D coordinates
-        :param add_depction_hydrogens: Add explicit depiction hydrogens for faithful stereo depiction, etc.
-        :param perceive_bond_stereo: Perceive wedge/hash bond stereo
-        :param suppress_explicit_hydrogens: Suppress explicit hydrogens
-        :param orientation: Preferred 2D orientation
-        """
-        # Create the depiction options
-        opts = oedepict.OEPrepareDepictionOptions()
-        opts.SetClearCoords(clear_coords)
-        opts.SetAddDepictionHydrogens(add_depction_hydrogens)
-
-        for mol in self._obj.array:
-            if isinstance(mol, oechem.OEMolBase):
-                oedepict.OEPrepareDepiction(mol, opts)
+    for mol in self._obj.array:
+        if isinstance(mol, oechem.OEMolBase):
+            oedepict.OEPrepareDepiction(mol, opts)
 
 
-@register_series_accessor("reset_depictions")
-class SeriesResetDepictionsAccessor:
-    def __init__(self, pandas_obj: pd.Series):
-        self._obj = pandas_obj
-
-    def __call__(self) -> None:
-        """
-        Reset depiction callbacks for a molecule series
-        """
-        # Check if array has metadata attribute (should be true for oepandas arrays)
-        if hasattr(self._obj.array, "metadata"):
-            # Direct assignment to help IDE understand this has metadata
-            arr = self._obj.array
-            assert isinstance(arr, oepd.MoleculeArray)
-            _ = arr.metadata.pop("cnotebook", None)
-
-
-@register_series_accessor("align_depictions")
-class SeriesAlignDepictionsAccessor:
-    def __init__(self, pandas_obj: pd.Series):
-        if not isinstance(pandas_obj.dtype, oepd.MoleculeDtype):
-            raise TypeError(
-                "align_depictions only works on molecule columns (oepandas.MoleculeDtype). If this "
-                "column has molecules, use pd.Series.as_molecule to convert to a molecule column first."
-            )
-
-        self._obj = pandas_obj
-
-    def __call__(
-            self,
-            ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | oechem.OEQMol | Literal["first"],
-            method: Literal["substructure", "ss", "mcss", "fp", "fingerprint"] | None = None,
-            **kwargs
-    ) -> None:
-        """
-        Align the 2D coordinates of molecules
-        :param align: Alignment reference
-        :param kwargs: Keyword arguments for aligner
-        :return: Aligned molecule depictions
-        """
-        # Get the rendering context for creating the displays
-
-        # TODO: Maybe do this smarter so that you know if the context is column-level, which means you could copy that
-        #       context into the new DisplayArray that you'll create below? Or even link the contexts?
-
-        # Direct assignment to help IDE understand this is a MoleculeArray
+def _series_reset_depictions(self) -> None:
+    """
+    Reset depiction callbacks for a molecule series
+    """
+    # Check if array has metadata attribute (should be true for oepandas arrays)
+    if hasattr(self._obj.array, "metadata"):
         arr = self._obj.array
         assert isinstance(arr, oepd.MoleculeArray)
+        _ = arr.metadata.pop("cnotebook", None)
 
-        if isinstance(ref, str) and ref == "first":
-            for mol in arr:
-                if mol is not None and mol.IsValid():
-                    ref = mol.CreateCopy()
-                    break
-            else:
-                log.warning("No valid molecule found in series for depiction alignment")
-                return
 
-        # Suppress alignment warnings (there are lots of needless warnings)
-        level = oechem.OEThrow.GetLevel()
-        oechem.OEThrow.SetLevel(oechem.OEErrorLevel_Error)
+def _series_align_depictions(
+        self,
+        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | oechem.OEQMol | Literal["first"],
+        method: Literal["substructure", "ss", "mcss", "fp", "fingerprint"] | None = None,
+        **kwargs
+) -> None:
+    """
+    Align the 2D coordinates of molecules
+    :param ref: Alignment reference
+    :param method: Alignment method
+    :param kwargs: Keyword arguments for aligner
+    :return: Aligned molecule depictions
+    """
+    if not isinstance(self._obj.dtype, oepd.MoleculeDtype):
+        raise TypeError(
+            "align_depictions only works on molecule columns (oepandas.MoleculeDtype). If this "
+            "column has molecules, use series.chem.as_molecule() to convert to a molecule column first."
+        )
 
-        # noinspection PyBroadException
-        try:
-            # Create the aligner
-            aligner = create_aligner(ref=ref, method=method)
+    # Get the rendering context for creating the displays
+    arr = self._obj.array
+    assert isinstance(arr, oepd.MoleculeArray)
 
-            for mol in arr:
-                _ = aligner(mol)
+    if isinstance(ref, str) and ref == "first":
+        for mol in arr:
+            if mol is not None and mol.IsValid():
+                ref = mol.CreateCopy()
+                break
+        else:
+            log.warning("No valid molecule found in series for depiction alignment")
+            return
 
-        except Exception:
-            # We don't care if the aligners fail - it just results in unaligned structures (NBD)
-            pass
+    # Suppress alignment warnings (there are lots of needless warnings)
+    level = oechem.OEThrow.GetLevel()
+    oechem.OEThrow.SetLevel(oechem.OEErrorLevel_Error)
 
-        # Restore OEThrow
-        finally:
-            oechem.OEThrow.SetLevel(level)
+    # noinspection PyBroadException
+    try:
+        # Create the aligner
+        aligner = create_aligner(ref=ref, method=method)
+
+        for mol in arr:
+            _ = aligner(mol)
+
+    except Exception:
+        # We don't care if the aligners fail - it just results in unaligned structures (NBD)
+        pass
+
+    # Restore OEThrow
+    finally:
+        oechem.OEThrow.SetLevel(level)
 
 
 ########################################################################################################################
-# DataFrame accessors
+# CNotebook DataFrame accessor extensions for OEPandas .chem accessor
 ########################################################################################################################
 
-@register_dataframe_accessor("recalculate_depiction_coordinates")
-class SeriesRecalculateDepictionCoordinatesAccessor:
-    def __init__(self, pandas_obj: pd.DataFrame):
-        self._obj = pandas_obj
+def _dataframe_recalculate_depiction_coordinates(
+        self,
+        *,
+        molecule_columns: str | Iterable[str] | None = None,
+        clear_coords: bool = True,
+        add_depction_hydrogens: bool = True,
+        perceive_bond_stereo: bool = True,
+        suppress_explicit_hydrogens: bool = True,
+        orientation: int = oedepict.OEDepictOrientation_Default
+) -> None:
+    """
+    Recalculate the depictions for a one or more molecule series in a DataFrame. If molecule_columns is None,
+    which is the default, then all molecule columns will have their depictions recalculated
 
-    def __call__(
-            self,
-            *,
-            molecule_columns: str | Iterable[str] | None = None,
-            clear_coords: bool = True,
-            add_depction_hydrogens: bool = True,
-            perceive_bond_stereo: bool = True,
-            suppress_explicit_hydrogens: bool = True,
-            orientation: int = oedepict.OEDepictOrientation_Default
-    ) -> None:
-        """
-        Recalculate the depictions for a one or more molecule series in a DataFrame. If molecule_columns is None,
-        which is the default, then all molecule columns will have their depictions recalculated
+    See the following link for more information:
+    https://docs.eyesopen.com/toolkits/python/depicttk/OEDepictClasses/OEPrepareDepictionOptions.html
 
-        See the following link for more information:
-        https://docs.eyesopen.com/toolkits/python/depicttk/OEDepictClasses/OEPrepareDepictionOptions.html
+    :param molecule_columns: Optional molecule column(s) to have depictions recalculated
+    :param clear_coords: Clear existing 2D coordinates
+    :param add_depction_hydrogens: Add explicit depiction hydrogens for faithful stereo depiction, etc.
+    :param perceive_bond_stereo: Perceive wedge/hash bond stereo
+    :param suppress_explicit_hydrogens: Suppress explicit hydrogens
+    :param orientation: Preferred 2D orientation
+    """
+    if molecule_columns is None:
+        molecule_columns = set()
 
-        :param molecule_columns: Optional molecule column(s) to have depictions recalculated
-        :param clear_coords: Clear existing 2D coordinates
-        :param add_depction_hydrogens: Add explicit depiction hydrogens for faithful stereo depiction, etc.
-        :param perceive_bond_stereo: Perceive wedge/hash bond stereo
-        :param suppress_explicit_hydrogens: Suppress explicit hydrogens
-        :param orientation: Preferred 2D orientation
-        """
-        if molecule_columns is None:
-            molecule_columns = set()
+        for col in self._obj.columns:
+            if isinstance(self._obj.dtypes[col], oepd.MoleculeDtype):
+                molecule_columns.add(col)
 
-            for col in self._obj.columns:
-                if isinstance(self._obj.dtypes[col], oepd.MoleculeDtype):
-                    molecule_columns.add(col)
+    elif isinstance(molecule_columns, str):
+        molecule_columns = {molecule_columns}
 
-        elif isinstance(molecule_columns, str):
-            molecule_columns = {molecule_columns}
+    else:
+        molecule_columns = set(molecule_columns)
 
-        else:
-            molecule_columns = set(molecule_columns)
+    # Recalculate the column depictions
+    for col in molecule_columns:
 
-        # Recalculate the column depictions
-        for col in molecule_columns:
-
-            if col in self._obj.columns:
-                if isinstance(self._obj.dtypes[col], oepd.MoleculeDtype):
-                    self._obj[col].recalculate_depiction_coordinates(
-                        clear_coords=clear_coords,
-                        add_depction_hydrogens=add_depction_hydrogens,
-                        perceive_bond_stereo=perceive_bond_stereo,
-                        suppress_explicit_hydrogens=suppress_explicit_hydrogens,
-                        orientation=orientation
-                    )
-
-                else:
-                    log.warning(f'Column {col} does not have a MoleculeDtype')
+        if col in self._obj.columns:
+            if isinstance(self._obj.dtypes[col], oepd.MoleculeDtype):
+                self._obj[col].chem.recalculate_depiction_coordinates(
+                    clear_coords=clear_coords,
+                    add_depction_hydrogens=add_depction_hydrogens,
+                    perceive_bond_stereo=perceive_bond_stereo,
+                    suppress_explicit_hydrogens=suppress_explicit_hydrogens,
+                    orientation=orientation
+                )
 
             else:
-                log.warning(f'{col} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
-                molecule_columns.remove(col)
-
-
-@register_dataframe_accessor("reset_depictions")
-class DataFrameResetDepictionsAccessor:
-    def __init__(self, pandas_obj: pd.DataFrame):
-        self._obj = pandas_obj
-
-    def __call__(self, *, molecule_columns: str | Iterable[str] | None = None) -> None:
-        """
-        Reset depiction callbacks for one or more columns
-        """
-        columns = set()
-        if molecule_columns is None:
-            columns.update(self._obj.columns)
-
-        elif isinstance(molecule_columns, str):
-            columns.add(molecule_columns)
+                log.warning(f'Column {col} does not have a MoleculeDtype')
 
         else:
-            columns.update(molecule_columns)
-
-        # Filter invalid and non-molecule columns
-        for col in filter(
-            lambda c: c in self._obj.columns and isinstance(self._obj[c].dtype, oepd.MoleculeDtype),
-            columns
-        ):
-            self._obj[col].reset_depictions()
+            log.warning(f'{col} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
+            molecule_columns.remove(col)
 
 
-@register_dataframe_accessor("highlight_using_column")
-class HighlightUsingColumnAccessor:
-    def __init__(self, pandas_obj: pd.DataFrame):
-        self._obj = pandas_obj
+def _dataframe_reset_depictions(self, *, molecule_columns: str | Iterable[str] | None = None) -> None:
+    """
+    Reset depiction callbacks for one or more columns
+    """
+    columns = set()
+    if molecule_columns is None:
+        columns.update(self._obj.columns)
 
-    def __call__(
-            self,
-            molecule_column: str,
-            pattern_column: str,
-            *,
-            highlighted_column: str = "highlighted_substructures",
-            ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | None = None,
-            alignment_opts: oedepict.OEAlignmentOptions | None = None,
-            prepare_opts: oedepict.OEPrepareDepictionOptions | None = None,
-            inplace: bool = False
-    ) -> pd.DataFrame:
-        """
-        Highlight molecules based on the value of another column. The column produced is a DisplayArray column, so
-        the results are not suitable for other molecular calculations.
+    elif isinstance(molecule_columns, str):
+        columns.add(molecule_columns)
 
-        The other column can contain:
-            - Comma or whitespace delimited string of SMARTS patterns
-            - oechem.OESubSearch or oechem.OEMCSSearch object
-            - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
+    else:
+        columns.update(molecule_columns)
 
-        :param molecule_column: Name of the molecule column
-        :param pattern_column: Name of the pattern column
-        :param highlighted_column: Optional name of the column with highlighted structures
-        :param ref: Optional reference for aligning depictions
-        :param alignment_opts: Optional depiction alignment options (oedepict.OEAlignmentOptions)
-        :param prepare_opts: Optional depiction preparation options (oedepict.OEPrepareDepictionOptions)
-        :param inplace: Modify the DataFrame in place
-        :return: Modified DataFrame
-        """
-        # Object we are operating on
-        df = self._obj if inplace else self._obj.copy()
+    # Filter invalid and non-molecule columns
+    for col in filter(
+        lambda c: c in self._obj.columns and isinstance(self._obj[c].dtype, oepd.MoleculeDtype),
+        columns
+    ):
+        self._obj[col].chem.reset_depictions()
 
-        if molecule_column not in df.columns:
-            raise KeyError(f'{molecule_column} not found in DataFrame columns: ({", ".join(df.columns)}')
 
-        if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
-            raise TypeError(
-                f"highlight_using_column only works on molecule columns (oepandas.MoleculeDtype). If {molecule_column}"
-                " has molecules, use pd.Series.as_molecule to convert to a molecule column first."
-            )
+def _dataframe_highlight_using_column(
+        self,
+        molecule_column: str,
+        pattern_column: str,
+        *,
+        highlighted_column: str = "highlighted_substructures",
+        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | None = None,
+        alignment_opts: oedepict.OEAlignmentOptions | None = None,
+        prepare_opts: oedepict.OEPrepareDepictionOptions | None = None,
+        inplace: bool = False
+) -> pd.DataFrame:
+    """
+    Highlight molecules based on the value of another column. The column produced is a DisplayArray column, so
+    the results are not suitable for other molecular calculations.
 
-        if pattern_column not in df.columns:
-            raise KeyError(f'{pattern_column} not found in DataFrame columns: ({", ".join(df.columns)}')
+    The other column can contain:
+        - Comma or whitespace delimited string of SMARTS patterns
+        - oechem.OESubSearch or oechem.OEMCSSearch object
+        - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
 
-        # Create the display objects
-        indexes = []
-        displays = []
+    :param molecule_column: Name of the molecule column
+    :param pattern_column: Name of the pattern column
+    :param highlighted_column: Optional name of the column with highlighted structures
+    :param ref: Optional reference for aligning depictions
+    :param alignment_opts: Optional depiction alignment options (oedepict.OEAlignmentOptions)
+    :param prepare_opts: Optional depiction preparation options (oedepict.OEPrepareDepictionOptions)
+    :param inplace: Modify the DataFrame in place
+    :return: Modified DataFrame
+    """
+    # Object we are operating on
+    df = self._obj if inplace else self._obj.copy()
 
-        # Get the rendering context for creating the displays
-        # TODO: Maybe do this smarter so that you know if the context is column-level, which means you could copy that
-        #       context into the new DisplayArray that you'll create below? Or even link the contexts?
-        # Direct assignment to help IDE understand this is a MoleculeArray
-        arr = df[molecule_column].array
-        assert isinstance(arr, oepd.MoleculeArray)
-        ctx = get_series_context(arr.metadata)
+    if molecule_column not in df.columns:
+        raise KeyError(f'{molecule_column} not found in DataFrame columns: ({", ".join(df.columns)}')
 
-        for idx, row in df.iterrows():
-            indexes.append(idx)
+    if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
+        raise TypeError(
+            f"highlight_using_column only works on molecule columns (oepandas.MoleculeDtype). If {molecule_column}"
+            " has molecules, use df.chem.as_molecule() to convert to a molecule column first."
+        )
 
-            mol = row[molecule_column]
-            if isinstance(mol, oechem.OEMolBase):
+    if pattern_column not in df.columns:
+        raise KeyError(f'{pattern_column} not found in DataFrame columns: ({", ".join(df.columns)}')
 
-                # Create the display
-                disp = oemol_to_disp(mol, ctx=ctx)
+    # Create the display objects
+    indexes = []
+    displays = []
 
-                # Highlight
-                substructures = []
-                patterns = row[pattern_column]
+    # Get the rendering context for creating the displays
+    arr = df[molecule_column].array
+    assert isinstance(arr, oepd.MoleculeArray)
+    ctx = get_series_context(arr.metadata)
 
-                # Parse different patterns
-                if isinstance(patterns, str):
-                    for pattern in re.split(SMARTS_DELIMITER_RE, patterns):
-                        ss = oechem.OESubSearch(pattern)
-                        if ss.IsValid():
-                            substructures.append(ss)
+    for idx, row in df.iterrows():
+        indexes.append(idx)
 
-                elif isinstance(patterns, oechem.OESubSearch):
-                    if patterns.IsValid():
-                        substructures.append(patterns)
+        mol = row[molecule_column]
+        if isinstance(mol, oechem.OEMolBase):
 
-                elif isinstance(patterns, Iterable):
+            # Create the display
+            disp = oemol_to_disp(mol, ctx=ctx)
 
-                    for p in patterns:
+            # Highlight
+            substructures = []
+            patterns = row[pattern_column]
 
-                        if isinstance(p, str):
-                            for pattern in re.split(SMARTS_DELIMITER_RE, p):
-                                ss = oechem.OESubSearch(pattern)
-                                if ss.IsValid():
-                                    substructures.append(ss)
+            # Parse different patterns
+            if isinstance(patterns, str):
+                for pattern in re.split(SMARTS_DELIMITER_RE, patterns):
+                    ss = oechem.OESubSearch(pattern)
+                    if ss.IsValid():
+                        substructures.append(ss)
 
-                        elif isinstance(p, oechem.OESubSearch):
-                            if p.IsValid():
-                                substructures.append(p)
+            elif isinstance(patterns, oechem.OESubSearch):
+                if patterns.IsValid():
+                    substructures.append(patterns)
 
-                        else:
-                            log.warning(f'Do not know how to highlight using: {type(p).__name__}')
+            elif isinstance(patterns, Iterable):
 
-                else:
-                    log.warning(f'Do not know how to highlight using: {type(patterns).__name__}')
+                for p in patterns:
 
-                # Apply substructure highlights
-                highlight = oedepict.OEHighlightOverlayByBallAndStick(oechem.OEGetLightColors())
+                    if isinstance(p, str):
+                        for pattern in re.split(SMARTS_DELIMITER_RE, p):
+                            ss = oechem.OESubSearch(pattern)
+                            if ss.IsValid():
+                                substructures.append(ss)
 
-                for ss in substructures:
-                    oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(mol, True))
+                    elif isinstance(p, oechem.OESubSearch):
+                        if p.IsValid():
+                            substructures.append(p)
 
-                displays.append(disp)
+                    else:
+                        log.warning(f'Do not know how to highlight using: {type(p).__name__}')
 
             else:
-                displays.append(None)
+                log.warning(f'Do not know how to highlight using: {type(patterns).__name__}')
 
-        df[highlighted_column] = pd.Series(displays, index=indexes, dtype=oepd.DisplayDtype())
-        return df
+            # Apply substructure highlights
+            highlight = oedepict.OEHighlightOverlayByBallAndStick(oechem.OEGetLightColors())
+
+            for ss in substructures:
+                oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(mol, True))
+
+            displays.append(disp)
+
+        else:
+            displays.append(None)
+
+    df[highlighted_column] = pd.Series(displays, index=indexes, dtype=oepd.DisplayDtype())
+    return df
 
 
 class ColorBondByOverlapScore(oegrapheme.OEBondGlyphBase):
@@ -717,196 +674,220 @@ class ColorBondByOverlapScore(oegrapheme.OEBondGlyphBase):
         return ColorBondByOverlapScore(self.colorg, self.tag).__disown__()
 
 
-@register_dataframe_accessor("fingerprint_similarity")
-class FingerprintSimilaritySeriesAccessor:
-    def __init__(self, pandas_obj: pd.DataFrame):
-        self._obj = pandas_obj
-        self._tag = oechem.OEGetTag("fingerprint_overlap")
+# Store the fingerprint tag for fingerprint_similarity
+_fingerprint_overlap_tag = oechem.OEGetTag("fingerprint_overlap")
 
-    def __call__(
-            self,
-            molecule_column: str,
-            ref: oechem.OEMolBase | None = None,
-            *,
-            tanimoto_column="fingerprint_tanimoto",
-            reference_similarity_column="reference_similarity",
-            target_similarity_column="target_similarity",
-            fptype: str = "tree",
-            num_bits: int = 4096,
-            min_distance: int = 0,
-            max_distance: int = 4,
-            atom_type: str | int = oegraphsim.OEFPAtomType_DefaultTreeAtom,
-            bond_type: str | int = oegraphsim.OEFPBondType_DefaultTreeBond,
-            inplace: bool = False
-    ) -> pd.DataFrame:
-        """
-        Color molecules by fingerprint similarity
-        :param ref: Reference molecule
-        :param fptype: Fingerprint type
-        :param num_bits: Number of bits in the fingerprint
-        :param min_distance: Minimum distance/radius for path/circular/tree
-        :param max_distance: Maximum distance/radius for path/circular/tree
-        :param atom_type: Atom type string delimited by "|" OR int bitmask from the oegraphsim.OEFPAtomType_ namespace
-        :param bond_type: Bond type string delimited by "|" OR int bitmask from the oegraphsim.OEFPBondType_ namespace
-        :return:
-        """
-        # Preprocess
-        df = self._obj if inplace else self._obj.copy()
 
-        if molecule_column not in df.columns:
-            raise KeyError(f'Molecule column not found in DataFrame: {molecule_column}')
+def _dataframe_fingerprint_similarity(
+        self,
+        molecule_column: str,
+        ref: oechem.OEMolBase | None = None,
+        *,
+        tanimoto_column="fingerprint_tanimoto",
+        reference_similarity_column="reference_similarity",
+        target_similarity_column="target_similarity",
+        fptype: str = "tree",
+        num_bits: int = 4096,
+        min_distance: int = 0,
+        max_distance: int = 4,
+        atom_type: str | int = oegraphsim.OEFPAtomType_DefaultTreeAtom,
+        bond_type: str | int = oegraphsim.OEFPBondType_DefaultTreeBond,
+        inplace: bool = False
+) -> pd.DataFrame:
+    """
+    Color molecules by fingerprint similarity
+    :param molecule_column: Name of the molecule column
+    :param ref: Reference molecule
+    :param tanimoto_column: Name of the tanimoto column
+    :param reference_similarity_column: Name of the reference similarity column
+    :param target_similarity_column: Name of the target similarity column
+    :param fptype: Fingerprint type
+    :param num_bits: Number of bits in the fingerprint
+    :param min_distance: Minimum distance/radius for path/circular/tree
+    :param max_distance: Maximum distance/radius for path/circular/tree
+    :param atom_type: Atom type string delimited by "|" OR int bitmask from the oegraphsim.OEFPAtomType_ namespace
+    :param bond_type: Bond type string delimited by "|" OR int bitmask from the oegraphsim.OEFPBondType_ namespace
+    :param inplace: Modify the DataFrame in place
+    :return: DataFrame with similarity columns
+    """
+    tag = _fingerprint_overlap_tag
 
-        if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
-            raise TypeError("Column {} does not have dtype oepd.MoleculeDtype ({})".format(
-                molecule_column, str(df[molecule_column].dtype)))
+    # Preprocess
+    df = self._obj if inplace else self._obj.copy()
 
-        # Get the context
-        # Direct assignment to help IDE understand this is a MoleculeArray
-        arr = self._obj[molecule_column].array
-        assert isinstance(arr, oepd.MoleculeArray)
-        ctx = get_series_context(arr.metadata)
+    if molecule_column not in df.columns:
+        raise KeyError(f'Molecule column not found in DataFrame: {molecule_column}')
 
-        # If we're using the first molecule as our reference
-        if ref is None:
-            for mol in arr:  # type: oechem.OEMol
-                if mol.IsValid():
-                    ref = mol
-                    break
-            else:
-                log.warning(f'No valid reference molecules to use for alignment in column {molecule_column}')
-                return df
+    if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
+        raise TypeError("Column {} does not have dtype oepd.MoleculeDtype ({})".format(
+            molecule_column, str(df[molecule_column].dtype)))
 
-        # Check reference molecule
-        if not ref.IsValid():
-            log.warning("Reference molecule is not valid")
+    # Get the context
+    arr = self._obj[molecule_column].array
+    assert isinstance(arr, oepd.MoleculeArray)
+    ctx = get_series_context(arr.metadata)
+
+    # If we're using the first molecule as our reference
+    if ref is None:
+        for mol in arr:  # type: oechem.OEMol
+            if mol.IsValid():
+                ref = mol
+                break
+        else:
+            log.warning(f'No valid reference molecules to use for alignment in column {molecule_column}')
             return df
 
-        # Fingerprint maker
-        make_fp = fingerprint_maker(
-            fptype=fptype,
-            num_bits=num_bits,
-            min_distance=min_distance,
-            max_distance=max_distance,
-            atom_type=atom_type,
-            bond_type=bond_type
-        )
+    # Check reference molecule
+    if not ref.IsValid():
+        log.warning("Reference molecule is not valid")
+        return df
 
-        # Make the reference fingerprint
-        ref_fp = make_fp(ref)
+    # Fingerprint maker
+    make_fp = fingerprint_maker(
+        fptype=fptype,
+        num_bits=num_bits,
+        min_distance=min_distance,
+        max_distance=max_distance,
+        atom_type=atom_type,
+        bond_type=bond_type
+    )
 
-        if not ref_fp.IsValid():
-            log.warning("Fingerprint from reference molecule is invalid")
-            return df
+    # Make the reference fingerprint
+    ref_fp = make_fp(ref)
 
-        # Create the display objects
-        ref_displays = []
-        targ_displays = []
+    if not ref_fp.IsValid():
+        log.warning("Fingerprint from reference molecule is invalid")
+        return df
 
-        # FIXME: See now below regarding the fact we have to cache the reference and target molecule copies
-        ref_molecules = []
-        targ_molecules = []
+    # Create the display objects
+    ref_displays = []
+    targ_displays = []
 
-        tanimotos = []
-        index = []
+    # FIXME: See now below regarding the fact we have to cache the reference and target molecule copies
+    ref_molecules = []
+    targ_molecules = []
 
-        for idx, mol in df[molecule_column].items():  # type: Hashable, oechem.OEMol
-            index.append(idx)
-            if mol is not None and mol.IsValid():
+    tanimotos = []
+    index = []
 
-                # Copy the molecules, because we're modifying them
-                targ_mol = oechem.OEMol(mol)
-                ref_mol = oechem.OEMol(ref)
+    for idx, mol in df[molecule_column].items():  # type: Hashable, oechem.OEMol
+        index.append(idx)
+        if mol is not None and mol.IsValid():
 
-                # FIXME: See now below regarding the fact we have to cache the reference and target molecule copies
-                targ_molecules.append(targ_mol)
-                ref_molecules.append(ref_mol)
+            # Copy the molecules, because we're modifying them
+            targ_mol = oechem.OEMol(mol)
+            ref_mol = oechem.OEMol(ref)
 
-                # Create the fingerprint
-                targ_fp = make_fp(targ_mol)
-                if targ_fp.IsValid():
+            # FIXME: See now below regarding the fact we have to cache the reference and target molecule copies
+            targ_molecules.append(targ_mol)
+            ref_molecules.append(ref_mol)
 
-                    # Add the tanimoto
-                    tanimotos.append(oegraphsim.OETanimoto(ref_fp, targ_fp))
+            # Create the fingerprint
+            targ_fp = make_fp(targ_mol)
+            if targ_fp.IsValid():
 
-                    # Calculate the similarity
-                    targ_bonds = oechem.OEUIntArray(targ_mol.GetMaxBondIdx())
-                    ref_bonds = oechem.OEUIntArray(ref_mol.GetMaxBondIdx())
+                # Add the tanimoto
+                tanimotos.append(oegraphsim.OETanimoto(ref_fp, targ_fp))
 
-                    # Overlaps
-                    overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
+                # Calculate the similarity
+                targ_bonds = oechem.OEUIntArray(targ_mol.GetMaxBondIdx())
+                ref_bonds = oechem.OEUIntArray(ref_mol.GetMaxBondIdx())
 
-                    for match in overlaps:
-                        for bond in match.GetPatternBonds():
-                            ref_bonds[bond.GetIdx()] += 1
-                        for bond in match.GetTargetBonds():
-                            targ_bonds[bond.GetIdx()] += 1
+                # Overlaps
+                overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
 
-                    for bond in targ_mol.GetBonds():
-                        bond.SetData(self._tag, targ_bonds[bond.GetIdx()])
+                for match in overlaps:
+                    for bond in match.GetPatternBonds():
+                        ref_bonds[bond.GetIdx()] += 1
+                    for bond in match.GetTargetBonds():
+                        targ_bonds[bond.GetIdx()] += 1
 
-                    for bond in ref_mol.GetBonds():
-                        bond.SetData(self._tag, ref_bonds[bond.GetIdx()])
+                for bond in targ_mol.GetBonds():
+                    bond.SetData(tag, targ_bonds[bond.GetIdx()])
 
-                    # noinspection PyTypeChecker
-                    maxvalue = max((0, max(targ_bonds), max(ref_bonds)))
+                for bond in ref_mol.GetBonds():
+                    bond.SetData(tag, ref_bonds[bond.GetIdx()])
 
-                    # Create the color gradient
-                    colorg = oechem.OELinearColorGradient()
-                    colorg.AddStop(oechem.OEColorStop(0.0, oechem.OEPinkTint))
-                    colorg.AddStop(oechem.OEColorStop(1.0, oechem.OEYellow))
-                    colorg.AddStop(oechem.OEColorStop(maxvalue, oechem.OEDarkGreen))
+                # noinspection PyTypeChecker
+                maxvalue = max((0, max(targ_bonds), max(ref_bonds)))
 
-                    # Function that will color the bonds
-                    bondglyph = ColorBondByOverlapScore(colorg, self._tag)
+                # Create the color gradient
+                colorg = oechem.OELinearColorGradient()
+                colorg.AddStop(oechem.OEColorStop(0.0, oechem.OEPinkTint))
+                colorg.AddStop(oechem.OEColorStop(1.0, oechem.OEYellow))
+                colorg.AddStop(oechem.OEColorStop(maxvalue, oechem.OEDarkGreen))
 
-                    # Align the molecules
-                    overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
-                    oedepict.OEPrepareMultiAlignedDepiction(targ_mol, ref_mol, overlaps)
+                # Function that will color the bonds
+                bondglyph = ColorBondByOverlapScore(colorg, tag)
 
-                    # Create the displays
-                    ref_disp = oemol_to_disp(ref_mol, ctx=ctx)
-                    targ_disp = oemol_to_disp(targ_mol, ctx=ctx)
+                # Align the molecules
+                overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
+                oedepict.OEPrepareMultiAlignedDepiction(targ_mol, ref_mol, overlaps)
 
-                    # Color the displays
-                    oegrapheme.OEAddGlyph(ref_disp, bondglyph, oechem.IsTrueBond())
-                    oegrapheme.OEAddGlyph(targ_disp, bondglyph, oechem.IsTrueBond())
+                # Create the displays
+                ref_disp = oemol_to_disp(ref_mol, ctx=ctx)
+                targ_disp = oemol_to_disp(targ_mol, ctx=ctx)
 
-                    ref_displays.append(ref_disp)
-                    targ_displays.append(targ_disp)
+                # Color the displays
+                oegrapheme.OEAddGlyph(ref_disp, bondglyph, oechem.IsTrueBond())
+                oegrapheme.OEAddGlyph(targ_disp, bondglyph, oechem.IsTrueBond())
 
-                # Fingerprint was invalid
-                else:
-                    ref_displays.append(None)
-                    targ_displays.append(None)
+                ref_displays.append(ref_disp)
+                targ_displays.append(targ_disp)
 
-            # Molecule was invalid
+            # Fingerprint was invalid
             else:
                 ref_displays.append(None)
                 targ_displays.append(None)
 
-        # Add the columns
-        df[tanimoto_column] = pd.Series(
-            tanimotos,
-            index=index,
-            dtype=float
-        )
+        # Molecule was invalid
+        else:
+            ref_displays.append(None)
+            targ_displays.append(None)
 
-        # FIXME: Submitted to OpenEye as Case #00037423
-        #        We need to keep the copies of the molecules that we made above, or they will be garbage collected
-        #        and the OE2DMolDisplay objects will segfault. We'll keep those in the metadata now for the arrays.
-        ref_arr = oepd.DisplayArray(ref_displays, metadata={"molecules": ref_molecules})
-        targ_arr = oepd.DisplayArray(targ_displays, metadata={"molecules": targ_molecules})
+    # Add the columns
+    df[tanimoto_column] = pd.Series(
+        tanimotos,
+        index=index,
+        dtype=float
+    )
 
-        df[reference_similarity_column] = pd.Series(
-            ref_arr,
-            index=shallow_copy(index),
-            dtype=oepd.DisplayDtype()
-        )
+    # FIXME: Submitted to OpenEye as Case #00037423
+    #        We need to keep the copies of the molecules that we made above, or they will be garbage collected
+    #        and the OE2DMolDisplay objects will segfault. We'll keep those in the metadata now for the arrays.
+    ref_arr = oepd.DisplayArray(ref_displays, metadata={"molecules": ref_molecules})
+    targ_arr = oepd.DisplayArray(targ_displays, metadata={"molecules": targ_molecules})
 
-        df[target_similarity_column] = pd.Series(
-            targ_arr,
-            index=shallow_copy(index),
-            dtype=oepd.DisplayDtype()
-        )
+    df[reference_similarity_column] = pd.Series(
+        ref_arr,
+        index=shallow_copy(index),
+        dtype=oepd.DisplayDtype()
+    )
 
-        return df
+    df[target_similarity_column] = pd.Series(
+        targ_arr,
+        index=shallow_copy(index),
+        dtype=oepd.DisplayDtype()
+    )
+
+    return df
+
+
+########################################################################################################################
+# Monkey-patch CNotebook methods onto OEPandas accessors
+########################################################################################################################
+
+# Import the OEPandas accessor classes
+from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor
+
+# Add cnotebook methods to Series accessor
+OESeriesAccessor.highlight = _series_highlight
+OESeriesAccessor.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates
+OESeriesAccessor.reset_depictions = _series_reset_depictions
+OESeriesAccessor.align_depictions = _series_align_depictions
+
+# Add cnotebook methods to DataFrame accessor
+OEDataFrameAccessor.recalculate_depiction_coordinates = _dataframe_recalculate_depiction_coordinates
+OEDataFrameAccessor.reset_depictions = _dataframe_reset_depictions
+OEDataFrameAccessor.highlight_using_column = _dataframe_highlight_using_column
+OEDataFrameAccessor.fingerprint_similarity = _dataframe_fingerprint_similarity

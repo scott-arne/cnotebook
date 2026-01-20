@@ -1,12 +1,22 @@
 # Core dependencies for CNotebook
-# Last updated: 2025-11-28
+# Last updated: 2026-01-20
 
-# Data manipulation and analysis
-pandas>=2.2.0
-
-# OpenEye pandas integration
-oepandas>=2.0.0
-
-# OpenEye Toolkits (requires commercial license)
+# OpenEye Toolkits (requires commercial license) - REQUIRED
 openeye-toolkits>=2025.2.1
 
+# All other dependencies are OPTIONAL
+# CNotebook auto-detects available backends and environments
+
+# Optional: Pandas backend
+# pandas>=2.2.0
+# oepandas>=3.1.0
+
+# Optional: Polars backend
+# polars>=1.0.0
+# oepolars>=0.2.0
+
+# Optional: Jupyter environment
+# ipython>=8.0.0
+
+# Optional: Marimo environment
+# marimo>=0.1.0
