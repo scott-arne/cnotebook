@@ -163,3 +163,43 @@ def test_molgrid_display_returns_html():
 
     # Should return something displayable
     assert result is not None
+
+
+def test_molgrid_filter():
+    """Test that MolGrid can filter by mask."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "CC")
+
+    mol3 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol3, "C")
+
+    grid = MolGrid([mol1, mol2, mol3])
+    grid.filter([True, False, True])
+
+    assert grid.widget.filter_mask == [True, False, True]
+
+
+def test_molgrid_filter_by_index():
+    """Test that MolGrid can filter by indices."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "CC")
+
+    mol3 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol3, "C")
+
+    grid = MolGrid([mol1, mol2, mol3])
+    grid.filter_by_index([0, 2])
+
+    assert grid.widget.filter_mask == [True, False, True]

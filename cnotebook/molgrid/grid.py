@@ -296,3 +296,19 @@ class MolGrid:
             self.widget._marimo_hooked = True
 
         return get_state
+
+    def filter(self, mask: List[bool]):
+        """Filter the grid using a boolean mask.
+
+        :param mask: Boolean list, True to show, False to hide.
+        """
+        self.widget.filter_mask = list(mask)
+
+    def filter_by_index(self, indices: List[int]):
+        """Filter the grid to show only specified indices.
+
+        :param indices: List of indices to show.
+        """
+        indices_set = set(indices)
+        mask = [i in indices_set for i in range(len(self._molecules))]
+        self.filter(mask)
