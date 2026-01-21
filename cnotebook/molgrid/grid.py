@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Iterable, Optional, List
 
 from jinja2 import Environment, FileSystemLoader
-from openeye import oechem
+from openeye import oechem, oedepict
 
 from cnotebook import cnotebook_context
 from cnotebook.render import oemol_to_html
 from cnotebook.molgrid.widget import MolGridWidget
+from cnotebook.helpers import create_structure_highlighter
 
 # Template directory and Jinja2 environment
 _template_dir = Path(__file__).parent / "templates"
@@ -165,3 +166,51 @@ class MolGrid:
                 self.widget.search_results = json.dumps(results)
             finally:
                 self.widget.is_searching = False
+
+    def _render_molecule_with_highlight(self, mol, smarts_pattern: str) -> str:
+        """Render molecule with SMARTS match highlighted.
+
+        :param mol: OpenEye molecule object.
+        :param smarts_pattern: SMARTS pattern to highlight.
+        :returns: HTML string with highlighted molecule image.
+        """
+        ctx = cnotebook_context.get().copy()
+        ctx.width = self.width
+        ctx.height = self.height
+        ctx.image_format = self.image_format
+
+        if smarts_pattern:
+            highlighter = create_structure_highlighter(
+                query=smarts_pattern,
+                color=oechem.OEBlueTint,
+                style=oedepict.OEHighlightStyle_BallAndStick,
+            )
+            ctx.add_callback(highlighter)
+
+        return oemol_to_html(mol, ctx=ctx)
+
+    def _process_smarts_search(self, pattern: str) -> dict:
+        """Process SMARTS search and return results with highlighted SVGs.
+
+        :param pattern: SMARTS pattern to search for.
+        :returns: Dict with matches and highlighted images, or error.
+        """
+        ss = oechem.OESubSearch(pattern)
+        if not ss.IsValid():
+            return {"error": f"Invalid SMARTS pattern: {pattern}"}
+
+        results = {"matches": {}, "count": 0}
+
+        for idx, mol in enumerate(self._molecules):
+            if not mol.IsValid():
+                continue
+
+            oechem.OEPrepareSearch(mol, ss)
+            if ss.SingleMatch(mol):
+                results["matches"][idx] = {
+                    "matched": True,
+                    "img": self._render_molecule_with_highlight(mol, pattern),
+                }
+
+        results["count"] = len(results["matches"])
+        return results

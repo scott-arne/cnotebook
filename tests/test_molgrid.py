@@ -89,3 +89,39 @@ def test_molgrid_creates_widget():
 
     assert grid.widget is not None
     assert hasattr(grid.widget, 'grid_id')
+
+
+def test_molgrid_smarts_search():
+    """Test that MolGrid performs SMARTS search with highlighting."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")  # Has OH
+    mol1.SetTitle("Ethanol")
+
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "CC")  # No OH
+    mol2.SetTitle("Ethane")
+
+    grid = MolGrid([mol1, mol2])
+    results = grid._process_smarts_search("[OH]")
+
+    assert "matches" in results
+    assert len(results["matches"]) == 1
+    assert 0 in results["matches"]  # Ethanol matches
+    assert "img" in results["matches"][0]
+
+
+def test_molgrid_invalid_smarts():
+    """Test that MolGrid handles invalid SMARTS gracefully."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    results = grid._process_smarts_search("invalid[[[smarts")
+
+    assert "error" in results
