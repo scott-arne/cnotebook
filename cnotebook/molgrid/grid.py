@@ -2,6 +2,8 @@
 
 from typing import Iterable, Optional, List
 
+from openeye import oechem
+
 
 class MolGrid:
     """Interactive molecule grid widget.
@@ -45,3 +47,35 @@ class MolGrid:
         self.selection_enabled = selection
         self.search_fields = search_fields
         self.name = name
+
+    def _prepare_data(self) -> List[dict]:
+        """Prepare molecule data for template rendering.
+
+        :returns: List of dicts with molecule data for each item.
+        """
+        data = []
+        for idx, mol in enumerate(self._molecules):
+            item = {
+                "index": idx,
+                "title": None,
+                "tooltip": {},
+                "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
+            }
+
+            # Extract title
+            if self.title_field:
+                if self.title_field == "Title":
+                    item["title"] = mol.GetTitle() or None
+                else:
+                    item["title"] = oechem.OEGetSDData(mol, self.title_field) or None
+
+            # Extract tooltip fields
+            for field in self.tooltip_fields:
+                if field == "Title":
+                    item["tooltip"][field] = mol.GetTitle()
+                else:
+                    item["tooltip"][field] = oechem.OEGetSDData(mol, field)
+
+            data.append(item)
+
+        return data
