@@ -4,6 +4,9 @@ from typing import Iterable, Optional, List
 
 from openeye import oechem
 
+from cnotebook import cnotebook_context
+from cnotebook.render import oemol_to_html
+
 
 class MolGrid:
     """Interactive molecule grid widget.
@@ -41,12 +44,15 @@ class MolGrid:
         self.tooltip_fields = tooltip_fields or []
         self.n_items_per_page = n_items_per_page
         self.n_cols = n_cols
-        self.width = width
-        self.height = height
-        self.image_format = image_format
         self.selection_enabled = selection
         self.search_fields = search_fields
         self.name = name
+
+        # Resolve rendering settings from context
+        ctx = cnotebook_context.get()
+        self.width = width if width is not None else ctx.width
+        self.height = height if height is not None else ctx.height
+        self.image_format = image_format if image_format is not None else ctx.image_format
 
     def _prepare_data(self) -> List[dict]:
         """Prepare molecule data for template rendering.
@@ -54,12 +60,18 @@ class MolGrid:
         :returns: List of dicts with molecule data for each item.
         """
         data = []
+        ctx = cnotebook_context.get().copy()
+        ctx.width = self.width
+        ctx.height = self.height
+        ctx.image_format = self.image_format
+
         for idx, mol in enumerate(self._molecules):
             item = {
                 "index": idx,
                 "title": None,
                 "tooltip": {},
                 "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
+                "img": oemol_to_html(mol, ctx=ctx),
             }
 
             # Extract title

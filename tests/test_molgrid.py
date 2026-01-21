@@ -43,3 +43,18 @@ def test_molgrid_extracts_data():
     assert data[0]["index"] == 0
     assert data[0]["title"] == "Ethanol"
     assert data[0]["tooltip"]["MW"] == "46.07"
+
+
+def test_molgrid_renders_images():
+    """Test that MolGrid renders molecule images."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol], width=150, height=100, image_format="svg")
+    data = grid._prepare_data()
+
+    assert "img" in data[0]
+    assert "<svg" in data[0]["img"] or "data:image" in data[0]["img"]
