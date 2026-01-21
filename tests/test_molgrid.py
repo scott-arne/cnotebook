@@ -125,3 +125,26 @@ def test_molgrid_invalid_smarts():
     results = grid._process_smarts_search("invalid[[[smarts")
 
     assert "error" in results
+
+
+def test_molgrid_selection():
+    """Test that MolGrid tracks selection state."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "CC")
+
+    grid = MolGrid([mol1, mol2], name="test-grid")
+
+    # Simulate selection via widget
+    grid.widget.selection = '{"0": "CCO"}'
+
+    selection = grid.get_selection()
+    assert len(selection) == 1
+
+    indices = grid.get_selection_indices()
+    assert indices == [0]

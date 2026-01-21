@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Iterable, Optional, List
 
@@ -11,6 +12,7 @@ from openeye import oechem, oedepict
 from cnotebook import cnotebook_context
 from cnotebook.render import oemol_to_html
 from cnotebook.molgrid.widget import MolGridWidget
+from cnotebook.molgrid.select import register
 from cnotebook.helpers import create_structure_highlighter
 
 # Template directory and Jinja2 environment
@@ -71,6 +73,11 @@ class MolGrid:
 
         # Observe search changes
         self.widget.observe(self._on_search_change, names=['search_query', 'search_mode'])
+
+        # Register selection tracking
+        register._init_grid(self.name)
+        selection_handler = partial(register.selection_updated, self.name)
+        self.widget.observe(selection_handler, names=["selection"])
 
     def _prepare_data(self) -> List[dict]:
         """Prepare molecule data for template rendering.
@@ -214,3 +221,18 @@ class MolGrid:
 
         results["count"] = len(results["matches"])
         return results
+
+    def get_selection(self) -> List:
+        """Get list of selected molecules.
+
+        :returns: List of selected OEMol objects.
+        """
+        selection = register.get_selection(self.name)
+        return [self._molecules[idx] for idx in sorted(selection.keys())]
+
+    def get_selection_indices(self) -> List[int]:
+        """Get indices of selected molecules.
+
+        :returns: List of selected indices.
+        """
+        return sorted(register.get_selection(self.name).keys())
