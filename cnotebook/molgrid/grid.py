@@ -1,8 +1,10 @@
 """MolGrid class for displaying molecules in an interactive grid."""
 
 import json
+import sys
 import uuid
 from functools import partial
+from html import escape
 from pathlib import Path
 from typing import Iterable, Optional, List
 
@@ -18,6 +20,11 @@ from cnotebook.helpers import create_structure_highlighter
 # Template directory and Jinja2 environment
 _template_dir = Path(__file__).parent / "templates"
 _env = Environment(loader=FileSystemLoader(str(_template_dir)))
+
+
+def _is_marimo() -> bool:
+    """Check if running in marimo environment."""
+    return "marimo" in sys.modules
 
 
 class MolGrid:
@@ -236,3 +243,56 @@ class MolGrid:
         :returns: List of selected indices.
         """
         return sorted(register.get_selection(self.name).keys())
+
+    def display(self):
+        """Display the grid in the notebook.
+
+        Automatically detects Jupyter vs Marimo environment.
+
+        :returns: Displayable widget/HTML object.
+        """
+        html_content = self.to_html()
+
+        # Create iframe wrapper
+        iframe_html = f'''<iframe
+            class="molgrid-iframe"
+            style="width: 100%; min-height: 500px; border: none;"
+            srcdoc="{escape(html_content)}"
+        ></iframe>'''
+
+        if _is_marimo():
+            import marimo as mo
+            return mo.vstack([self.widget, mo.Html(iframe_html)])
+        else:
+            from IPython.display import display, HTML
+            display(self.widget)
+            return HTML(iframe_html)
+
+    def get_marimo_selection(self):
+        """Get marimo reactive state for selection.
+
+        Only available in marimo environment.
+
+        :returns: State getter function.
+        :raises RuntimeError: If not in marimo environment.
+        """
+        if not _is_marimo():
+            raise RuntimeError("This method is only available in a marimo notebook.")
+
+        import marimo as mo
+        import ast
+
+        get_state, set_state = mo.state([])
+
+        def _on_change(change):
+            try:
+                sel = ast.literal_eval(change["new"])
+                set_state(list(sel.keys()))
+            except (ValueError, SyntaxError):
+                pass
+
+        if not getattr(self.widget, "_marimo_hooked", False):
+            self.widget.observe(_on_change, names=["selection"])
+            self.widget._marimo_hooked = True
+
+        return get_state

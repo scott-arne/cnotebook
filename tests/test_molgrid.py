@@ -148,3 +148,18 @@ def test_molgrid_selection():
 
     indices = grid.get_selection_indices()
     assert indices == [0]
+
+
+def test_molgrid_display_returns_html():
+    """Test that display() returns displayable output."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    result = grid.display()
+
+    # Should return something displayable
+    assert result is not None
