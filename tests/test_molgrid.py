@@ -75,3 +75,17 @@ def test_molgrid_generates_html():
     assert "<html" in html.lower()
     assert "molgrid" in html.lower()
     assert "Ethanol" in html
+
+
+def test_molgrid_creates_widget():
+    """Test that MolGrid creates an AnyWidget."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+
+    assert grid.widget is not None
+    assert hasattr(grid.widget, 'grid_id')

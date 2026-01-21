@@ -1,5 +1,6 @@
 """MolGrid class for displaying molecules in an interactive grid."""
 
+import json
 import uuid
 from pathlib import Path
 from typing import Iterable, Optional, List
@@ -9,6 +10,7 @@ from openeye import oechem
 
 from cnotebook import cnotebook_context
 from cnotebook.render import oemol_to_html
+from cnotebook.molgrid.widget import MolGridWidget
 
 # Template directory and Jinja2 environment
 _template_dir = Path(__file__).parent / "templates"
@@ -60,6 +62,14 @@ class MolGrid:
         self.width = width if width is not None else ctx.width
         self.height = height if height is not None else ctx.height
         self.image_format = image_format if image_format is not None else ctx.image_format
+
+        # Create widget
+        if self.name is None:
+            self.name = f"molgrid-{uuid.uuid4().hex[:8]}"
+        self.widget = MolGridWidget(grid_id=self.name)
+
+        # Observe search changes
+        self.widget.observe(self._on_search_change, names=['search_query', 'search_mode'])
 
     def _prepare_data(self) -> List[dict]:
         """Prepare molecule data for template rendering.
@@ -142,3 +152,16 @@ class MolGrid:
         )
 
         return html
+
+    def _on_search_change(self, change):
+        """Handle search query changes from JavaScript.
+
+        :param change: Traitlet change dict.
+        """
+        if self.widget.search_mode == "smarts" and self.widget.search_query.strip():
+            self.widget.is_searching = True
+            try:
+                results = self._process_smarts_search(self.widget.search_query)
+                self.widget.search_results = json.dumps(results)
+            finally:
+                self.widget.is_searching = False
