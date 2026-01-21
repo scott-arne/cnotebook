@@ -1,11 +1,18 @@
 """MolGrid class for displaying molecules in an interactive grid."""
 
+import uuid
+from pathlib import Path
 from typing import Iterable, Optional, List
 
+from jinja2 import Environment, FileSystemLoader
 from openeye import oechem
 
 from cnotebook import cnotebook_context
 from cnotebook.render import oemol_to_html
+
+# Template directory and Jinja2 environment
+_template_dir = Path(__file__).parent / "templates"
+_env = Environment(loader=FileSystemLoader(str(_template_dir)))
 
 
 class MolGrid:
@@ -91,3 +98,47 @@ class MolGrid:
             data.append(item)
 
         return data
+
+    def to_html(self) -> str:
+        """Generate HTML representation of the grid.
+
+        :returns: Complete HTML document as string.
+        """
+        # Generate grid name if not set
+        if not self.name:
+            self.name = f"molgrid-{uuid.uuid4().hex[:8]}"
+
+        # Prepare molecule data
+        items = self._prepare_data()
+
+        # Determine search fields
+        search_fields = self.search_fields or []
+
+        # Load CSS
+        css_path = _template_dir / "css" / "styles.css"
+        css = css_path.read_text()
+
+        # Render JS template
+        js_template = _env.get_template("js/main.js")
+        js = js_template.render(
+            grid_id=self.name,
+            n_items_per_page=self.n_items_per_page,
+            search_fields=search_fields,
+        )
+
+        # Render main template
+        template = _env.get_template("grid.html")
+        html = template.render(
+            grid_id=self.name,
+            items=items,
+            title_field=self.title_field,
+            tooltip_fields=self.tooltip_fields,
+            n_items_per_page=self.n_items_per_page,
+            total_count=len(items),
+            selection=self.selection_enabled,
+            css=css,
+            js=js,
+            search_fields=search_fields,
+        )
+
+        return html

@@ -58,3 +58,20 @@ def test_molgrid_renders_images():
 
     assert "img" in data[0]
     assert "<svg" in data[0]["img"] or "data:image" in data[0]["img"]
+
+
+def test_molgrid_generates_html():
+    """Test that MolGrid generates HTML output."""
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    mol.SetTitle("Ethanol")
+
+    grid = MolGrid([mol])
+    html = grid.to_html()
+
+    assert "<html" in html.lower()
+    assert "molgrid" in html.lower()
+    assert "Ethanol" in html

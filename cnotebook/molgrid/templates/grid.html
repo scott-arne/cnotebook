@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MolGrid</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/list.js/2.3.1/list.min.js"></script>
+    <style>
+{{ css }}
+    </style>
+</head>
+<body>
+    <div id="{{ grid_id }}" class="molgrid-container">
+        <div class="molgrid-toolbar">
+            <div class="molgrid-search">
+                <input type="text" class="molgrid-search-input search" placeholder="Search...">
+                <div class="toggle-switch">
+                    <label class="toggle-label">
+                        <input type="checkbox" class="search-mode-toggle">
+                        <span class="toggle-text">Properties</span>
+                        <span class="toggle-text">SMARTS</span>
+                    </label>
+                </div>
+            </div>
+            <div class="molgrid-sort">
+                <select class="sort-select">
+                    <option value="">Sort by...</option>
+                    <option value="index">Index</option>
+                    {% if title_field %}
+                    <option value="title">{{ title_field }}</option>
+                    {% endif %}
+                    {% for field in tooltip_fields %}
+                    <option value="{{ field }}">{{ field }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="molgrid-info">
+                <span class="showing-info">Showing <span class="showing-start">1</span>-<span class="showing-end">{{ n_items_per_page }}</span> of <span class="showing-total">{{ total_count }}</span></span>
+            </div>
+        </div>
+        <ul class="molgrid-list list">
+            {% for item in items %}
+            <li class="molgrid-cell" data-index="{{ item.index }}">
+                {% if selection %}
+                <input type="checkbox" class="molgrid-checkbox" data-index="{{ item.index }}">
+                {% endif %}
+                <div class="molgrid-image"
+                     data-smiles="{{ item.smiles }}"
+                     {% if item.tooltip %}title="{% for key, value in item.tooltip.items() %}{{ key }}: {{ value }}{% if not loop.last %}&#10;{% endif %}{% endfor %}"{% endif %}>
+                    {{ item.img | safe }}
+                </div>
+                {% if item.title %}
+                <div class="molgrid-title title">{{ item.title }}</div>
+                {% endif %}
+                <span class="index" style="display:none;">{{ item.index }}</span>
+                <span class="smiles" style="display:none;">{{ item.smiles }}</span>
+                {% for key, value in item.tooltip.items() %}
+                <span class="{{ key }}" style="display:none;">{{ value }}</span>
+                {% endfor %}
+            </li>
+            {% endfor %}
+        </ul>
+        <div class="molgrid-pagination">
+            <ul class="pagination"></ul>
+        </div>
+    </div>
+    <script>
+{{ js | safe }}
+    </script>
+</body>
+</html>
