@@ -6,6 +6,11 @@
     <title>MolGrid</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/list.js/2.3.1/list.min.js"></script>
     <style>
+        :root {
+            --molgrid-image-width: {{ image_width }}px;
+            --molgrid-image-height: {{ image_height }}px;
+            --molgrid-cell-width: {{ image_width + 24 }}px;
+        }
 {{ css }}
     </style>
 </head>
@@ -55,7 +60,7 @@
                 <span class="index" style="display:none;">{{ item.index }}</span>
                 <span class="smiles" style="display:none;">{{ item.smiles }}</span>
                 {% for key, value in item.tooltip.items() %}
-                <span class="{{ key }}" style="display:none;">{{ value }}</span>
+                <span class="tooltip-field" data-field="{{ key }}" style="display:none;">{{ value }}</span>
                 {% endfor %}
             </li>
             {% endfor %}
@@ -66,6 +71,40 @@
     </div>
     <script>
 {{ js | safe }}
+    </script>
+    <script>
+        // Communicate iframe height to parent for auto-resize
+        (function() {
+            var gridId = '{{ grid_id }}';
+
+            function sendHeight() {
+                var height = document.body.scrollHeight;
+                if (window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'molgrid-resize',
+                        gridId: gridId,
+                        height: height
+                    }, '*');
+                }
+            }
+
+            // Send height on load and after any resize
+            sendHeight();
+            window.addEventListener('load', sendHeight);
+
+            // Observe DOM changes that might affect height
+            var observer = new MutationObserver(function() {
+                setTimeout(sendHeight, 50);
+            });
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true
+            });
+
+            // Also send on window resize
+            window.addEventListener('resize', sendHeight);
+        })();
     </script>
 </body>
 </html>

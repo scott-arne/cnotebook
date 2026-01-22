@@ -140,11 +140,12 @@
 /* Grid List */
 .molgrid-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--molgrid-cell-width, 220px), 1fr));
     gap: 12px;
     list-style: none;
     padding: 0;
     margin: 0;
+    overflow: visible;
 }
 
 /* Cell */
@@ -159,6 +160,8 @@
     border-radius: 6px;
     transition: border-color 0.2s, box-shadow 0.2s;
     cursor: pointer;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
 .molgrid-cell:hover {
@@ -188,13 +191,24 @@
     justify-content: center;
     align-items: center;
     width: 100%;
-    min-height: 100px;
+    height: var(--molgrid-image-height, 150px);
+    overflow: hidden;
+    flex-shrink: 0;
 }
 
-.molgrid-image svg,
+.molgrid-image svg {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto !important;
+    height: auto !important;
+}
+
 .molgrid-image img {
     max-width: 100%;
+    max-height: 100%;
+    width: auto;
     height: auto;
+    object-fit: contain;
 }
 
 /* Title */

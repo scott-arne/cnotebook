@@ -77,6 +77,11 @@ class MolGrid:
         self.height = height if height is not None else ctx.height
         self.image_format = image_format if image_format is not None else ctx.image_format
 
+        # Cell sizing: use explicit dimensions or fall back to min_width/min_height
+        # When width/height are 0, molecules are auto-sized, so use min dimensions for grid layout
+        self._cell_width = self.width if self.width > 0 else (ctx.min_width or 200)
+        self._cell_height = self.height if self.height > 0 else (ctx.min_height or 200)
+
         # Create widget
         if self.name is None:
             self.name = f"molgrid-{uuid.uuid4().hex[:8]}"
@@ -115,8 +120,9 @@ class MolGrid:
         """
         data = []
         ctx = cnotebook_context.get().copy()
-        ctx.width = self.width
-        ctx.height = self.height
+        # Use cell dimensions for consistent molecule sizing in the grid
+        ctx.width = self._cell_width
+        ctx.height = self._cell_height
         ctx.image_format = self.image_format
 
         for idx, mol in enumerate(self._molecules):
@@ -180,6 +186,8 @@ class MolGrid:
             css=css,
             js=js,
             search_fields=search_fields,
+            image_width=int(self._cell_width),
+            image_height=int(self._cell_height),
         )
 
         return html
@@ -268,13 +276,27 @@ class MolGrid:
         :returns: Displayable widget/HTML object.
         """
         html_content = self.to_html()
+        iframe_id = f"molgrid-iframe-{self.name}"
 
-        # Create iframe wrapper
+        # Create iframe wrapper with auto-resize script
         iframe_html = f'''<iframe
+            id="{iframe_id}"
             class="molgrid-iframe"
-            style="width: 100%; min-height: 500px; border: none;"
+            style="width: 100%; border: none; min-height: 200px;"
             srcdoc="{escape(html_content)}"
-        ></iframe>'''
+        ></iframe>
+        <script>
+        (function() {{
+            var iframe = document.getElementById('{iframe_id}');
+            var gridId = '{self.name}';
+
+            window.addEventListener('message', function(event) {{
+                if (event.data && event.data.type === 'molgrid-resize' && event.data.gridId === gridId) {{
+                    iframe.style.height = (event.data.height + 20) + 'px';
+                }}
+            }});
+        }})();
+        </script>'''
 
         if _is_marimo():
             import marimo as mo
