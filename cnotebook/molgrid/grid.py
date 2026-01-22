@@ -47,6 +47,8 @@ class MolGrid:
         self,
         mols: Iterable,
         *,
+        dataframe=None,
+        mol_col: Optional[str] = None,
         title_field: Optional[str] = "Title",
         tooltip_fields: Optional[List[str]] = None,
         n_items_per_page: int = 24,
@@ -59,6 +61,8 @@ class MolGrid:
         name: Optional[str] = None,
     ):
         self._molecules = list(mols)
+        self._dataframe = dataframe
+        self._mol_col = mol_col
         self.title_field = title_field
         self.tooltip_fields = tooltip_fields or []
         self.n_items_per_page = n_items_per_page
@@ -86,6 +90,24 @@ class MolGrid:
         selection_handler = partial(register.selection_updated, self.name)
         self.widget.observe(selection_handler, names=["selection"])
 
+    def _get_field_value(self, idx: int, mol, field: str):
+        """Get a field value from DataFrame column or molecule property.
+
+        :param idx: Row index in the dataframe.
+        :param mol: OpenEye molecule object.
+        :param field: Field name to retrieve.
+        :returns: Field value or None.
+        """
+        # Try DataFrame column first
+        if self._dataframe is not None and field in self._dataframe.columns:
+            return self._dataframe.iloc[idx][field]
+
+        # Fall back to molecule properties
+        if field == "Title":
+            return mol.GetTitle() or None
+        else:
+            return oechem.OEGetSDData(mol, field) or None
+
     def _prepare_data(self) -> List[dict]:
         """Prepare molecule data for template rendering.
 
@@ -108,17 +130,11 @@ class MolGrid:
 
             # Extract title
             if self.title_field:
-                if self.title_field == "Title":
-                    item["title"] = mol.GetTitle() or None
-                else:
-                    item["title"] = oechem.OEGetSDData(mol, self.title_field) or None
+                item["title"] = self._get_field_value(idx, mol, self.title_field)
 
             # Extract tooltip fields
             for field in self.tooltip_fields:
-                if field == "Title":
-                    item["tooltip"][field] = mol.GetTitle()
-                else:
-                    item["tooltip"][field] = oechem.OEGetSDData(mol, field)
+                item["tooltip"][field] = self._get_field_value(idx, mol, field)
 
             data.append(item)
 

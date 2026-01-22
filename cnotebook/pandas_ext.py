@@ -891,3 +891,78 @@ OEDataFrameAccessor.recalculate_depiction_coordinates = _dataframe_recalculate_d
 OEDataFrameAccessor.reset_depictions = _dataframe_reset_depictions
 OEDataFrameAccessor.highlight_using_column = _dataframe_highlight_using_column
 OEDataFrameAccessor.fingerprint_similarity = _dataframe_fingerprint_similarity
+
+
+########################################################################################################################
+# MolGrid accessor methods for Series and DataFrame
+########################################################################################################################
+
+def _series_molgrid(
+    self,
+    title_field: str = "Title",
+    tooltip_fields: list = None,
+    **kwargs
+):
+    """Display molecules in an interactive grid.
+
+    :param title_field: Field for title (molecule property or DataFrame column).
+    :param tooltip_fields: Fields for tooltip.
+    :param kwargs: Additional arguments passed to MolGrid.
+    :returns: MolGrid instance.
+    """
+    from cnotebook.molgrid import MolGrid
+
+    series = self._obj
+    mols = list(series)
+
+    # Check if series is part of a DataFrame
+    df = None
+    if hasattr(series, '_cacher') and series._cacher is not None:
+        try:
+            df = series._cacher[1]()
+        except (TypeError, KeyError):
+            pass
+
+    return MolGrid(
+        mols,
+        dataframe=df,
+        mol_col=series.name,
+        title_field=title_field,
+        tooltip_fields=tooltip_fields,
+        **kwargs
+    )
+
+
+def _dataframe_molgrid(
+    self,
+    mol_col: str,
+    title_field: str = "Title",
+    tooltip_fields: list = None,
+    **kwargs
+):
+    """Display molecules from a column in an interactive grid.
+
+    :param mol_col: Column containing molecules.
+    :param title_field: Column for title display.
+    :param tooltip_fields: Columns for tooltip.
+    :param kwargs: Additional arguments passed to MolGrid.
+    :returns: MolGrid instance.
+    """
+    from cnotebook.molgrid import MolGrid
+
+    df = self._obj
+    mols = list(df[mol_col])
+
+    return MolGrid(
+        mols,
+        dataframe=df,
+        mol_col=mol_col,
+        title_field=title_field,
+        tooltip_fields=tooltip_fields,
+        **kwargs
+    )
+
+
+# Add molgrid methods to accessors
+OESeriesAccessor.molgrid = _series_molgrid
+OEDataFrameAccessor.molgrid = _dataframe_molgrid
