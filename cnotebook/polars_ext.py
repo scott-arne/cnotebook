@@ -869,6 +869,83 @@ DataFrameChemNamespace.fingerprint_similarity = _dataframe_fingerprint_similarit
 
 
 ########################################################################################################################
+# MolGrid accessor methods for Series and DataFrame
+########################################################################################################################
+
+
+def _polars_series_molgrid(
+    self,
+    title_field: str = "Title",
+    tooltip_fields: list[str] | None = None,
+    **kwargs
+) -> "MolGrid":
+    """Display molecules in an interactive grid.
+
+    :param title_field: Field for title (molecule property).
+    :param tooltip_fields: Fields for tooltip.
+    :param kwargs: Additional arguments passed to MolGrid.
+    :returns: MolGrid instance.
+    """
+    from cnotebook.molgrid import MolGrid
+
+    series = self._series
+    mols = list(series.to_list())
+
+    return MolGrid(
+        mols,
+        title_field=title_field,
+        tooltip_fields=tooltip_fields,
+        **kwargs
+    )
+
+
+def _polars_dataframe_molgrid(
+    self,
+    mol_col: str,
+    title_field: str = "Title",
+    tooltip_fields: list[str] | None = None,
+    **kwargs
+) -> "MolGrid":
+    """Display molecules from a column in an interactive grid.
+
+    :param mol_col: Column containing molecules.
+    :param title_field: Column for title display.
+    :param tooltip_fields: Columns for tooltip.
+    :param kwargs: Additional arguments passed to MolGrid.
+    :returns: MolGrid instance.
+    """
+    from cnotebook.molgrid import MolGrid
+    import pandas as pd
+
+    df = self._df
+    mols = list(df[mol_col].to_list())
+
+    # Build pandas DataFrame from non-molecule columns for MolGrid data access
+    # We extract only primitive columns to avoid pyarrow dependency issues
+    pdf_data = {}
+    for col in df.columns:
+        if col != mol_col:
+            # Extract column values as Python objects
+            pdf_data[col] = df[col].to_list()
+
+    pdf = pd.DataFrame(pdf_data)
+
+    return MolGrid(
+        mols,
+        dataframe=pdf,
+        mol_col=mol_col,
+        title_field=title_field,
+        tooltip_fields=tooltip_fields,
+        **kwargs
+    )
+
+
+# Attach molgrid methods to accessors
+SeriesChemNamespace.molgrid = _polars_series_molgrid
+DataFrameChemNamespace.molgrid = _polars_dataframe_molgrid
+
+
+########################################################################################################################
 # Register Polars formatters
 ########################################################################################################################
 
