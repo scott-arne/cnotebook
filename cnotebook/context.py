@@ -97,7 +97,7 @@ class CNotebookContext:
             min_height: float | None | _Deferred = 200.0,
             max_width: float | None | _Deferred = None,
             max_height: float | None | _Deferred = None,
-            structure_scale: int | _Deferred = oedepict.OEScale_Default * 0.9,
+            structure_scale: int | _Deferred = oedepict.OEScale_Default * 0.6,
             title_font_scale: float | _Deferred = 1.0,
             image_format: str | _Deferred = "png",
             bond_width_scaling: bool | _Deferred = False,

@@ -10,7 +10,6 @@ def molgrid(
     title_field: Optional[str] = "Title",
     tooltip_fields: Optional[List[str]] = None,
     n_items_per_page: int = 24,
-    n_cols: Optional[int] = None,
     width: Optional[int] = None,
     height: Optional[int] = None,
     image_format: Optional[str] = None,
@@ -24,7 +23,6 @@ def molgrid(
     :param title_field: Molecule field for title (None to hide).
     :param tooltip_fields: List of fields for tooltip.
     :param n_items_per_page: Molecules per page.
-    :param n_cols: Number of columns (auto if None).
     :param width: Image width in pixels.
     :param height: Image height in pixels.
     :param image_format: "svg" or "png".
@@ -38,7 +36,6 @@ def molgrid(
         title_field=title_field,
         tooltip_fields=tooltip_fields,
         n_items_per_page=n_items_per_page,
-        n_cols=n_cols,
         width=width,
         height=height,
         image_format=image_format,
