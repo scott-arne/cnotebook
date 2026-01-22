@@ -57,6 +57,14 @@ _pandas_available = False
 _polars_available = False
 _ipython_available = False
 _marimo_available = False
+_molgrid_available = False
+
+# Detect molgrid (requires anywidget)
+try:
+    from cnotebook.molgrid import molgrid, MolGrid
+    _molgrid_available = True
+except ImportError:
+    pass
 
 # Detect pandas/oepandas
 try:

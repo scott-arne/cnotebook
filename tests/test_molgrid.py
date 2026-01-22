@@ -203,3 +203,17 @@ def test_molgrid_filter_by_index():
     grid.filter_by_index([0, 2])
 
     assert grid.widget.filter_mask == [True, False, True]
+
+
+def test_cnotebook_molgrid_function():
+    """Test that cnotebook.molgrid() function works."""
+    import cnotebook
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = cnotebook.molgrid([mol])
+
+    assert grid is not None
+    assert hasattr(grid, 'display')
