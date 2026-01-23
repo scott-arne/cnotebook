@@ -97,7 +97,8 @@ class CNotebookContext:
             min_height: float | None | _Deferred = 200.0,
             max_width: float | None | _Deferred = None,
             max_height: float | None | _Deferred = None,
-            structure_scale: int | _Deferred = oedepict.OEScale_Default * 0.6,
+            structure_scale: float | _Deferred = oedepict.OEScale_Default * 0.6,
+            atom_label_font_scale: float | _Deferred = 1.0,
             title_font_scale: float | _Deferred = 1.0,
             image_format: str | _Deferred = "png",
             bond_width_scaling: bool | _Deferred = False,
@@ -122,7 +123,8 @@ class CNotebookContext:
         self._min_width = DeferredValue[float | None]("min_width", min_width)
         self._max_width = DeferredValue[float | None]("max_width", max_width)
         self._max_height = DeferredValue[float | None]("max_height", max_height)
-        self._structure_scale = DeferredValue[int]("structure_scale", structure_scale)
+        self._structure_scale = DeferredValue[float]("structure_scale", structure_scale)
+        self._atom_label_font_scale = DeferredValue[float | None]("atom_label_font_scale", atom_label_font_scale)
         self._title_font_scale = DeferredValue[float]("title_font_scale", title_font_scale)
         self._image_format = DeferredValue[str]("image_format", image_format)
         self._bond_width_scaling = DeferredValue[bool]("bond_width_scaling", bond_width_scaling)
@@ -209,12 +211,20 @@ class CNotebookContext:
         self._min_height.set(value)
 
     @property
-    def structure_scale(self) -> int:
+    def structure_scale(self) -> float:
         return self._structure_scale.get()
 
     @structure_scale.setter
-    def structure_scale(self, value: int) -> None:
+    def structure_scale(self, value: float) -> None:
         self._structure_scale.set(value)
+
+    @property
+    def atom_label_font_scale(self) -> float:
+        return self._atom_label_font_scale.get()
+
+    @atom_label_font_scale.setter
+    def atom_label_font_scale(self, value: float) -> None:
+        self._atom_label_font_scale.set(value)
 
     @property
     def title_font_scale(self) -> float:
@@ -275,6 +285,7 @@ class CNotebookContext:
         opts.SetScale(self.structure_scale)
         opts.SetTitleFontScale(self.title_font_scale)
         opts.SetBondWidthScaling(self.bond_width_scaling)
+        opts.SetAtomLabelFontScale(self.atom_label_font_scale)
 
         if not self.title:
             opts.SetTitleLocation(oedepict.OETitleLocation_Hidden)
