@@ -32,13 +32,13 @@ def test_full_workflow():
 
     mols = create_test_molecules()
 
-    # Create grid
+    # Create grid with correct parameter name (select, not selection)
     grid = MolGrid(
         mols,
         title_field="Title",
         tooltip_fields=["SMILES"],
         n_items_per_page=3,
-        selection=True,
+        select=True,
     )
 
     # Generate HTML
@@ -48,29 +48,21 @@ def test_full_workflow():
     assert "pagination" in html.lower()
 
     # Test SMARTS search
-    results = grid._process_smarts_search("c1ccccc1")  # Aromatic ring
-    assert results["count"] >= 3  # Benzene, Acetaminophen, Ibuprofen
-
-    # Test filtering
-    grid.filter([True, True, False, False, False])
-    assert grid.widget.filter_mask == [True, True, False, False, False]
+    matches = grid._search_smarts("c1ccccc1")  # Aromatic ring
+    assert len(matches) >= 3  # Benzene, Acetaminophen, Ibuprofen
 
 
 def test_smarts_highlighting_quality():
-    """Test that SMARTS highlighting produces valid SVG."""
+    """Test that SMARTS search returns valid results."""
     from cnotebook.molgrid import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "c1ccc(O)cc1")  # Phenol
 
     grid = MolGrid([mol], image_format="svg")
-    results = grid._process_smarts_search("[OH]")
+    matches = grid._search_smarts("[OH]")
 
-    assert 0 in results["matches"]
-    img = results["matches"][0]["img"]
-
-    # Should be valid SVG
-    assert "<svg" in img.lower() or "data:image" in img
+    assert 0 in matches
 
 
 def test_empty_grid():
@@ -107,32 +99,16 @@ def test_multiple_smarts_searches():
     grid = MolGrid(mols)
 
     # First search for hydroxyl group
-    results1 = grid._process_smarts_search("[OH]")
-    assert results1["count"] >= 2  # Ethanol, Acetaminophen, Ibuprofen (carboxylic)
+    results1 = grid._search_smarts("[OH]")
+    assert len(results1) >= 2  # Ethanol, Acetaminophen, Ibuprofen (carboxylic)
 
     # Second search for aromatic ring
-    results2 = grid._process_smarts_search("c1ccccc1")
-    assert results2["count"] >= 3
+    results2 = grid._search_smarts("c1ccccc1")
+    assert len(results2) >= 3
 
     # Third search for carboxylic acid
-    results3 = grid._process_smarts_search("C(=O)O")
-    assert results3["count"] >= 2  # Acetic Acid, Ibuprofen
-
-
-def test_filter_then_clear():
-    """Test filtering and clearing filter."""
-    from cnotebook.molgrid import MolGrid
-
-    mols = create_test_molecules()
-    grid = MolGrid(mols)
-
-    # Apply filter
-    grid.filter([True, False, True, False, True])
-    assert grid.widget.filter_mask == [True, False, True, False, True]
-
-    # Clear filter by showing all
-    grid.filter([True, True, True, True, True])
-    assert grid.widget.filter_mask == [True, True, True, True, True]
+    results3 = grid._search_smarts("C(=O)O")
+    assert len(results3) >= 2  # Acetic Acid, Ibuprofen
 
 
 def test_selection_workflow():
@@ -140,7 +116,7 @@ def test_selection_workflow():
     from cnotebook.molgrid import MolGrid
 
     mols = create_test_molecules()
-    grid = MolGrid(mols, name="integration-test-grid", selection=True)
+    grid = MolGrid(mols, name="integration-test-grid", select=True)
 
     # Simulate selection via widget
     grid.widget.selection = '{"0": "CCO", "2": "c1ccccc1"}'
@@ -152,24 +128,6 @@ def test_selection_workflow():
     # Get selected indices
     indices = grid.get_selection_indices()
     assert indices == [0, 2]
-
-
-def test_filter_by_index_then_select():
-    """Test filtering by index then selecting."""
-    from cnotebook.molgrid import MolGrid
-
-    mols = create_test_molecules()
-    grid = MolGrid(mols, name="filter-select-test")
-
-    # Filter to show only first 3
-    grid.filter_by_index([0, 1, 2])
-    assert grid.widget.filter_mask == [True, True, True, False, False]
-
-    # Simulate selection
-    grid.widget.selection = '{"1": "CC(=O)O"}'
-
-    indices = grid.get_selection_indices()
-    assert indices == [1]
 
 
 def test_custom_rendering_parameters():
@@ -225,3 +183,142 @@ def test_grid_unique_naming():
     assert grid1.name != grid2.name
     assert "molgrid-" in grid1.name
     assert "molgrid-" in grid2.name
+
+
+def test_export_data_preparation():
+    """Test that export data is correctly prepared."""
+    from cnotebook.molgrid import MolGrid
+
+    mols = create_test_molecules()
+    grid = MolGrid(mols)
+    export_data = grid._prepare_export_data()
+
+    assert len(export_data) == 5
+    assert export_data[0]["smiles"] == "CCO"
+    assert export_data[0]["index"] == 0
+
+
+def test_html_contains_all_menu_actions():
+    """Test that HTML contains all action menu items."""
+    from cnotebook.molgrid import MolGrid
+
+    mols = create_test_molecules()
+    grid = MolGrid(mols)
+    html = grid.to_html()
+
+    # Check for all action buttons
+    assert "select-all" in html
+    assert "clear-selection" in html
+    assert "invert-selection" in html
+    assert "copy-clipboard" in html
+    assert "save-smiles" in html
+    assert "save-csv" in html
+
+
+def test_responsive_css_present():
+    """Test that responsive CSS is included in HTML."""
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    html = grid.to_html()
+
+    # Check for media queries
+    assert "@media" in html
+
+
+def test_search_fields_in_html():
+    """Test that search fields are properly embedded in HTML."""
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    mol.SetTitle("Ethanol")
+    oechem.OESetSDData(mol, "Category", "Alcohol")
+
+    grid = MolGrid([mol], search_fields=["Category"])
+    html = grid.to_html()
+
+    # Search fields should be embedded as JSON
+    assert "searchFields" in html
+    assert "Category" in html
+
+
+def test_smarts_query_widget_integration():
+    """Test SMARTS query through widget integration."""
+    from cnotebook.molgrid import MolGrid
+    import json
+
+    mols = create_test_molecules()
+    grid = MolGrid(mols)
+
+    # Simulate SMARTS query via widget
+    grid._on_smarts_query({"new": "[OH]"})
+
+    matches = json.loads(grid.widget.smarts_matches)
+    assert isinstance(matches, list)
+    assert len(matches) >= 2  # At least Ethanol and Acetaminophen
+
+
+def test_smarts_query_empty_clears_filter():
+    """Test that empty SMARTS query returns all molecules."""
+    from cnotebook.molgrid import MolGrid
+    import json
+
+    mols = create_test_molecules()
+    grid = MolGrid(mols)
+
+    # First filter with SMARTS
+    grid._on_smarts_query({"new": "[OH]"})
+    filtered = json.loads(grid.widget.smarts_matches)
+    assert len(filtered) < 5
+
+    # Then clear filter
+    grid._on_smarts_query({"new": ""})
+    all_matches = json.loads(grid.widget.smarts_matches)
+    assert len(all_matches) == 5
+
+
+def test_multiple_grid_instances():
+    """Test multiple grid instances don't interfere."""
+    from cnotebook.molgrid import MolGrid
+
+    mols1 = create_test_molecules()[:2]
+    mols2 = create_test_molecules()[2:]
+
+    grid1 = MolGrid(mols1, name="grid1")
+    grid2 = MolGrid(mols2, name="grid2")
+
+    # Set different selections
+    grid1.widget.selection = '{"0": "CCO"}'
+    grid2.widget.selection = '{"0": "benzene"}'
+
+    # Verify isolation
+    assert grid1.get_selection_indices() == [0]
+    assert grid2.get_selection_indices() == [0]
+    assert grid1.get_selection()[0].GetTitle() == "Ethanol"
+    assert grid2.get_selection()[0].GetTitle() == "Benzene"
+
+
+def test_large_dataset_performance():
+    """Test MolGrid handles larger datasets."""
+    from cnotebook.molgrid import MolGrid
+
+    mols = []
+    for i in range(50):
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, f"C{'C' * (i % 10)}")
+        mol.SetTitle(f"Mol_{i}")
+        mols.append(mol)
+
+    grid = MolGrid(mols, n_items_per_page=10)
+
+    # Should complete without timeout
+    html = grid.to_html()
+    assert "molgrid" in html.lower()
+
+    # Test SMARTS search on larger set
+    matches = grid._search_smarts("CC")
+    assert len(matches) > 0
