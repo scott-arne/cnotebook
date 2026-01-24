@@ -852,3 +852,173 @@ def test_molgrid_is_marimo_check():
     # When not in marimo, should return False
     result = _is_marimo()
     assert result is False
+
+
+# ============================================================================
+# Information Button Tests
+# ============================================================================
+
+def test_molgrid_information_enabled_by_default(simple_mol):
+    """Test that information button is enabled by default."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol])
+    assert grid.information_enabled is True
+
+
+def test_molgrid_information_can_be_disabled(simple_mol):
+    """Test that information button can be disabled."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], information=False)
+    assert grid.information_enabled is False
+
+
+def test_molgrid_html_contains_info_button_when_enabled(simple_mol):
+    """Test HTML contains info button when information=True."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], information=True)
+    html = grid.to_html()
+
+    assert 'class="molgrid-info-btn"' in html
+    assert 'class="molgrid-info-tooltip"' in html
+
+
+def test_molgrid_html_no_info_button_when_disabled(simple_mol):
+    """Test HTML does not contain info button when information=False."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], information=False)
+    html = grid.to_html()
+
+    assert 'class="molgrid-info-btn"' not in html
+    assert 'class="molgrid-info-tooltip"' not in html
+
+
+def test_molgrid_info_tooltip_contains_index(simple_mol):
+    """Test info tooltip always contains index."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], information=True)
+    html = grid.to_html()
+
+    assert "Index:" in html
+    assert 'class="molgrid-info-tooltip-label"' in html
+
+
+def test_molgrid_info_tooltip_contains_title_when_set():
+    """Test info tooltip contains title when molecule has one."""
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    mol.SetTitle("Ethanol")
+
+    grid = MolGrid([mol], information=True)
+    html = grid.to_html()
+
+    # Should have Title in tooltip
+    assert "Title:" in html
+    assert "Ethanol" in html
+
+
+def test_molgrid_info_tooltip_no_title_when_empty():
+    """Test info tooltip does not show title row when molecule has no title."""
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    # Don't set a title
+
+    grid = MolGrid([mol], information=True)
+    data = grid._prepare_data()
+
+    # mol_title should be empty string (not None since mol is valid)
+    assert data[0]["mol_title"] == ""
+
+
+def test_molgrid_prepare_data_includes_mol_title(simple_mol):
+    """Test _prepare_data includes mol_title field."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol])
+    data = grid._prepare_data()
+
+    assert "mol_title" in data[0]
+    assert data[0]["mol_title"] == "Ethanol"
+
+
+def test_molgrid_info_css_present(simple_mol):
+    """Test that info button CSS is included in HTML."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol])
+    html = grid.to_html()
+
+    assert ".molgrid-info-btn" in html
+    assert ".molgrid-info-tooltip" in html
+
+
+def test_molgrid_info_tooltip_pinned_css(simple_mol):
+    """Test that pinned tooltip CSS is included."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol])
+    html = grid.to_html()
+
+    assert ".molgrid-info-tooltip.pinned" in html
+    assert ".molgrid-info-btn.active" in html
+
+
+def test_molgrid_data_parameter_string(simple_mol):
+    """Test data parameter accepts a single string."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], data="MW")
+
+    assert grid.information_fields == ["MW"]
+
+
+def test_molgrid_data_parameter_list(simple_mol):
+    """Test data parameter accepts a list of strings."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], data=["MW", "Formula"])
+
+    assert grid.information_fields == ["MW", "Formula"]
+
+
+def test_molgrid_data_parameter_none_without_dataframe(simple_mol):
+    """Test data=None with no DataFrame results in empty info fields."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([simple_mol], data=None)
+
+    assert grid.information_fields == []
+
+
+def test_molgrid_prepare_data_includes_info_fields(mol_with_sd_data):
+    """Test _prepare_data includes info_fields."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([mol_with_sd_data], data=["MW"])
+    data = grid._prepare_data()
+
+    assert "info_fields" in data[0]
+    assert "MW" in data[0]["info_fields"]
+    assert data[0]["info_fields"]["MW"] == "46.07"
+
+
+def test_molgrid_info_tooltip_displays_data_fields(mol_with_sd_data):
+    """Test info tooltip displays data fields from the data parameter."""
+    from cnotebook.molgrid import MolGrid
+
+    grid = MolGrid([mol_with_sd_data], data=["MW", "Formula"])
+    html = grid.to_html()
+
+    # Should contain the data field labels and values
+    assert "MW:" in html
+    assert "46.07" in html
+    assert "Formula:" in html
+    assert "C2H6O" in html

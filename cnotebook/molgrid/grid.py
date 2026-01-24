@@ -5,7 +5,7 @@ import sys
 import uuid
 from html import escape
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Union
 
 import anywidget
 import traitlets
@@ -316,6 +316,95 @@ body {
     z-index: 10;
 }
 
+/* Info Button */
+.molgrid-info-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #e9ecef;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    font-style: italic;
+    font-family: Georgia, "Times New Roman", serif;
+    color: #6c757d;
+    transition: background 0.2s, color 0.2s, transform 0.2s;
+    z-index: 10;
+    padding: 0;
+    line-height: 1;
+}
+
+.molgrid-info-btn:hover {
+    background: #007bff;
+    color: white;
+    transform: scale(1.1);
+}
+
+/* Info Tooltip */
+.molgrid-info-tooltip {
+    display: none;
+    position: absolute;
+    top: 30px;
+    right: 8px;
+    min-width: 120px;
+    max-width: 220px;
+    background: #212529;
+    color: white;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.molgrid-info-tooltip::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    right: 12px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 6px solid #212529;
+}
+
+/* Show on hover OR when pinned */
+.molgrid-info-btn:hover + .molgrid-info-tooltip,
+.molgrid-info-tooltip.pinned {
+    display: block;
+}
+
+/* Highlight button when tooltip is pinned */
+.molgrid-info-btn.active {
+    background: #007bff;
+    color: white;
+}
+
+.molgrid-info-tooltip-row {
+    display: flex;
+    margin-bottom: 4px;
+}
+
+.molgrid-info-tooltip-row:last-child {
+    margin-bottom: 0;
+}
+
+.molgrid-info-tooltip-label {
+    font-weight: 600;
+    margin-right: 6px;
+    color: #adb5bd;
+}
+
+.molgrid-info-tooltip-value {
+    word-break: break-word;
+}
+
 /* Image */
 .molgrid-image {
     display: flex;
@@ -519,6 +608,9 @@ class MolGrid:
     :param atom_label_font_scale: Scale factor for atom labels.
     :param image_format: Image format ("svg" or "png").
     :param select: Enable selection checkboxes.
+    :param information: Enable info button with hover tooltip.
+    :param data: Column(s) to display in info tooltip. If None, auto-detects
+        simple types (string, int, float) from DataFrame.
     :param search_fields: Fields for text search.
     :param name: Grid identifier.
     """
@@ -540,6 +632,8 @@ class MolGrid:
         atom_label_font_scale: float = 1.5,
         image_format: str = "svg",
         select: bool = True,
+        information: bool = True,
+        data: Optional[Union[str, List[str]]] = None,
         search_fields: Optional[List[str]] = None,
         name: Optional[str] = None,
     ):
@@ -550,7 +644,20 @@ class MolGrid:
         self.tooltip_fields = tooltip_fields or []
         self.n_items_per_page = n_items_per_page
         self.selection_enabled = select
+        self.information_enabled = information
         self.name = name
+
+        # Handle data parameter for info tooltip columns
+        if data is not None:
+            if isinstance(data, str):
+                self.information_fields = [data]
+            else:
+                self.information_fields = list(data)
+        elif dataframe is not None:
+            # Auto-detect simple type columns
+            self.information_fields = self._auto_detect_info_fields(dataframe, mol_col)
+        else:
+            self.information_fields = []
 
         # Auto-detect search fields from DataFrame if not provided
         if search_fields is None and dataframe is not None:
@@ -624,6 +731,45 @@ class MolGrid:
                 pass
 
         return search_fields
+
+    def _auto_detect_info_fields(self, dataframe, mol_col: Optional[str]) -> List[str]:
+        """Auto-detect simple type columns from DataFrame for info tooltip.
+
+        Includes string, int, and float columns (excludes molecule columns).
+
+        :param dataframe: DataFrame to inspect.
+        :param mol_col: Molecule column name to exclude.
+        :returns: List of column names with simple types.
+        """
+        info_fields = []
+        for col in dataframe.columns:
+            # Skip the molecule column
+            if col == mol_col:
+                continue
+
+            dtype = dataframe[col].dtype
+            dtype_str = str(dtype).lower()
+
+            # Skip molecule dtypes (oepandas MoleculeDtype)
+            if "molecule" in dtype_str:
+                continue
+
+            # Include numeric types (int, float)
+            if any(t in dtype_str for t in ["int", "float", "double", "decimal"]):
+                info_fields.append(col)
+                continue
+
+            # Include string/object columns
+            if "object" in dtype_str or "string" in dtype_str or "str" in dtype_str:
+                info_fields.append(col)
+                continue
+
+            # Include category dtype
+            if "category" in dtype_str:
+                info_fields.append(col)
+                continue
+
+        return info_fields
 
     def _on_selection_change(self, change):
         """Handle selection change from widget.
@@ -711,6 +857,7 @@ class MolGrid:
             item = {
                 "index": idx,
                 "title": None,
+                "mol_title": mol.GetTitle() if mol.IsValid() else None,
                 "tooltip": {},
                 "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
                 "img": oemol_to_html(mol, ctx=ctx),
@@ -729,6 +876,12 @@ class MolGrid:
             if self.search_fields:
                 for field in self.search_fields:
                     item["search_fields"][field] = self._get_field_value(idx, mol, field)
+
+            # Extract information fields for tooltip
+            item["info_fields"] = {}
+            if self.information_fields:
+                for field in self.information_fields:
+                    item["info_fields"][field] = self._get_field_value(idx, mol, field)
 
             data.append(item)
 
@@ -806,6 +959,21 @@ class MolGrid:
             if self.selection_enabled:
                 checkbox_html = f'<input type="checkbox" class="molgrid-checkbox" data-index="{item["index"]}">'
 
+            # Info button with tooltip
+            info_html = ""
+            if self.information_enabled:
+                # Build tooltip content: Index always, Title if available, then data fields
+                info_rows = f'<div class="molgrid-info-tooltip-row"><span class="molgrid-info-tooltip-label">Index:</span><span class="molgrid-info-tooltip-value">{item["index"]}</span></div>'
+                if item.get("mol_title"):
+                    info_rows += f'<div class="molgrid-info-tooltip-row"><span class="molgrid-info-tooltip-label">Title:</span><span class="molgrid-info-tooltip-value">{escape(str(item["mol_title"]))}</span></div>'
+                # Add data fields from info_fields
+                for field, value in item.get("info_fields", {}).items():
+                    if value is not None:
+                        display_value = escape(str(value))
+                        info_rows += f'<div class="molgrid-info-tooltip-row"><span class="molgrid-info-tooltip-label">{escape(field)}:</span><span class="molgrid-info-tooltip-value">{display_value}</span></div>'
+                info_html = f'''<button class="molgrid-info-btn" type="button">i</button>
+                <div class="molgrid-info-tooltip">{info_rows}</div>'''
+
             tooltip_attr = f'title="{tooltip_str}"' if tooltip_str else ""
 
             # Build hidden spans for search fields
@@ -819,6 +987,7 @@ class MolGrid:
             items_html += f'''
             <li class="molgrid-cell" data-index="{item["index"]}" data-smiles="{escape(item["smiles"])}" {tooltip_attr}>
                 {checkbox_html}
+                {info_html}
                 <div class="molgrid-image">{item["img"]}</div>
                 {title_display_html}
                 <span class="title" style="display:none;">{title_value}</span>
@@ -1074,7 +1243,11 @@ class MolGrid:
 
     container.addEventListener("click", function(e) {{
         var cell = e.target.closest(".molgrid-cell");
-        if (cell && !e.target.classList.contains("molgrid-checkbox")) {{
+        // Don't toggle selection when clicking checkbox, info button, or tooltip
+        var isCheckbox = e.target.classList.contains("molgrid-checkbox");
+        var isInfoBtn = e.target.classList.contains("molgrid-info-btn");
+        var isInfoTooltip = e.target.closest(".molgrid-info-tooltip");
+        if (cell && !isCheckbox && !isInfoBtn && !isInfoTooltip) {{
             var checkbox = cell.querySelector(".molgrid-checkbox");
             if (checkbox) {{
                 checkbox.checked = !checkbox.checked;
@@ -1109,6 +1282,31 @@ class MolGrid:
     // Also send height after List.js updates
     molgridList.on('updated', function() {{
         setTimeout(sendHeight, 50);
+    }});
+
+    // ========================================
+    // Info Button Click-to-Pin
+    // ========================================
+
+    // Handle info button clicks to pin/unpin tooltips
+    container.addEventListener('click', function(e) {{
+        if (e.target.classList.contains('molgrid-info-btn')) {{
+            e.stopPropagation();
+            var btn = e.target;
+            var tooltip = btn.nextElementSibling;
+            if (tooltip && tooltip.classList.contains('molgrid-info-tooltip')) {{
+                var isPinned = tooltip.classList.contains('pinned');
+                if (isPinned) {{
+                    // Unpin this tooltip
+                    tooltip.classList.remove('pinned');
+                    btn.classList.remove('active');
+                }} else {{
+                    // Pin this tooltip (don't unpin others - allow comparison)
+                    tooltip.classList.add('pinned');
+                    btn.classList.add('active');
+                }}
+            }}
+        }}
     }});
 
     // ========================================

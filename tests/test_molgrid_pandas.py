@@ -412,3 +412,122 @@ def test_dataframe_molgrid_integer_column_excluded():
     assert "Index" not in grid.search_fields
     # String column should be included
     assert "Name" in grid.search_fields
+
+
+def test_dataframe_molgrid_auto_detect_info_fields():
+    """Test auto-detection of info fields includes all simple types."""
+    import pandas as pd
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({
+        "Molecule": [mol],
+        "Name": ["Ethanol"],
+        "MW": [46.07],
+        "AtomCount": [9],
+    })
+
+    grid = MolGrid([mol], dataframe=df, mol_col="Molecule")
+
+    # All simple columns should be auto-detected for info fields
+    assert "Name" in grid.information_fields
+    assert "MW" in grid.information_fields
+    assert "AtomCount" in grid.information_fields
+    # Molecule column should be excluded
+    assert "Molecule" not in grid.information_fields
+
+
+def test_dataframe_molgrid_explicit_data_parameter():
+    """Test that explicit data parameter overrides auto-detection."""
+    import pandas as pd
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({
+        "Molecule": [mol],
+        "Name": ["Ethanol"],
+        "MW": [46.07],
+        "AtomCount": [9],
+    })
+
+    # Explicitly set only "MW" as data field
+    grid = MolGrid([mol], dataframe=df, mol_col="Molecule", data=["MW"])
+
+    assert grid.information_fields == ["MW"]
+    assert "Name" not in grid.information_fields
+    assert "AtomCount" not in grid.information_fields
+
+
+def test_dataframe_molgrid_data_as_string():
+    """Test data parameter as single string."""
+    import pandas as pd
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({
+        "Molecule": [mol],
+        "Name": ["Ethanol"],
+        "MW": [46.07],
+    })
+
+    # Pass single string
+    grid = MolGrid([mol], dataframe=df, mol_col="Molecule", data="Name")
+
+    assert grid.information_fields == ["Name"]
+
+
+def test_dataframe_molgrid_info_fields_in_tooltip():
+    """Test that info fields from DataFrame appear in tooltip HTML."""
+    import pandas as pd
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({
+        "Molecule": [mol],
+        "Name": ["Ethanol"],
+        "MW": [46.07],
+    })
+
+    grid = MolGrid([mol], dataframe=df, mol_col="Molecule", data=["Name", "MW"])
+    html = grid.to_html()
+
+    # Should contain data field labels and values in tooltip
+    assert "Name:" in html
+    assert "Ethanol" in html
+    assert "MW:" in html
+    assert "46.07" in html
+
+
+def test_dataframe_molgrid_info_fields_extracted():
+    """Test _prepare_data extracts info_fields from DataFrame."""
+    import pandas as pd
+    from openeye import oechem
+    from cnotebook.molgrid import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({
+        "Molecule": [mol],
+        "Name": ["Ethanol"],
+        "MW": [46.07],
+    })
+
+    grid = MolGrid([mol], dataframe=df, mol_col="Molecule", data=["Name", "MW"])
+    data = grid._prepare_data()
+
+    assert "info_fields" in data[0]
+    assert data[0]["info_fields"]["Name"] == "Ethanol"
+    assert data[0]["info_fields"]["MW"] == 46.07

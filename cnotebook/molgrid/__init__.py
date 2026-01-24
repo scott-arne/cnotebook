@@ -1,7 +1,7 @@
 """Interactive molecule grid for Jupyter and Marimo notebooks."""
 
 from cnotebook.molgrid.grid import MolGrid
-from typing import Iterable, Optional, List
+from typing import Iterable, List, Optional, Union
 
 
 def molgrid(
@@ -14,6 +14,8 @@ def molgrid(
     height: int = 200,
     image_format: str = "svg",
     select: bool = True,
+    information: bool = True,
+    data: Optional[Union[str, List[str]]] = None,
     search_fields: Optional[List[str]] = None,
     name: Optional[str] = None,
 ) -> MolGrid:
@@ -27,6 +29,9 @@ def molgrid(
     :param height: Image height in pixels (default 200).
     :param image_format: "svg" or "png" (default "svg").
     :param select: Enable selection checkboxes.
+    :param information: Enable info button with hover tooltip.
+    :param data: Column(s) to display in info tooltip. If None, auto-detects
+        simple types (string, int, float) from DataFrame.
     :param search_fields: Fields for text search.
     :param name: Grid identifier.
     :returns: MolGrid instance.
@@ -40,6 +45,8 @@ def molgrid(
         height=height,
         image_format=image_format,
         select=select,
+        information=information,
+        data=data,
         search_fields=search_fields,
         name=name,
     )
