@@ -13,7 +13,7 @@ def molgrid(
     width: int = 200,
     height: int = 200,
     image_format: str = "svg",
-    selection: bool = True,
+    select: bool = True,
     search_fields: Optional[List[str]] = None,
     name: Optional[str] = None,
 ) -> MolGrid:
@@ -26,7 +26,7 @@ def molgrid(
     :param width: Image width in pixels (default 200).
     :param height: Image height in pixels (default 200).
     :param image_format: "svg" or "png" (default "svg").
-    :param selection: Enable selection checkboxes.
+    :param select: Enable selection checkboxes.
     :param search_fields: Fields for text search.
     :param name: Grid identifier.
     :returns: MolGrid instance.
@@ -39,7 +39,7 @@ def molgrid(
         width=width,
         height=height,
         image_format=image_format,
-        selection=selection,
+        select=select,
         search_fields=search_fields,
         name=name,
     )

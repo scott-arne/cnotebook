@@ -4,7 +4,6 @@ function render({ model, el }) {
 
     // Store model reference globally so iframe can access it
     window[globalName] = model;
-    console.log("[MolGridWidget] Model stored as window." + globalName);
 
     // Add a class to the element
     el.classList.add("molgrid-anywidget");
@@ -15,7 +14,6 @@ function render({ model, el }) {
             const selectionJson = JSON.stringify(event.data.selection);
             model.set("selection", selectionJson);
             model.save_changes();
-            console.log("[MolGridWidget] Selection synced to Python:", event.data.selection);
         }
     });
 }

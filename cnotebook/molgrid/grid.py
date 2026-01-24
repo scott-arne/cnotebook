@@ -49,18 +49,14 @@ class MolGridWidget(anywidget.AnyWidget):
 
         // Store model globally so iframe can access it
         window[globalName] = model;
-        console.log("[MolGridWidget] Model stored at window." + globalName);
 
         // Listen for postMessage from iframe
         window.addEventListener("message", (event) => {
             if (event.data && event.data.gridId === gridId) {
                 if (event.data.type === "MOLGRID_SELECTION") {
-                    console.log("[MolGridWidget] Received selection:", event.data.selection);
                     model.set("selection", JSON.stringify(event.data.selection));
                     model.save_changes();
-                    console.log("[MolGridWidget] Selection synced to Python");
                 } else if (event.data.type === "MOLGRID_SMARTS_QUERY") {
-                    console.log("[MolGridWidget] Received SMARTS query:", event.data.query);
                     model.set("smarts_query", event.data.query);
                     model.save_changes();
                 }
@@ -70,7 +66,6 @@ class MolGridWidget(anywidget.AnyWidget):
         // Listen for SMARTS match results from Python
         model.on("change:smarts_matches", () => {
             const matches = model.get("smarts_matches");
-            console.log("[MolGridWidget] SMARTS matches received:", matches);
             // Broadcast to iframe
             const iframe = document.querySelector("#molgrid-iframe-" + gridId);
             if (iframe && iframe.contentWindow) {
@@ -88,20 +83,10 @@ class MolGridWidget(anywidget.AnyWidget):
                 const iframe = document.querySelector("#molgrid-iframe-" + gridId);
                 if (iframe) {
                     iframe.style.height = event.data.height + "px";
-                    console.log("[MolGridWidget] Iframe height set to:", event.data.height);
                 }
             }
         });
 
-        // Create visible indicator that widget is ready
-        const info = document.createElement("div");
-        info.textContent = "MolGrid widget ready: " + gridId;
-        info.style.padding = "4px 8px";
-        info.style.background = "#e7f3ff";
-        info.style.borderRadius = "4px";
-        info.style.fontSize = "12px";
-        info.style.marginBottom = "8px";
-        el.appendChild(info);
     }
 
     export default { render };
@@ -415,7 +400,7 @@ class MolGrid:
     :param height: Image height in pixels.
     :param atom_label_font_scale: Scale factor for atom labels.
     :param image_format: Image format ("svg" or "png").
-    :param selection: Enable selection checkboxes.
+    :param select: Enable selection checkboxes.
     :param search_fields: Fields for text search.
     :param name: Grid identifier.
     """
@@ -436,7 +421,7 @@ class MolGrid:
         height: int = 200,
         atom_label_font_scale: float = 1.5,
         image_format: str = "svg",
-        selection: bool = True,
+        select: bool = True,
         search_fields: Optional[List[str]] = None,
         name: Optional[str] = None,
     ):
@@ -446,9 +431,14 @@ class MolGrid:
         self.title_field = title_field
         self.tooltip_fields = tooltip_fields or []
         self.n_items_per_page = n_items_per_page
-        self.selection_enabled = selection
-        self.search_fields = search_fields
+        self.selection_enabled = select
         self.name = name
+
+        # Auto-detect search fields from DataFrame if not provided
+        if search_fields is None and dataframe is not None:
+            self.search_fields = self._auto_detect_search_fields(dataframe, mol_col)
+        else:
+            self.search_fields = search_fields
 
         # Rendering settings
         self.width = width
@@ -477,6 +467,45 @@ class MolGrid:
         # In Marimo: widget is returned from display() method instead
         if not _is_marimo():
             display(self.widget)
+
+    def _auto_detect_search_fields(self, dataframe, mol_col: Optional[str]) -> List[str]:
+        """Auto-detect searchable text columns from DataFrame.
+
+        :param dataframe: DataFrame to inspect.
+        :param mol_col: Molecule column name to exclude.
+        :returns: List of searchable column names.
+        """
+        search_fields = []
+        for col in dataframe.columns:
+            # Skip the molecule column
+            if col == mol_col:
+                continue
+
+            dtype = dataframe[col].dtype
+            dtype_str = str(dtype).lower()
+
+            # Skip molecule dtypes (oepandas MoleculeDtype)
+            if "molecule" in dtype_str:
+                continue
+
+            # Skip numeric dtypes
+            if any(t in dtype_str for t in ["int", "float", "double", "decimal"]):
+                continue
+
+            # Include string/object columns that likely contain text
+            if "object" in dtype_str or "string" in dtype_str or "str" in dtype_str:
+                search_fields.append(col)
+                continue
+
+            # Also check if column contains string values (fallback for edge cases)
+            try:
+                first_valid = dataframe[col].dropna().iloc[0] if len(dataframe[col].dropna()) > 0 else None
+                if first_valid is not None and isinstance(first_valid, str):
+                    search_fields.append(col)
+            except (IndexError, KeyError):
+                pass
+
+        return search_fields
 
     def _on_selection_change(self, change):
         """Handle selection change from widget.
@@ -605,9 +634,13 @@ class MolGrid:
                 tooltip_parts = [f"{k}: {v}" for k, v in item["tooltip"].items() if v]
                 tooltip_str = "&#10;".join(tooltip_parts)
 
-            title_html = ""
+            # Visible title display
+            title_display_html = ""
             if item["title"]:
-                title_html = f'<div class="molgrid-title title">{escape(str(item["title"]))}</div>'
+                title_display_html = f'<div class="molgrid-title">{escape(str(item["title"]))}</div>'
+
+            # Hidden title span for List.js search (always present for consistent indexing)
+            title_value = escape(str(item["title"])) if item["title"] else ""
 
             checkbox_html = ""
             if self.selection_enabled:
@@ -622,12 +655,13 @@ class MolGrid:
                 search_fields_html += f'<span class="{escape(field)}" style="display:none;">{safe_value}</span>\n                '
 
             # Keep data-smiles on cell element (critical for selection to work)
-            # Add hidden spans for List.js valueNames (index, smiles, search fields)
+            # Add hidden spans for List.js valueNames (index, smiles, title, search fields)
             items_html += f'''
             <li class="molgrid-cell" data-index="{item["index"]}" data-smiles="{escape(item["smiles"])}" {tooltip_attr}>
                 {checkbox_html}
                 <div class="molgrid-image">{item["img"]}</div>
-                {title_html}
+                {title_display_html}
+                <span class="title" style="display:none;">{title_value}</span>
                 <span class="index" style="display:none;">{item["index"]}</span>
                 <span class="smiles" style="display:none;">{escape(item["smiles"])}</span>
                 {search_fields_html}
@@ -764,13 +798,11 @@ class MolGrid:
             gridId: gridId,
             query: query
         }}, "*");
-        console.log("[MolGrid iframe] SMARTS query sent:", query);
     }}
 
     // Listen for SMARTS results from Python
     window.addEventListener("message", function(event) {{
         if (event.data && event.data.gridId === gridId && event.data.type === "MOLGRID_SMARTS_RESULTS") {{
-            console.log("[MolGrid iframe] SMARTS results received:", event.data.matches);
             var matches = JSON.parse(event.data.matches);
             applySmartsFilter(matches);
         }}
@@ -846,14 +878,12 @@ class MolGrid:
         if (model) {{
             model.set("selection", JSON.stringify(selection));
             model.save_changes();
-            console.log("[MolGrid iframe] Selection synced via direct access:", selection);
         }} else {{
             window.parent.postMessage({{
                 type: "MOLGRID_SELECTION",
                 gridId: gridId,
                 selection: selection
             }}, "*");
-            console.log("[MolGrid iframe] Selection sent via postMessage:", selection);
         }}
     }}
 
@@ -918,8 +948,6 @@ class MolGrid:
     molgridList.on('updated', function() {{
         setTimeout(sendHeight, 50);
     }});
-
-    console.log("[MolGrid iframe] Initialized for grid:", gridId);
 }})();
 '''
 
