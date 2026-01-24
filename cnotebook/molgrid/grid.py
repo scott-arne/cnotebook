@@ -100,6 +100,12 @@ class MolGridWidget(anywidget.AnyWidget):
 
 # CSS matching backup styling
 _CSS = '''
+/* Base styles */
+body {
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
 /* MolGrid Container */
 .molgrid-container {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -109,6 +115,7 @@ _CSS = '''
     margin: 0 auto;
     padding: 10px;
     box-sizing: border-box;
+    overflow: visible;
 }
 
 /* Toolbar */
@@ -116,12 +123,58 @@ _CSS = '''
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 15px;
+    gap: 10px 15px;
     padding: 10px;
     margin-bottom: 15px;
     background: #f8f9fa;
     border-radius: 6px;
     border: 1px solid #e9ecef;
+    overflow: visible;
+    position: relative;
+}
+
+/* Responsive toolbar layout */
+@media (max-width: 900px) {
+    .molgrid-toolbar {
+        gap: 8px 12px;
+    }
+    .molgrid-info {
+        font-size: 12px;
+    }
+    .toggle-text {
+        font-size: 11px;
+    }
+}
+
+@media (max-width: 700px) {
+    .molgrid-search {
+        order: 1;
+        flex-basis: 100%;
+        min-width: unset;
+    }
+    .molgrid-info {
+        order: 2;
+        flex: 1;
+        min-width: 0;
+    }
+    .molgrid-actions {
+        order: 3;
+        flex-shrink: 0;
+    }
+}
+
+@media (max-width: 500px) {
+    .molgrid-toolbar {
+        gap: 6px 10px;
+    }
+    .molgrid-search {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    .toggle-switch {
+        justify-content: center;
+    }
 }
 
 /* Search */
@@ -210,6 +263,9 @@ _CSS = '''
     color: #6c757d;
     font-size: 13px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
 }
 
 /* Grid List */
@@ -383,6 +439,68 @@ _CSS = '''
 .molgrid-pagination-nav .molgrid-pagination {
     margin-top: 0;
     padding: 0;
+}
+
+/* Actions Dropdown */
+.molgrid-actions {
+    position: relative;
+    overflow: visible;
+}
+
+.molgrid-actions-btn {
+    padding: 6px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    background: white;
+    color: #495057;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    line-height: 1;
+}
+
+.molgrid-actions-btn:hover {
+    background: #e9ecef;
+    border-color: #adb5bd;
+}
+
+.molgrid-dropdown {
+    display: none;
+    position: fixed;
+    min-width: 180px;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+}
+
+.molgrid-dropdown.show {
+    display: block;
+}
+
+.molgrid-dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 14px;
+    color: #212529;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.molgrid-dropdown-item:hover {
+    background: #f8f9fa;
+}
+
+.molgrid-dropdown-divider {
+    height: 1px;
+    margin: 4px 0;
+    background: #e9ecef;
 }
 '''
 
@@ -616,15 +734,57 @@ class MolGrid:
 
         return data
 
+    def _prepare_export_data(self) -> List[dict]:
+        """Prepare molecule data for CSV/SMILES export.
+
+        :returns: List of dicts with all exportable data for each molecule.
+        """
+        export_data = []
+
+        # Determine columns to export
+        if self._dataframe is not None:
+            columns = [c for c in self._dataframe.columns if c != self._mol_col]
+        else:
+            columns = []
+
+        for idx, mol in enumerate(self._molecules):
+            row = {
+                "index": idx,
+                "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
+            }
+
+            # Add DataFrame columns
+            if self._dataframe is not None:
+                for col in columns:
+                    val = self._dataframe.iloc[idx][col]
+                    # Convert to string for JSON serialization
+                    if val is None or (hasattr(val, '__len__') and len(str(val)) == 0):
+                        row[col] = ""
+                    else:
+                        row[col] = str(val)
+
+            export_data.append(row)
+
+        return export_data
+
     def to_html(self) -> str:
         """Generate HTML representation of the grid.
 
         :returns: Complete HTML document as string.
         """
         items = self._prepare_data()
+        export_data = self._prepare_export_data()
         grid_id = self.name
         items_per_page = self.n_items_per_page
         total_items = len(items)
+
+        # Prepare export data as JSON for JavaScript
+        export_data_js = json.dumps(export_data)
+        # Get column names for CSV header
+        export_columns = ["smiles"]
+        if self._dataframe is not None:
+            export_columns.extend([c for c in self._dataframe.columns if c != self._mol_col])
+        export_columns_js = json.dumps(export_columns)
 
         # Build item HTML - IMPORTANT: data-smiles on cell element for working selection
         items_html = ""
@@ -677,6 +837,8 @@ class MolGrid:
     var gridId = "{grid_id}";
     var itemsPerPage = {items_per_page};
     var searchFields = {search_fields_js};
+    var exportData = {export_data_js};
+    var exportColumns = {export_columns_js};
     var container = document.getElementById(gridId);
     var selectedIndices = new Set();
     var searchMode = 'properties';  // 'properties' or 'smarts'
@@ -948,6 +1110,215 @@ class MolGrid:
     molgridList.on('updated', function() {{
         setTimeout(sendHeight, 50);
     }});
+
+    // ========================================
+    // Actions Dropdown
+    // ========================================
+
+    var actionsBtn = container.querySelector('.molgrid-actions-btn');
+    var dropdown = container.querySelector('.molgrid-dropdown');
+
+    // Position and toggle dropdown
+    function positionDropdown() {{
+        var rect = actionsBtn.getBoundingClientRect();
+        var dropdownHeight = dropdown.offsetHeight || 250;
+        var viewportHeight = window.innerHeight;
+
+        // Check if there's room below the button
+        var spaceBelow = viewportHeight - rect.bottom;
+        var spaceAbove = rect.top;
+
+        if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {{
+            // Position below
+            dropdown.style.top = rect.bottom + 4 + 'px';
+            dropdown.style.bottom = 'auto';
+        }} else {{
+            // Position above
+            dropdown.style.bottom = (viewportHeight - rect.top + 4) + 'px';
+            dropdown.style.top = 'auto';
+        }}
+        // Always align to right edge of viewport with 10px margin
+        dropdown.style.right = '10px';
+        dropdown.style.left = 'auto';
+    }}
+
+    // Toggle dropdown
+    actionsBtn.addEventListener('click', function(e) {{
+        e.stopPropagation();
+        var isShowing = dropdown.classList.contains('show');
+        if (!isShowing) {{
+            positionDropdown();
+        }}
+        dropdown.classList.toggle('show');
+    }});
+
+    // Reposition on scroll/resize
+    window.addEventListener('scroll', function() {{
+        if (dropdown.classList.contains('show')) {{
+            positionDropdown();
+        }}
+    }});
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {{
+        if (!dropdown.contains(e.target) && e.target !== actionsBtn) {{
+            dropdown.classList.remove('show');
+        }}
+    }});
+
+    // Get all item indices (respecting current filter)
+    function getAllIndices() {{
+        return molgridList.items.map(function(item) {{
+            return parseInt(item.values().index, 10);
+        }});
+    }}
+
+    // Get matching item indices (respecting current filter/search)
+    function getMatchingIndices() {{
+        return molgridList.matchingItems.map(function(item) {{
+            return parseInt(item.values().index, 10);
+        }});
+    }}
+
+    // Select All action
+    function selectAll() {{
+        var indices = getMatchingIndices();
+        indices.forEach(function(idx) {{
+            selectedIndices.add(idx);
+        }});
+        updateCheckboxes();
+        syncSelection();
+    }}
+
+    // Clear Selection action
+    function clearSelection() {{
+        selectedIndices.clear();
+        updateCheckboxes();
+        syncSelection();
+    }}
+
+    // Invert Selection action
+    function invertSelection() {{
+        var indices = getMatchingIndices();
+        indices.forEach(function(idx) {{
+            if (selectedIndices.has(idx)) {{
+                selectedIndices.delete(idx);
+            }} else {{
+                selectedIndices.add(idx);
+            }}
+        }});
+        updateCheckboxes();
+        syncSelection();
+    }}
+
+    // CSV escape helper
+    function csvEscape(val) {{
+        if (val === null || val === undefined) return '';
+        var str = String(val);
+        if (str.indexOf(',') !== -1 || str.indexOf('"') !== -1 || str.indexOf('\\n') !== -1) {{
+            return '"' + str.replace(/"/g, '""') + '"';
+        }}
+        return str;
+    }}
+
+    // Get data for export (selected or all)
+    function getExportRows() {{
+        var indices = selectedIndices.size > 0
+            ? Array.from(selectedIndices).sort(function(a, b) {{ return a - b; }})
+            : getMatchingIndices();
+        return indices.map(function(idx) {{
+            return exportData[idx];
+        }});
+    }}
+
+    // Generate CSV content
+    function generateCSV() {{
+        var rows = getExportRows();
+        var lines = [];
+        // Header
+        lines.push(exportColumns.map(csvEscape).join(','));
+        // Data rows
+        rows.forEach(function(row) {{
+            var values = exportColumns.map(function(col) {{
+                return csvEscape(row[col] || '');
+            }});
+            lines.push(values.join(','));
+        }});
+        return lines.join('\\n');
+    }}
+
+    // Generate SMILES content
+    function generateSMILES() {{
+        var rows = getExportRows();
+        return rows.map(function(row) {{
+            return row.smiles || '';
+        }}).filter(function(s) {{ return s; }}).join('\\n');
+    }}
+
+    // Copy to Clipboard action
+    function copyToClipboard() {{
+        var csv = generateCSV();
+        navigator.clipboard.writeText(csv).then(function() {{
+            // Optional: show feedback
+        }}).catch(function(err) {{
+            console.error('Failed to copy:', err);
+        }});
+    }}
+
+    // Save file helper
+    function saveFile(content, filename, mimeType) {{
+        var blob = new Blob([content], {{ type: mimeType }});
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }}
+
+    // Save to SMILES action
+    function saveToSMILES() {{
+        var content = generateSMILES();
+        saveFile(content, 'molgrid.smi', 'chemical/x-daylight-smiles');
+    }}
+
+    // Save to CSV action
+    function saveToCSV() {{
+        var content = generateCSV();
+        saveFile(content, 'molgrid.csv', 'text/csv');
+    }}
+
+    // Handle dropdown item clicks
+    dropdown.addEventListener('click', function(e) {{
+        var item = e.target.closest('.molgrid-dropdown-item');
+        if (!item) return;
+
+        var action = item.dataset.action;
+        dropdown.classList.remove('show');
+
+        switch (action) {{
+            case 'select-all':
+                selectAll();
+                break;
+            case 'clear-selection':
+                clearSelection();
+                break;
+            case 'invert-selection':
+                invertSelection();
+                break;
+            case 'copy-clipboard':
+                copyToClipboard();
+                break;
+            case 'save-smiles':
+                saveToSMILES();
+                break;
+            case 'save-csv':
+                saveToCSV();
+                break;
+        }}
+    }});
 }})();
 '''
 
@@ -982,6 +1353,18 @@ class MolGrid:
             </div>
             <div class="molgrid-info">
                 Showing <span class="showing-start">1</span>-<span class="showing-end">{min(items_per_page, total_items)}</span> of <span class="showing-total">{total_items}</span> molecules
+            </div>
+            <div class="molgrid-actions">
+                <button class="molgrid-actions-btn" title="Actions">&#8943;</button>
+                <div class="molgrid-dropdown">
+                    <button class="molgrid-dropdown-item" data-action="select-all">Select All</button>
+                    <button class="molgrid-dropdown-item" data-action="clear-selection">Clear Selection</button>
+                    <button class="molgrid-dropdown-item" data-action="invert-selection">Invert Selection</button>
+                    <div class="molgrid-dropdown-divider"></div>
+                    <button class="molgrid-dropdown-item" data-action="copy-clipboard">Copy to Clipboard</button>
+                    <button class="molgrid-dropdown-item" data-action="save-smiles">Save to SMILES</button>
+                    <button class="molgrid-dropdown-item" data-action="save-csv">Save to CSV</button>
+                </div>
             </div>
         </div>
         <ul class="molgrid-list list">
