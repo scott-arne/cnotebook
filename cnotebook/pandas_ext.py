@@ -108,6 +108,7 @@ def render_dataframe(
         df: pd.DataFrame,
         formatters: dict | None = None,
         col_space: dict[str, float | int] | None = None,
+        ctx: CNotebookContext | None = None,
         **kwargs
 ) -> str:
     """
@@ -115,6 +116,7 @@ def render_dataframe(
     :param df: DataFrame to render
     :param formatters: Custom formatters for displaying columns
     :param col_space: Custom column spacing
+    :param ctx: Local rendering context (optional)
     :param kwargs: Additional keyword arguments for DataFrame.to_html
     :return: HTML of rendered DataFrame
     """
@@ -169,15 +171,15 @@ def render_dataframe(
         assert isinstance(arr, oepd.MoleculeArray)
 
         # Get the cnotebook options for this column
-        ctx = get_series_context(arr.metadata)
+        series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
 
-        formatters[col] = create_mol_formatter(ctx=ctx)
+        formatters[col] = create_mol_formatter(ctx=series_ctx)
 
         # Record the column width
         if col in col_space:
             log.warning(f'Column spacing for {col} already defined by overwriting with molecule image width')
 
-        col_space[col] = float(ctx.width)
+        col_space[col] = float(series_ctx.width)
 
     # ---------------------------------------------------
     # Display columns
@@ -201,9 +203,9 @@ def render_dataframe(
         assert isinstance(arr, oepd.DisplayArray)
 
         # Get column metadata
-        ctx = get_series_context(arr.metadata)
+        series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
 
-        formatters[col] = create_disp_formatter(ctx=ctx)
+        formatters[col] = create_disp_formatter(ctx=series_ctx)
 
         if len(arr) > 0:
             col_space[col] = max(disp.GetWidth() for disp in arr if isinstance(disp, oedepict.OE2DMolDisplay))
@@ -910,7 +912,7 @@ def _series_molgrid(
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
     """
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     series = self._obj
     mols = list(series)
@@ -948,7 +950,7 @@ def _dataframe_molgrid(
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
     """
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     df = self._obj
     mols = list(df[mol_col])

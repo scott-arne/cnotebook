@@ -28,7 +28,7 @@ def create_test_molecules():
 
 def test_full_workflow():
     """Test complete MolGrid workflow."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = create_test_molecules()
 
@@ -54,7 +54,7 @@ def test_full_workflow():
 
 def test_smarts_highlighting_quality():
     """Test that SMARTS search returns valid results."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "c1ccc(O)cc1")  # Phenol
@@ -67,7 +67,7 @@ def test_smarts_highlighting_quality():
 
 def test_empty_grid():
     """Test MolGrid with no molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([])
     html = grid.to_html()
@@ -77,7 +77,7 @@ def test_empty_grid():
 
 def test_invalid_molecules():
     """Test MolGrid handles invalid molecules gracefully."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     valid = oechem.OEGraphMol()
     oechem.OESmilesToMol(valid, "CCO")
@@ -93,7 +93,7 @@ def test_invalid_molecules():
 
 def test_multiple_smarts_searches():
     """Test sequential SMARTS searches work correctly."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = create_test_molecules()
     grid = MolGrid(mols)
@@ -113,7 +113,7 @@ def test_multiple_smarts_searches():
 
 def test_selection_workflow():
     """Test complete selection workflow."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = create_test_molecules()
     grid = MolGrid(mols, name="integration-test-grid", select=True)
@@ -132,7 +132,7 @@ def test_selection_workflow():
 
 def test_custom_rendering_parameters():
     """Test grid with custom rendering parameters."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = create_test_molecules()
 
@@ -155,7 +155,7 @@ def test_custom_rendering_parameters():
 
 def test_tooltip_data_extraction():
     """Test that tooltip fields are correctly extracted."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -172,7 +172,7 @@ def test_tooltip_data_extraction():
 
 def test_grid_unique_naming():
     """Test that grids get unique names when not specified."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -187,7 +187,7 @@ def test_grid_unique_naming():
 
 def test_export_data_preparation():
     """Test that export data is correctly prepared."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = create_test_molecules()
     grid = MolGrid(mols)
@@ -200,7 +200,7 @@ def test_export_data_preparation():
 
 def test_html_contains_all_menu_actions():
     """Test that HTML contains all action menu items."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = create_test_molecules()
     grid = MolGrid(mols)
@@ -217,7 +217,7 @@ def test_html_contains_all_menu_actions():
 
 def test_responsive_css_present():
     """Test that responsive CSS is included in HTML."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -231,7 +231,7 @@ def test_responsive_css_present():
 
 def test_search_fields_in_html():
     """Test that search fields are properly embedded in HTML."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -248,7 +248,7 @@ def test_search_fields_in_html():
 
 def test_smarts_query_widget_integration():
     """Test SMARTS query through widget integration."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
     import json
 
     mols = create_test_molecules()
@@ -264,7 +264,7 @@ def test_smarts_query_widget_integration():
 
 def test_smarts_query_empty_clears_filter():
     """Test that empty SMARTS query returns all molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
     import json
 
     mols = create_test_molecules()
@@ -283,7 +283,7 @@ def test_smarts_query_empty_clears_filter():
 
 def test_multiple_grid_instances():
     """Test multiple grid instances don't interfere."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols1 = create_test_molecules()[:2]
     mols2 = create_test_molecules()[2:]
@@ -304,7 +304,7 @@ def test_multiple_grid_instances():
 
 def test_large_dataset_performance():
     """Test MolGrid handles larger datasets."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = []
     for i in range(50):

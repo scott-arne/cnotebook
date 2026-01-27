@@ -9,20 +9,6 @@ from openeye import oechem, oedepict
 class TestFeatureParity:
     """Tests verifying identical functionality in both environments"""
 
-    def test_render_molecule_grid_available_both_envs(self):
-        """Test render_molecule_grid is available for both environments"""
-        # Can import from shared render module
-        from cnotebook.render import render_molecule_grid
-        assert callable(render_molecule_grid)
-
-        # Can import from ipython_ext (backward compatibility)
-        from cnotebook.ipython_ext import render_molecule_grid
-        assert callable(render_molecule_grid)
-
-        # Can import from package root
-        from cnotebook import render_molecule_grid
-        assert callable(render_molecule_grid)
-
     def test_oeimage_has_mime_handler(self):
         """Test OEImage has MIME handler for Marimo after import"""
         import cnotebook.marimo_ext
@@ -37,23 +23,6 @@ class TestFeatureParity:
         """Test OE2DMolDisplay has MIME handler for Marimo after import"""
         import cnotebook.marimo_ext
         assert hasattr(oedepict.OE2DMolDisplay, '_mime_')
-
-    def test_grid_output_compatible_with_both(self):
-        """Test grid output (OEImage) works in both environments"""
-        from cnotebook.render import render_molecule_grid
-
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, "CCO")
-
-        result = render_molecule_grid([mol])
-
-        # Returns OEImage - which has formatters in both environments
-        assert isinstance(result, oedepict.OEImage)
-
-        # Jupyter: uses registered HTML formatter
-        # Marimo: uses _mime_ attribute
-        # Both should work with OEImage
-
 
 class TestSharedCodeUsage:
     """Tests verifying both environments use the same core rendering code"""

@@ -6,7 +6,7 @@
 
 **Author:** Scott Arne Johnson ([scott.arne.johnson@gmail.com](mailto:scott.arne.johnson@gmail.com))
 
-CNotebook provides ergonomic chemistry visualization in Jupyter Notebooks and Marimo with the OpenEye Toolkits. Simply import the package and your molecular data will be automatically rendered as beautiful chemical structures - no additional configuration required!
+CNotebook provides ergonomic chemistry visualization in Jupyter Notebooks and Marimo with the OpenEye Toolkits. Simply import the package and your molecular data will be automatically rendered as beautiful chemical structures - no additional configuration required.
 
 **Supports both Pandas and Polars DataFrames** - CNotebook auto-detects your environment and works with whichever DataFrame library you prefer.
 
@@ -39,7 +39,7 @@ oechem.OESmilesToMol(mol, "n1cnccc1")
 mol
 ```
 
-That's it! CNotebook automatically registers formatters so that OpenEye molecule objects display as chemical structures instead of cryptic text representations.
+That's it. CNotebook automatically registers formatters so that OpenEye molecule objects display as chemical structures instead of cryptic text representations.
 
 ## Features
 
@@ -57,9 +57,16 @@ That's it! CNotebook automatically registers formatters so that OpenEye molecule
 ### Visualization Options
 - **Multiple Formats**: PNG (default) or SVG output
 - **Customizable Sizing**: Configurable width, height, and scaling
-- **Grid Layouts**: Multi-molecule grid displays
 - **Substructure Highlighting**: SMARTS pattern highlighting
 - **Molecular Alignment**: Align molecules to reference structures
+
+### MolGrid Interactive Visualization
+- **Interactive Grid**: Browse, search, and select molecules in paginated grids
+- **Text Search**: Filter by molecular properties
+- **SMARTS Filtering**: Substructure search with SMARTS patterns
+- **Selection Tools**: Select molecules with export to SMILES/CSV
+- **Info Tooltips**: Click-to-pin tooltips for comparing molecular data
+- **DataFrame Integration**: Automatic column detection for search and display
 
 ### DataFrame Integration (Pandas & Polars)
 - **DataFrame Rendering**: Automatic molecule column detection and rendering
@@ -67,6 +74,77 @@ That's it! CNotebook automatically registers formatters so that OpenEye molecule
 - **Alignment Tools**: Align molecular depictions in DataFrames
 - **Fingerprint Similarity**: Visual similarity coloring
 - **Property Calculation**: Chemistry-aware DataFrame operations
+
+## MolGrid: Interactive Molecule Grids
+
+MolGrid provides an interactive grid for browsing large molecular datasets with powerful search and selection capabilities.
+
+### Quick Example
+
+```python
+from cnotebook import MolGrid
+from openeye import oechem
+
+# Create molecules
+molecules = []
+for smi in ["CCO", "c1ccccc1", "CC(=O)O"]:
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, smi)
+    molecules.append(mol)
+
+# Display interactive grid
+grid = MolGrid(molecules)
+grid.display()
+```
+
+### Key Features
+
+**Search and Filter:**
+- Toggle between Properties (text) and SMARTS (substructure) search modes
+- Properties mode searches titles and configurable fields
+- SMARTS mode filters by substructure patterns
+
+**Selection:**
+- Click molecules or checkboxes to select
+- Use the "..." menu for Select All, Clear, Invert operations
+- Export selections to SMILES or CSV files
+
+**Info Tooltips:**
+- Hover over the "i" button to see molecular data
+- Click to pin tooltips open for comparing multiple molecules
+- Configure displayed fields with the `data` parameter
+
+### DataFrame Integration
+
+```python
+import pandas as pd
+from cnotebook import MolGrid
+
+# Create grid from DataFrame
+grid = MolGrid(
+    df["Molecule"].tolist(),
+    dataframe=df,
+    mol_col="Molecule",
+    data=["Name", "MW"],  # Fields for info tooltip
+)
+grid.display()
+
+# Or use the DataFrame accessor
+grid = df["Molecule"].chem.molgrid()
+grid.display()
+```
+
+### Retrieving Selections
+
+```python
+# Get selected molecules
+selected_mols = grid.get_selection()
+
+# Get selected indices
+indices = grid.get_selection_indices()
+```
+
+See the [MolGrid Demo Notebooks](#demo-notebooks) for comprehensive examples.
 
 ## Environment Support
 
@@ -174,19 +252,6 @@ ctx.max_width = 600      # Prevent oversized molecules
 ctx.reset()
 ```
 
-### Molecule Grids
-
-```python
-# Display multiple molecules in a grid
-molecules = [mol1, mol2, mol3, mol4]
-cnotebook.render_molecule_grid(
-    molecules,
-    ncols=2,
-    smarts="c1ccccc1",  # Highlight benzene rings
-    scale=0.8
-)
-```
-
 ### Substructure Highlighting
 
 ```python
@@ -219,56 +284,29 @@ df  # Shows similarity coloring and Tanimoto coefficients
 Explore comprehensive examples in the `demos/` directory:
 
 ### Jupyter Demos
-- **[jupyter_demo.ipynb](demos/jupyter_demo.ipynb)** - Complete Pandas tutorial for Jupyter
-- **[polars_jupyter_demo.ipynb](demos/polars_jupyter_demo.ipynb)** - Complete Polars tutorial for Jupyter
+- **[pandas_jupyter_demo.ipynb](demos/pandas_jupyter_demo.ipynb)** - Complete Pandas tutorial
+- **[polars_jupyter_demo.ipynb](demos/polars_jupyter_demo.ipynb)** - Complete Polars tutorial
+- **[molgrid_jupyter_demo.ipynb](demos/molgrid_jupyter_demo.ipynb)** - MolGrid interactive grids
 
 ### Marimo Demos
-- **[marimo_demo.py](demos/marimo_demo.py)** - Complete Pandas tutorial for Marimo
-- **[polars_marimo_demo.py](demos/polars_marimo_demo.py)** - Complete Polars tutorial for Marimo
+- **[pandas_marimo_demo.py](demos/pandas_marimo_demo.py)** - Complete Pandas tutorial
+- **[polars_marimo_demo.py](demos/polars_marimo_demo.py)** - Complete Polars tutorial
+- **[molgrid_marimo_demo.py](demos/molgrid_marimo_demo.py)** - MolGrid interactive grids
 
-## Configuration Options
+## Documentation
 
-### Global Context Settings
+Full API documentation is available in the `docs/` directory. Build the documentation locally with Sphinx:
 
-```python
-ctx = cnotebook.cnotebook_context.get()
-
-# Image dimensions
-ctx.width = 250          # Default width in pixels
-ctx.height = 250         # Default height in pixels
-ctx.max_width = 1200     # Maximum width (prevents oversized molecules)
-ctx.max_height = 800     # Maximum height
-
-# Output format
-ctx.image_format = "png"  # or "svg"
-
-# Display options
-ctx.scale = 1.0          # Scaling factor
+```bash
+cd docs
+make html
 ```
 
-### Environment-Specific Behavior
-
-- **Jupyter**: Supports both PNG and SVG formats
-- **Marimo**: Automatically uses PNG format for compatibility
-- **Console**: Falls back to string representations
-
-### Backend Detection
-
-CNotebook auto-detects available backends:
-
-```python
-import cnotebook
-
-# Check what backends are available
-print(f"Pandas: {cnotebook._pandas_available}")
-print(f"Polars: {cnotebook._polars_available}")
-print(f"IPython: {cnotebook._ipython_available}")
-print(f"Marimo: {cnotebook._marimo_available}")
-```
+Then open `docs/_build/html/index.html` in your browser.
 
 ## Contributing
 
-We welcome contributions! Please ensure your code:
+We welcome contributions. Please ensure your code:
 - Follows existing code style and conventions
 - Includes appropriate tests
 - Works with both Jupyter and Marimo environments
@@ -285,4 +323,4 @@ For bug reports, feature requests, or general support, please open an issue on G
 
 ---
 
-*CNotebook makes chemical data visualization effortless. Import once, visualize everywhere!*
+*CNotebook makes chemical data visualization effortless. Import once, visualize everywhere.*

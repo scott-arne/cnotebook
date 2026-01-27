@@ -8,13 +8,14 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     import cnotebook
+    from cnotebook import molgrid
     import pandas as pd
     import oepandas as oepd
     from pathlib import Path
     from openeye import oechem, oedepict
 
     DEMO_DIRECTORY = Path(__file__).parent
-    return DEMO_DIRECTORY, cnotebook, mo, oechem, oedepict, oepd, pd
+    return DEMO_DIRECTORY, cnotebook, mo, molgrid, oechem, oedepict, oepd, pd
 
 
 @app.cell
@@ -105,56 +106,34 @@ def _(oechem, oedepict, pyrimidine):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## Displaying Grids of Molecule
+    ## Displaying Grids of Molecules
 
-    Sometimes you want to see several molecules in a grid. There is a convenient function to do this:
+    Sometimes you want to see several molecules in an interactive grid. Use `molgrid` for this:
 
     ```python
-    cnotebook.render_molecule_grid(
-        mols,
+    from cnotebook import molgrid
 
-        # All of these parameters are optional
+    grid = molgrid(molecules)
+    grid.display()
 
-        scale=0.5,
-        nrows=None,
-        ncols=None,
-        max_width=1200,
-        max_columns=100,
-        align=None,
-        smarts=None,
-        color=oechem.OEColor(oechem.OELightBlue),
-        style=oedepict.OEHighlightStyle_Stick
-    )
+    # Later, retrieve selected molecules
+    selected = grid.get_selection()
     ```
 
-    Where:
-
-    * *mols*: One or more OpenEye molecule objects
-    * *scale*: (Optional) Image scale within grid
-    * *nrows*: (Optional) Number of rows
-    * *ncols*: (Optional) Number of columns
-    * *max_width*: (Optional) Maximum width of the image
-    * *max_columns*: (Optional) Maximum number of molecule columns
-    * *align*: (Optional) Set to True to align everything to the first molecule, or provide a reference OpenEye molecule
-    * *smarts*: (Optional) SMARTS highlighting (currently only supports a single highlight)
-    * *color*: (Optional) SMARTS highlighting color
-    * *style*: (Optional) SMARTS highlighting style
-
-    A few things to note:
-
-    * You cannot supply both ```nrows``` and ```ncols```.
-    * When ```nrows``` and ```ncols``` are None (default), the optimal number of rows and columns is calculated by the
-      maximum molecule image width and ```max_width```. Specifying a custom number of rows / columns will override
-      the maximum width.
+    MolGrid provides an interactive grid with:
+    * Pagination for large datasets
+    * Row selection
+    * Search/filtering
+    * Export functionality
     """)
     return
 
 
 @app.cell
-def _(cnotebook, oechem):
+def _(molgrid, oechem):
     # Create some sample molecules
     example_mols = []
-    for _i, _smi in enumerate(["n1cnccc1", "c1ccccc1", "CCOH", "C(=O)OH", "CCCC"]):
+    for _i, _smi in enumerate(["n1cnccc1", "c1ccccc1", "CCO", "C(=O)O", "CCCC"]):
         _mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(_mol, _smi)
 
@@ -163,9 +142,10 @@ def _(cnotebook, oechem):
 
         example_mols.append(_mol)
 
-    # Render into a grid
-    cnotebook.render_molecule_grid(example_mols, scale=1.0, smarts="ncn")
-    return (example_mols,)
+    # Render into an interactive grid
+    grid = molgrid(example_mols)
+    grid.display()
+    return (example_mols, grid)
 
 
 @app.cell(hide_code=True)

@@ -102,6 +102,7 @@ def render_polars_dataframe(
         df: pl.DataFrame,
         formatters: dict | None = None,
         col_space: dict[str, float | int] | None = None,
+        ctx: CNotebookContext | None = None,
         **kwargs
 ) -> str:
     """
@@ -113,6 +114,7 @@ def render_polars_dataframe(
     :param df: Polars DataFrame to render
     :param formatters: Custom formatters for displaying columns
     :param col_space: Custom column spacing
+    :param ctx: Local renering context (optional)
     :param kwargs: Additional keyword arguments (currently unused, kept for API compatibility)
     :return: HTML of rendered DataFrame
     """
@@ -134,19 +136,19 @@ def render_polars_dataframe(
             series = df.get_column(col)
             metadata = series.chem.metadata if hasattr(series, 'chem') else {}
 
-            # Get the cnotebook options for this column
-            ctx = get_series_context(metadata)
+            # Get the cnotebook options for this column (use passed ctx if provided)
+            series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
                 log.warning(f'Overwriting existing formatter for {col} with a molecule formatter')
 
-            formatters[col] = create_mol_formatter(ctx=ctx)
+            formatters[col] = create_mol_formatter(ctx=series_ctx)
 
             # Record the column width
             if col in col_space:
                 log.warning(f'Column spacing for {col} already defined, overwriting with molecule image width')
 
-            col_space[col] = float(ctx.width)
+            col_space[col] = float(series_ctx.width)
 
         elif isinstance(dtype, oeplr.DisplayType):
             display_columns.add(col)
@@ -155,13 +157,13 @@ def render_polars_dataframe(
             series = df.get_column(col)
             metadata = series.chem.metadata if hasattr(series, 'chem') else {}
 
-            # Get the cnotebook options for this column
-            ctx = get_series_context(metadata)
+            # Get the cnotebook options for this column (use passed ctx if provided)
+            series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
                 log.warning(f'Overwriting existing formatter for {col} with a display formatter')
 
-            formatters[col] = create_disp_formatter(ctx=ctx)
+            formatters[col] = create_disp_formatter(ctx=series_ctx)
 
             # Calculate column width from display objects
             if len(series) > 0:
@@ -886,7 +888,7 @@ def _polars_series_molgrid(
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
     """
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     series = self._series
     mols = list(series.to_list())
@@ -914,7 +916,7 @@ def _polars_dataframe_molgrid(
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
     """
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
     import pandas as pd
 
     df = self._df

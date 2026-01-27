@@ -6,7 +6,6 @@ from .render import (
     oemol_to_html,
     oedisp_to_html,
     oeimage_to_html,
-    render_molecule_grid  # Re-export for backward compatibility
 )
 
 # Only register iPython formatters if that is present

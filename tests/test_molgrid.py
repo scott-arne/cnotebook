@@ -61,25 +61,25 @@ def invalid_mol():
 
 def test_molgrid_import():
     """Test that MolGrid can be imported."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
     assert MolGrid is not None
 
 
 def test_molgrid_function_import():
     """Test that molgrid function can be imported."""
-    from cnotebook.molgrid import molgrid
+    from cnotebook import molgrid
     assert molgrid is not None
 
 
 def test_cnotebook_molgrid_function():
-    """Test that cnotebook.molgrid() function works."""
-    import cnotebook
+    """Test that cnotebook.grid.molgrid() function works."""
+    from cnotebook import molgrid
     from openeye import oechem
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
 
-    grid = cnotebook.molgrid([mol])
+    grid = molgrid([mol])
 
     assert grid is not None
     assert hasattr(grid, 'display')
@@ -91,7 +91,7 @@ def test_cnotebook_molgrid_function():
 
 def test_molgrid_stores_molecules(simple_mol):
     """Test that MolGrid stores molecule data."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol2 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol2, "CC")
@@ -106,7 +106,7 @@ def test_molgrid_stores_molecules(simple_mol):
 
 def test_molgrid_default_parameters(simple_mol):
     """Test MolGrid default parameter values."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
 
@@ -122,7 +122,7 @@ def test_molgrid_default_parameters(simple_mol):
 
 def test_molgrid_custom_parameters(simple_mol):
     """Test MolGrid with custom parameters."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(
         [simple_mol],
@@ -150,7 +150,7 @@ def test_molgrid_custom_parameters(simple_mol):
 
 def test_molgrid_auto_generates_name(simple_mol):
     """Test that MolGrid auto-generates unique names."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid1 = MolGrid([simple_mol])
     grid2 = MolGrid([simple_mol])
@@ -164,7 +164,7 @@ def test_molgrid_auto_generates_name(simple_mol):
 
 def test_molgrid_creates_widget(simple_mol):
     """Test that MolGrid creates an AnyWidget."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
 
@@ -175,7 +175,7 @@ def test_molgrid_creates_widget(simple_mol):
 
 def test_molgrid_empty_molecules():
     """Test MolGrid with empty molecule list."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([])
 
@@ -186,7 +186,7 @@ def test_molgrid_empty_molecules():
 
 def test_molgrid_with_invalid_molecules(simple_mol, invalid_mol):
     """Test MolGrid handles invalid molecules gracefully."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol, invalid_mol])
     html = grid.to_html()
@@ -197,7 +197,7 @@ def test_molgrid_with_invalid_molecules(simple_mol, invalid_mol):
 
 def test_molgrid_search_fields_parameter(simple_mol):
     """Test that explicit search_fields parameter is used."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], search_fields=["MW", "Formula"])
 
@@ -210,7 +210,7 @@ def test_molgrid_search_fields_parameter(simple_mol):
 
 def test_molgrid_prepare_data_basic(mol_with_sd_data):
     """Test _prepare_data extracts basic data correctly."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([mol_with_sd_data], title_field="Title", tooltip_fields=["MW"])
     data = grid._prepare_data()
@@ -225,7 +225,7 @@ def test_molgrid_prepare_data_basic(mol_with_sd_data):
 
 def test_molgrid_prepare_data_smiles(simple_mol):
     """Test that SMILES is correctly extracted."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     data = grid._prepare_data()
@@ -235,7 +235,7 @@ def test_molgrid_prepare_data_smiles(simple_mol):
 
 def test_molgrid_prepare_data_no_title(simple_mol):
     """Test _prepare_data with title_field=None."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], title_field=None)
     data = grid._prepare_data()
@@ -245,7 +245,7 @@ def test_molgrid_prepare_data_no_title(simple_mol):
 
 def test_molgrid_prepare_data_missing_sd_data(simple_mol):
     """Test _prepare_data when SD data field doesn't exist."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], tooltip_fields=["NonExistentField"])
     data = grid._prepare_data()
@@ -255,7 +255,7 @@ def test_molgrid_prepare_data_missing_sd_data(simple_mol):
 
 def test_molgrid_prepare_data_search_fields(mol_with_sd_data):
     """Test _prepare_data extracts search fields."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([mol_with_sd_data], search_fields=["MW", "Formula"])
     data = grid._prepare_data()
@@ -266,7 +266,7 @@ def test_molgrid_prepare_data_search_fields(mol_with_sd_data):
 
 def test_molgrid_prepare_data_invalid_mol(invalid_mol):
     """Test _prepare_data handles invalid molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([invalid_mol])
     data = grid._prepare_data()
@@ -282,7 +282,7 @@ def test_molgrid_prepare_data_invalid_mol(invalid_mol):
 
 def test_molgrid_prepare_export_data_basic(simple_mol):
     """Test _prepare_export_data basic functionality."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     export_data = grid._prepare_export_data()
@@ -294,7 +294,7 @@ def test_molgrid_prepare_export_data_basic(simple_mol):
 
 def test_molgrid_prepare_export_data_multiple_mols(test_molecules):
     """Test _prepare_export_data with multiple molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules)
     export_data = grid._prepare_export_data()
@@ -306,7 +306,7 @@ def test_molgrid_prepare_export_data_multiple_mols(test_molecules):
 
 def test_molgrid_prepare_export_data_invalid_mol(invalid_mol):
     """Test _prepare_export_data with invalid molecule."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([invalid_mol])
     export_data = grid._prepare_export_data()
@@ -320,7 +320,7 @@ def test_molgrid_prepare_export_data_invalid_mol(invalid_mol):
 
 def test_molgrid_generates_html(simple_mol):
     """Test that MolGrid generates valid HTML output."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -332,7 +332,7 @@ def test_molgrid_generates_html(simple_mol):
 
 def test_molgrid_html_contains_grid_elements(simple_mol):
     """Test HTML contains required grid elements."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -345,7 +345,7 @@ def test_molgrid_html_contains_grid_elements(simple_mol):
 
 def test_molgrid_html_contains_title(simple_mol):
     """Test HTML contains molecule title."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -355,7 +355,7 @@ def test_molgrid_html_contains_title(simple_mol):
 
 def test_molgrid_html_contains_svg(simple_mol):
     """Test HTML contains SVG images."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], image_format="svg")
     html = grid.to_html()
@@ -365,7 +365,7 @@ def test_molgrid_html_contains_svg(simple_mol):
 
 def test_molgrid_html_contains_search_elements(simple_mol):
     """Test HTML contains search-related elements."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -377,7 +377,7 @@ def test_molgrid_html_contains_search_elements(simple_mol):
 
 def test_molgrid_html_contains_actions_menu(simple_mol):
     """Test HTML contains actions dropdown menu."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -394,7 +394,7 @@ def test_molgrid_html_contains_actions_menu(simple_mol):
 
 def test_molgrid_html_contains_checkbox_when_enabled(simple_mol):
     """Test HTML contains checkbox when select=True."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], select=True)
     html = grid.to_html()
@@ -404,7 +404,7 @@ def test_molgrid_html_contains_checkbox_when_enabled(simple_mol):
 
 def test_molgrid_html_no_checkbox_when_disabled(simple_mol):
     """Test HTML does not contain checkbox when select=False."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], select=False)
     html = grid.to_html()
@@ -414,7 +414,7 @@ def test_molgrid_html_no_checkbox_when_disabled(simple_mol):
 
 def test_molgrid_html_pagination_info(test_molecules):
     """Test HTML contains pagination info."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, n_items_per_page=3)
     html = grid.to_html()
@@ -426,7 +426,7 @@ def test_molgrid_html_pagination_info(test_molecules):
 
 def test_molgrid_html_export_data_embedded(simple_mol):
     """Test that export data is embedded in HTML."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -437,7 +437,7 @@ def test_molgrid_html_export_data_embedded(simple_mol):
 
 def test_molgrid_html_contains_listjs(simple_mol):
     """Test HTML contains List.js library."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -452,7 +452,7 @@ def test_molgrid_html_contains_listjs(simple_mol):
 
 def test_molgrid_search_smarts_match(test_molecules):
     """Test _search_smarts finds matching molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules)
     matches = grid._search_smarts("[OH]")
@@ -464,7 +464,7 @@ def test_molgrid_search_smarts_match(test_molecules):
 
 def test_molgrid_search_smarts_aromatic(test_molecules):
     """Test _search_smarts for aromatic ring."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules)
     matches = grid._search_smarts("c1ccccc1")
@@ -476,7 +476,7 @@ def test_molgrid_search_smarts_aromatic(test_molecules):
 
 def test_molgrid_search_smarts_no_match(simple_mol):
     """Test _search_smarts with pattern that doesn't match."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     matches = grid._search_smarts("[Br]")  # No bromine
@@ -486,7 +486,7 @@ def test_molgrid_search_smarts_no_match(simple_mol):
 
 def test_molgrid_search_smarts_invalid_pattern(simple_mol):
     """Test _search_smarts handles invalid SMARTS gracefully."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     matches = grid._search_smarts("invalid[[[smarts")
@@ -496,7 +496,7 @@ def test_molgrid_search_smarts_invalid_pattern(simple_mol):
 
 def test_molgrid_search_smarts_empty_pattern(test_molecules):
     """Test _search_smarts with empty pattern."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules)
     matches = grid._search_smarts("")
@@ -506,7 +506,7 @@ def test_molgrid_search_smarts_empty_pattern(test_molecules):
 
 def test_molgrid_on_smarts_query_empty(test_molecules):
     """Test _on_smarts_query with empty query returns all indices."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules)
     grid._on_smarts_query({"new": ""})
@@ -517,7 +517,7 @@ def test_molgrid_on_smarts_query_empty(test_molecules):
 
 def test_molgrid_on_smarts_query_with_pattern(test_molecules):
     """Test _on_smarts_query with valid pattern."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules)
     grid._on_smarts_query({"new": "[OH]"})
@@ -532,7 +532,7 @@ def test_molgrid_on_smarts_query_with_pattern(test_molecules):
 
 def test_molgrid_selection_via_widget(test_molecules):
     """Test selection state via widget update."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, name="selection-test")
 
@@ -545,7 +545,7 @@ def test_molgrid_selection_via_widget(test_molecules):
 
 def test_molgrid_get_selection_molecules(test_molecules):
     """Test get_selection returns actual molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, name="selection-mol-test")
     grid.widget.selection = '{"0": "CCO"}'
@@ -557,7 +557,7 @@ def test_molgrid_get_selection_molecules(test_molecules):
 
 def test_molgrid_get_selection_indices_empty(test_molecules):
     """Test get_selection_indices with no selection."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, name="empty-selection-test")
 
@@ -567,7 +567,7 @@ def test_molgrid_get_selection_indices_empty(test_molecules):
 
 def test_molgrid_get_selection_empty(test_molecules):
     """Test get_selection with no selection."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, name="empty-selection-mols-test")
 
@@ -577,7 +577,7 @@ def test_molgrid_get_selection_empty(test_molecules):
 
 def test_molgrid_selection_change_handler(test_molecules):
     """Test _on_selection_change updates internal state."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, name="change-handler-test")
 
@@ -590,7 +590,7 @@ def test_molgrid_selection_change_handler(test_molecules):
 
 def test_molgrid_selection_change_invalid_json(test_molecules):
     """Test _on_selection_change handles invalid JSON gracefully."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid(test_molecules, name="invalid-json-test")
 
@@ -604,7 +604,7 @@ def test_molgrid_selection_change_invalid_json(test_molecules):
 
 def test_molgrid_selection_isolated_between_grids(test_molecules):
     """Test that selections are isolated between grid instances."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid1 = MolGrid(test_molecules, name="grid1-isolated")
     grid2 = MolGrid(test_molecules, name="grid2-isolated")
@@ -622,7 +622,7 @@ def test_molgrid_selection_isolated_between_grids(test_molecules):
 
 def test_molgrid_display_returns_html(simple_mol):
     """Test that display() returns displayable output."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     result = grid.display()
@@ -632,7 +632,7 @@ def test_molgrid_display_returns_html(simple_mol):
 
 def test_molgrid_display_contains_iframe(simple_mol):
     """Test that display output contains iframe."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     result = grid.display()
@@ -647,7 +647,7 @@ def test_molgrid_display_contains_iframe(simple_mol):
 
 def test_molgrid_get_field_value_title(simple_mol):
     """Test _get_field_value extracts Title field."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     value = grid._get_field_value(0, simple_mol, "Title")
@@ -657,7 +657,7 @@ def test_molgrid_get_field_value_title(simple_mol):
 
 def test_molgrid_get_field_value_sd_data(mol_with_sd_data):
     """Test _get_field_value extracts SD data."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([mol_with_sd_data])
     value = grid._get_field_value(0, mol_with_sd_data, "MW")
@@ -667,7 +667,7 @@ def test_molgrid_get_field_value_sd_data(mol_with_sd_data):
 
 def test_molgrid_get_field_value_missing(simple_mol):
     """Test _get_field_value returns None for missing field."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     value = grid._get_field_value(0, simple_mol, "NonExistent")
@@ -677,7 +677,7 @@ def test_molgrid_get_field_value_missing(simple_mol):
 
 def test_molgrid_get_field_value_empty_title():
     """Test _get_field_value with molecule without title."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -695,7 +695,7 @@ def test_molgrid_get_field_value_empty_title():
 
 def test_molgrid_svg_format(simple_mol):
     """Test MolGrid with SVG image format."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], image_format="svg")
     data = grid._prepare_data()
@@ -705,7 +705,7 @@ def test_molgrid_svg_format(simple_mol):
 
 def test_molgrid_png_format(simple_mol):
     """Test MolGrid with PNG image format."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], image_format="png")
     data = grid._prepare_data()
@@ -715,7 +715,7 @@ def test_molgrid_png_format(simple_mol):
 
 def test_molgrid_custom_dimensions(simple_mol):
     """Test MolGrid with custom width/height."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], width=300, height=250)
     html = grid.to_html()
@@ -726,7 +726,7 @@ def test_molgrid_custom_dimensions(simple_mol):
 
 def test_molgrid_atom_label_font_scale(simple_mol):
     """Test MolGrid with custom atom label font scale."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], atom_label_font_scale=2.5)
 
@@ -739,7 +739,7 @@ def test_molgrid_atom_label_font_scale(simple_mol):
 
 def test_molgrid_large_molecule_list():
     """Test MolGrid with many molecules."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mols = []
     for i in range(100):
@@ -757,7 +757,7 @@ def test_molgrid_large_molecule_list():
 
 def test_molgrid_single_molecule(simple_mol):
     """Test MolGrid with single molecule."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -767,7 +767,7 @@ def test_molgrid_single_molecule(simple_mol):
 
 def test_molgrid_molecules_with_special_characters():
     """Test MolGrid handles molecules with special characters in title."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -782,7 +782,7 @@ def test_molgrid_molecules_with_special_characters():
 
 def test_molgrid_unicode_title():
     """Test MolGrid handles unicode in title."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -796,7 +796,7 @@ def test_molgrid_unicode_title():
 
 def test_molgrid_very_long_smiles():
     """Test MolGrid handles very long SMILES."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     # Create a long molecule
     mol = oechem.OEGraphMol()
@@ -811,7 +811,7 @@ def test_molgrid_very_long_smiles():
 
 def test_molgrid_with_none_in_list(simple_mol):
     """Test MolGrid behavior with None values in molecule list."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     # This tests defensive coding - though ideally users shouldn't pass None
     mols = [simple_mol]
@@ -822,7 +822,7 @@ def test_molgrid_with_none_in_list(simple_mol):
 
 def test_molgrid_smarts_exception_handling():
     """Test SMARTS search handles exceptions gracefully."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -837,7 +837,7 @@ def test_molgrid_smarts_exception_handling():
 
 def test_molgrid_get_marimo_selection_outside_marimo(simple_mol):
     """Test get_marimo_selection raises error outside marimo."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
 
@@ -847,7 +847,7 @@ def test_molgrid_get_marimo_selection_outside_marimo(simple_mol):
 
 def test_molgrid_is_marimo_check():
     """Test _is_marimo returns False when not in marimo."""
-    from cnotebook.molgrid.grid import _is_marimo
+    from cnotebook.grid.grid import _is_marimo
 
     # When not in marimo, should return False
     result = _is_marimo()
@@ -860,7 +860,7 @@ def test_molgrid_is_marimo_check():
 
 def test_molgrid_information_enabled_by_default(simple_mol):
     """Test that information button is enabled by default."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     assert grid.information_enabled is True
@@ -868,7 +868,7 @@ def test_molgrid_information_enabled_by_default(simple_mol):
 
 def test_molgrid_information_can_be_disabled(simple_mol):
     """Test that information button can be disabled."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], information=False)
     assert grid.information_enabled is False
@@ -876,7 +876,7 @@ def test_molgrid_information_can_be_disabled(simple_mol):
 
 def test_molgrid_html_contains_info_button_when_enabled(simple_mol):
     """Test HTML contains info button when information=True."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], information=True)
     html = grid.to_html()
@@ -887,7 +887,7 @@ def test_molgrid_html_contains_info_button_when_enabled(simple_mol):
 
 def test_molgrid_html_no_info_button_when_disabled(simple_mol):
     """Test HTML does not contain info button when information=False."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], information=False)
     html = grid.to_html()
@@ -898,7 +898,7 @@ def test_molgrid_html_no_info_button_when_disabled(simple_mol):
 
 def test_molgrid_info_tooltip_contains_index(simple_mol):
     """Test info tooltip always contains index."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], information=True)
     html = grid.to_html()
@@ -909,7 +909,7 @@ def test_molgrid_info_tooltip_contains_index(simple_mol):
 
 def test_molgrid_info_tooltip_contains_title_when_set():
     """Test info tooltip contains title when molecule has one."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -925,7 +925,7 @@ def test_molgrid_info_tooltip_contains_title_when_set():
 
 def test_molgrid_info_tooltip_no_title_when_empty():
     """Test info tooltip does not show title row when molecule has no title."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -940,7 +940,7 @@ def test_molgrid_info_tooltip_no_title_when_empty():
 
 def test_molgrid_prepare_data_includes_mol_title(simple_mol):
     """Test _prepare_data includes mol_title field."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     data = grid._prepare_data()
@@ -951,7 +951,7 @@ def test_molgrid_prepare_data_includes_mol_title(simple_mol):
 
 def test_molgrid_info_css_present(simple_mol):
     """Test that info button CSS is included in HTML."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -962,7 +962,7 @@ def test_molgrid_info_css_present(simple_mol):
 
 def test_molgrid_info_tooltip_pinned_css(simple_mol):
     """Test that pinned tooltip CSS is included."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
@@ -973,7 +973,7 @@ def test_molgrid_info_tooltip_pinned_css(simple_mol):
 
 def test_molgrid_data_parameter_string(simple_mol):
     """Test data parameter accepts a single string."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], data="MW")
 
@@ -982,7 +982,7 @@ def test_molgrid_data_parameter_string(simple_mol):
 
 def test_molgrid_data_parameter_list(simple_mol):
     """Test data parameter accepts a list of strings."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], data=["MW", "Formula"])
 
@@ -991,7 +991,7 @@ def test_molgrid_data_parameter_list(simple_mol):
 
 def test_molgrid_data_parameter_none_without_dataframe(simple_mol):
     """Test data=None with no DataFrame results in empty info fields."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], data=None)
 
@@ -1000,7 +1000,7 @@ def test_molgrid_data_parameter_none_without_dataframe(simple_mol):
 
 def test_molgrid_prepare_data_includes_info_fields(mol_with_sd_data):
     """Test _prepare_data includes info_fields."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([mol_with_sd_data], data=["MW"])
     data = grid._prepare_data()
@@ -1012,7 +1012,7 @@ def test_molgrid_prepare_data_includes_info_fields(mol_with_sd_data):
 
 def test_molgrid_info_tooltip_displays_data_fields(mol_with_sd_data):
     """Test info tooltip displays data fields from the data parameter."""
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     grid = MolGrid([mol_with_sd_data], data=["MW", "Formula"])
     html = grid.to_html()

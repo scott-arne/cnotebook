@@ -1,6 +1,6 @@
 """Interactive molecule grid for Jupyter and Marimo notebooks."""
 
-from cnotebook.molgrid.grid import MolGrid
+from cnotebook.grid.grid import MolGrid
 from typing import Iterable, List, Optional, Union
 
 

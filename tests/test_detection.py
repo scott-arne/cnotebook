@@ -9,27 +9,29 @@ class TestBackendDetection:
         import cnotebook
         assert cnotebook is not None
 
-    def test_pandas_available_flag(self):
-        """_pandas_available flag should reflect pandas availability."""
+    def test_pandas_available_via_get_env(self):
+        """get_env().pandas_available should reflect pandas availability."""
         import cnotebook
 
+        env = cnotebook.get_env()
         try:
             import pandas
             import oepandas
-            assert cnotebook._pandas_available is True
+            assert env.pandas_available is True
         except ImportError:
-            assert cnotebook._pandas_available is False
+            assert env.pandas_available is False
 
-    def test_polars_available_flag(self):
-        """_polars_available flag should reflect polars availability."""
+    def test_polars_available_via_get_env(self):
+        """get_env().polars_available should reflect polars availability."""
         import cnotebook
 
+        env = cnotebook.get_env()
         try:
             import polars
             import oepolars
-            assert cnotebook._polars_available is True
+            assert env.polars_available is True
         except ImportError:
-            assert cnotebook._polars_available is False
+            assert env.polars_available is False
 
     def test_version_accessible(self):
         """Version should always be accessible."""
@@ -42,7 +44,8 @@ class TestBackendDetection:
         import cnotebook
         assert hasattr(cnotebook, 'cnotebook_context')
 
-    def test_render_molecule_grid_accessible(self):
-        """render_molecule_grid should always be accessible."""
+    def test_get_env_accessible(self):
+        """get_env should always be accessible."""
         import cnotebook
-        assert hasattr(cnotebook, 'render_molecule_grid')
+        assert hasattr(cnotebook, 'get_env')
+        assert callable(cnotebook.get_env)

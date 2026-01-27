@@ -61,7 +61,7 @@ def test_dataframe_molgrid_auto_detect_search_fields():
     import pandas as pd
     from openeye import oechem
     import oepandas as oepd
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -92,7 +92,7 @@ def test_dataframe_molgrid_auto_detect_str_dtype():
     """Test auto-detection with pandas string dtype."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -116,7 +116,7 @@ def test_dataframe_molgrid_explicit_search_fields_override():
     """Test that explicit search_fields overrides auto-detection."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -138,7 +138,7 @@ def test_dataframe_molgrid_no_string_columns():
     """Test auto-detection with no string columns."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -159,7 +159,7 @@ def test_dataframe_molgrid_export_data_includes_columns():
     """Test that export data includes DataFrame columns."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -188,7 +188,7 @@ def test_dataframe_molgrid_get_field_value_from_dataframe():
     """Test _get_field_value retrieves from DataFrame."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -211,7 +211,7 @@ def test_dataframe_molgrid_fallback_to_molecule_property():
     """Test _get_field_value falls back to molecule property."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -233,7 +233,7 @@ def test_dataframe_molgrid_search_fields_extracted():
     """Test that search fields are extracted in _prepare_data."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -256,7 +256,7 @@ def test_dataframe_molgrid_html_contains_search_field_values():
     """Test that HTML contains search field values for List.js."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -277,7 +277,7 @@ def test_dataframe_molgrid_html_contains_search_field_values():
 def test_dataframe_molgrid_empty_dataframe():
     """Test MolGrid with empty DataFrame."""
     import pandas as pd
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     df = pd.DataFrame({"Molecule": [], "Name": []})
 
@@ -292,7 +292,7 @@ def test_dataframe_molgrid_with_none_values():
     """Test MolGrid handles None/NaN values in DataFrame."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -318,7 +318,7 @@ def test_dataframe_molgrid_skips_molecule_dtype():
     import pandas as pd
     from openeye import oechem
     import oepandas as oepd
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -340,7 +340,7 @@ def test_dataframe_molgrid_export_empty_string_values():
     """Test _prepare_export_data handles empty string values."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -367,7 +367,7 @@ def test_dataframe_molgrid_category_dtype_fallback():
     """Test auto-detection falls back to checking actual values for category dtype."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -393,7 +393,7 @@ def test_dataframe_molgrid_integer_column_excluded():
     """Test that integer columns are excluded from search fields."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -418,7 +418,7 @@ def test_dataframe_molgrid_auto_detect_info_fields():
     """Test auto-detection of info fields includes all simple types."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -444,7 +444,7 @@ def test_dataframe_molgrid_explicit_data_parameter():
     """Test that explicit data parameter overrides auto-detection."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -468,7 +468,7 @@ def test_dataframe_molgrid_data_as_string():
     """Test data parameter as single string."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -489,7 +489,7 @@ def test_dataframe_molgrid_info_fields_in_tooltip():
     """Test that info fields from DataFrame appear in tooltip HTML."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -514,7 +514,7 @@ def test_dataframe_molgrid_info_fields_extracted():
     """Test _prepare_data extracts info_fields from DataFrame."""
     import pandas as pd
     from openeye import oechem
-    from cnotebook.molgrid import MolGrid
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")

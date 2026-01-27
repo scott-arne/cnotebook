@@ -1,5 +1,5 @@
 import re
-from typing import Callable
+from typing import Callable, Sequence
 from openeye import oechem, oedepict
 
 
@@ -67,3 +67,87 @@ def create_structure_highlighter(
             oedepict.OEAddHighlighting(disp, color, style, match)
 
     return _structure_highlighter
+
+
+def highlight_smarts(
+    mol: oechem.OEMolBase,
+    smarts: str | Sequence[str],
+    color: oechem.OEColor | Sequence[oechem.OEColor] = oechem.OEColor(oechem.OELightBlue),
+    style: int | Sequence[int] = oedepict.OEHighlightStyle_Stick,
+    opts: oedepict.OE2DMolDisplayOptions | None = None,
+) -> oedepict.OE2DMolDisplay:
+    """Highlight SMARTS patterns in a molecule and return a display object.
+
+    :param mol: OpenEye molecule to highlight.
+    :param smarts: SMARTS pattern or sequence of SMARTS patterns to highlight.
+    :param color: Highlight color or sequence of colors. If a single color, it is
+        applied to all patterns. If a sequence, must match length of smarts.
+    :param style: Highlight style or sequence of styles. If a single style, it is
+        applied to all patterns. If a sequence, must match length of smarts.
+    :param opts: Display options. If None, default options are used.
+    :returns: OE2DMolDisplay object with highlighted substructures.
+    :raises ValueError: If color/style sequence length doesn't match smarts length.
+
+    Example::
+
+        from openeye import oechem
+        import cnotebook
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc2c(c1)nc(n2)N")
+
+        # Single color/style for all patterns
+        disp = cnotebook.highlight_smarts(mol, ["ncn", "c1ccccc1"])
+
+        # Different colors for each pattern
+        disp = cnotebook.highlight_smarts(
+            mol,
+            ["ncn", "c1ccccc1"],
+            color=[oechem.OEColor(oechem.OELightBlue), oechem.OEColor(oechem.OEPink)],
+        )
+    """
+    # Prepare molecule for depiction
+    oedepict.OEPrepareDepiction(mol)
+
+    # Create display options if not provided
+    if opts is None:
+        opts = oedepict.OE2DMolDisplayOptions()
+
+    # Create display object
+    disp = oedepict.OE2DMolDisplay(mol, opts)
+
+    # Normalize smarts to a list
+    if isinstance(smarts, str):
+        smarts = [smarts]
+
+    n_patterns = len(smarts)
+
+    # Normalize colors to a list
+    if isinstance(color, oechem.OEColor):
+        colors = [color] * n_patterns
+    else:
+        colors = list(color)
+        if len(colors) != n_patterns:
+            raise ValueError(
+                f"Length of color sequence ({len(colors)}) must match "
+                f"length of smarts sequence ({n_patterns})"
+            )
+
+    # Normalize styles to a list
+    if isinstance(style, int):
+        styles = [style] * n_patterns
+    else:
+        styles = list(style)
+        if len(styles) != n_patterns:
+            raise ValueError(
+                f"Length of style sequence ({len(styles)}) must match "
+                f"length of smarts sequence ({n_patterns})"
+            )
+
+    # Highlight all patterns with corresponding color and style
+    for pattern, c, s in zip(smarts, colors, styles):
+        subs = oechem.OESubSearch(pattern)
+        for match in subs.Match(mol, True):
+            oedepict.OEAddHighlighting(disp, c, s, match)
+
+    return disp

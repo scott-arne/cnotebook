@@ -5,13 +5,14 @@ Auto-detects available backends (Pandas/Polars) and environments (Jupyter/Marimo
 Only requires openeye-toolkits; all other dependencies are optional.
 """
 import logging
+from typing import Optional
 
 # Required imports (openeye-toolkits)
 from openeye import oechem, oedepict
 
 # Core functionality that doesn't depend on backends
-from .render import render_molecule_grid
-from .context import cnotebook_context
+from .context import cnotebook_context, CNotebookContext
+from .helpers import highlight_smarts
 
 __version__ = '2.0.0'
 
@@ -49,82 +50,203 @@ def enable_debugging():
 
 
 ########################################################################################################################
-# Backend and Environment Detection
+# Environment Information
 ########################################################################################################################
 
-# Detection flags
-_pandas_available = False
-_polars_available = False
-_ipython_available = False
-_marimo_available = False
-_molgrid_available = False
+class CNotebookEnvInfo:
+    """Environment information for CNotebook.
 
-# Detect molgrid (requires anywidget)
-try:
-    from cnotebook.molgrid import molgrid, MolGrid
-    _molgrid_available = True
-except ImportError:
-    pass
+    This class provides read-only access to detected backend and environment
+    availability. A singleton instance is created at module load time and
+    can be retrieved via :func:`get_env`.
 
-# Detect pandas/oepandas
-try:
-    import pandas as _pd
-    import oepandas as _oepd
-    _pandas_available = True
-    del _pd, _oepd
-except ImportError:
-    pass
+    All properties are read-only to ensure consistency throughout the
+    application lifecycle. Availability is determined by checking if the
+    version string is non-empty.
+    """
 
-# Detect polars/oepolars
-try:
-    import polars as _pl
-    import oepolars as _oeplr
-    _polars_available = True
-    del _pl, _oeplr
-except ImportError:
-    pass
+    def __init__(
+        self,
+        pandas_version: str,
+        polars_version: str,
+        ipython_version: str,
+        marimo_version: str,
+        molgrid_available: bool,
+        is_jupyter_notebook: bool,
+        is_marimo_notebook: bool,
+    ):
+        self._pandas_version = pandas_version
+        self._polars_version = polars_version
+        self._ipython_version = ipython_version
+        self._marimo_version = marimo_version
+        self._molgrid_available = molgrid_available
+        self._is_jupyter_notebook = is_jupyter_notebook
+        self._is_marimo_notebook = is_marimo_notebook
 
-# Detect iPython (Jupyter)
-try:
-    from IPython import get_ipython as _get_ipython
-    if _get_ipython() is not None:
-        _ipython_available = True
-    del _get_ipython
-except ImportError:
-    pass
+    @property
+    def pandas_available(self) -> bool:
+        """Whether Pandas and OEPandas are available."""
+        return bool(self._pandas_version)
 
-# Detect Marimo
-try:
-    import marimo as _mo
-    if _mo.running_in_notebook():
-        _marimo_available = True
-    del _mo
-except (ImportError, Exception):
-    # Marimo raises exception if not running in notebook context
-    pass
+    @property
+    def pandas_version(self) -> str:
+        """Pandas version string, or empty string if not available."""
+        return self._pandas_version
+
+    @property
+    def polars_available(self) -> bool:
+        """Whether Polars and OEPolars are available."""
+        return bool(self._polars_version)
+
+    @property
+    def polars_version(self) -> str:
+        """Polars version string, or empty string if not available."""
+        return self._polars_version
+
+    @property
+    def ipython_available(self) -> bool:
+        """Whether IPython is available and active."""
+        return bool(self._ipython_version)
+
+    @property
+    def ipython_version(self) -> str:
+        """IPython version string, or empty string if not available."""
+        return self._ipython_version
+
+    @property
+    def marimo_available(self) -> bool:
+        """Whether Marimo is available and running in notebook mode."""
+        return bool(self._marimo_version)
+
+    @property
+    def marimo_version(self) -> str:
+        """Marimo version string, or empty string if not available."""
+        return self._marimo_version
+
+    @property
+    def molgrid_available(self) -> bool:
+        """Whether MolGrid is available (requires anywidget)."""
+        return self._molgrid_available
+
+    @property
+    def is_jupyter_notebook(self) -> bool:
+        """Whether running in a Jupyter notebook environment."""
+        return self._is_jupyter_notebook
+
+    @property
+    def is_marimo_notebook(self) -> bool:
+        """Whether running in a Marimo notebook environment."""
+        return self._is_marimo_notebook
+
+    def __repr__(self) -> str:
+        return (
+            f"CNotebookEnvInfo("
+            f"pandas={self.pandas_available} ({self._pandas_version}), "
+            f"polars={self.polars_available} ({self._polars_version}), "
+            f"ipython={self.ipython_available} ({self._ipython_version}), "
+            f"marimo={self.marimo_available} ({self._marimo_version}), "
+            f"molgrid={self._molgrid_available}, "
+            f"jupyter={self._is_jupyter_notebook}, "
+            f"marimo_nb={self._is_marimo_notebook})"
+        )
 
 
-########################################################################################################################
-# Helper Functions
-########################################################################################################################
+def _detect_environment() -> CNotebookEnvInfo:
+    """Detect available backends and environments.
 
-def is_jupyter_notebook() -> bool:
-    """Check if running in a Jupyter notebook environment."""
+    :returns: CNotebookEnvInfo instance with detection results.
+    """
+    pandas_version = ""
+    polars_version = ""
+    ipython_version = ""
+    marimo_version = ""
+    molgrid_available = False
+    is_jupyter = False
+    is_marimo = False
+
+    # Detect molgrid (requires anywidget)
     try:
+        from cnotebook.grid import molgrid, MolGrid
+        molgrid_available = True
+    except ImportError:
+        pass
+
+    # Detect pandas/oepandas
+    try:
+        import pandas as pd
+        import oepandas as oepd
+        pandas_version = pd.__version__
+    except ImportError:
+        pass
+
+    # Detect polars/oepolars
+    try:
+        import polars as pl
+        import oepolars as oeplr
+        polars_version = pl.__version__
+    except ImportError:
+        pass
+
+    # Detect iPython
+    try:
+        import IPython
         from IPython import get_ipython
-        shell = get_ipython().__class__.__name__
-        return shell == 'ZMQInteractiveShell'
-    except Exception:
-        return False
+        ipy = get_ipython()
+        if ipy is not None:
+            ipython_version = IPython.__version__
+            # Check if running in Jupyter notebook
+            is_jupyter = ipy.__class__.__name__ == 'ZMQInteractiveShell'
+    except (ImportError, Exception):
+        pass
 
-
-def is_marimo_notebook() -> bool:
-    """Check if running in a Marimo notebook environment."""
+    # Detect Marimo
     try:
         import marimo as mo
-        return mo.running_in_notebook()
-    except Exception:
-        return False
+        if mo.running_in_notebook():
+            marimo_version = mo.__version__
+            is_marimo = True
+    except (ImportError, Exception):
+        # Marimo raises exception if not running in notebook context
+        pass
+
+    return CNotebookEnvInfo(
+        pandas_version=pandas_version,
+        polars_version=polars_version,
+        ipython_version=ipython_version,
+        marimo_version=marimo_version,
+        molgrid_available=molgrid_available,
+        is_jupyter_notebook=is_jupyter,
+        is_marimo_notebook=is_marimo,
+    )
+
+
+# Singleton environment info instance
+_env_info: Optional[CNotebookEnvInfo] = None
+
+
+def get_env() -> CNotebookEnvInfo:
+    """Get environment information for CNotebook.
+
+    Returns a singleton instance containing information about available
+    backends and environments. The environment is detected once at module
+    load time and the same object is returned on subsequent calls.
+
+    :returns: CNotebookEnvInfo instance with read-only properties.
+
+    Example::
+
+        env = cnotebook.get_env()
+        if env.pandas_available:
+            print(f"Pandas {env.pandas_version} is available")
+    """
+    global _env_info
+    if _env_info is None:
+        _env_info = _detect_environment()
+    return _env_info
+
+
+# Initialize environment detection at module load
+_env_info = _detect_environment()
 
 
 ########################################################################################################################
@@ -132,11 +254,11 @@ def is_marimo_notebook() -> bool:
 ########################################################################################################################
 
 # Import and register pandas formatters if available
-if _pandas_available:
+if _env_info.pandas_available:
     try:
         from .pandas_ext import render_dataframe, register_pandas_formatters
 
-        if _ipython_available:
+        if _env_info.ipython_available:
             from .ipython_ext import register_ipython_formatters
             register_ipython_formatters()
             register_pandas_formatters()
@@ -145,20 +267,121 @@ if _pandas_available:
         log.warning(f"[cnotebook] Failed to import/register Pandas extension: {e}")
 
 # Import and register polars formatters if available
-if _polars_available:
+if _env_info.polars_available:
     try:
         from .polars_ext import render_polars_dataframe, register_polars_formatters
 
-        if _ipython_available:
+        if _env_info.ipython_available:
             register_polars_formatters()
             log.debug("[cnotebook] Registered Polars formatters for iPython")
     except Exception as e:
         log.warning(f"[cnotebook] Failed to import/register Polars extension: {e}")
 
 # Import marimo extension if available
-if _marimo_available:
+if _env_info.marimo_available:
     try:
         from . import marimo_ext
         log.debug("[cnotebook] Imported Marimo extension")
     except Exception as e:
         log.warning(f"[cnotebook] Failed to import Marimo extension: {e}")
+
+# Export molgrid at top level if available
+if _env_info.molgrid_available:
+    from .grid import molgrid, MolGrid
+
+
+########################################################################################################################
+# Unified Display Function
+########################################################################################################################
+
+def display(obj, ctx: CNotebookContext | None = None):
+    """Display an OpenEye molecule, display object, or DataFrame in the current notebook environment.
+
+    This function provides a unified way to display chemistry objects in both Jupyter
+    and Marimo notebooks. It automatically detects the environment and uses the
+    appropriate display mechanism.
+
+    :param obj: Object to display. Can be:
+        - ``oechem.OEMolBase`` - OpenEye molecule
+        - ``oedepict.OE2DMolDisplay`` - OpenEye display object
+        - ``pandas.DataFrame`` - Pandas DataFrame (if pandas available)
+        - ``polars.DataFrame`` - Polars DataFrame (if polars available)
+    :param ctx: Optional rendering context. Only applied to molecules and display
+        objects, not DataFrames. If None, uses the global context.
+    :returns: A displayable object appropriate for the current environment.
+    :raises TypeError: If the object type is not supported.
+
+    Example::
+
+        import cnotebook
+        from openeye import oechem
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        # Display with default context
+        cnotebook.display(mol)
+
+        # Display with custom context
+        ctx = cnotebook.cnotebook_context.get().copy()
+        ctx.width = 300
+        ctx.height = 300
+        cnotebook.display(mol, ctx=ctx)
+    """
+    from .render import oemol_to_html, oedisp_to_html
+
+    # Get environment info
+    env = get_env()
+
+    # Determine the context to use
+    if ctx is None:
+        render_ctx = cnotebook_context.get()
+    else:
+        render_ctx = ctx
+
+    # Handle OpenEye molecules
+    if isinstance(obj, oechem.OEMolBase):
+        html = oemol_to_html(obj, ctx=render_ctx)
+        return _display_html(html, env)
+
+    # Handle OpenEye display objects
+    if isinstance(obj, oedepict.OE2DMolDisplay):
+        html = oedisp_to_html(obj, ctx=render_ctx)
+        return _display_html(html, env)
+
+    # Handle Pandas DataFrame (if available)
+    if env.pandas_available:
+        import pandas as pd
+        if isinstance(obj, pd.DataFrame):
+            html = render_dataframe(obj, ctx=render_ctx)
+            return _display_html(html, env)
+
+    # Handle Polars DataFrame (if available)
+    if env.polars_available:
+        import polars as pl
+        if isinstance(obj, pl.DataFrame):
+            html = render_polars_dataframe(obj, ctx=render_ctx)
+            return _display_html(html, env)
+
+    raise TypeError(f"Cannot display object of type {type(obj).__name__}")
+
+
+def _display_html(html: str, env: CNotebookEnvInfo):
+    """Display HTML content in the appropriate notebook environment.
+
+    :param html: HTML string to display.
+    :param env: Environment info.
+    :returns: Displayable object for the current environment.
+    """
+    # Marimo environment
+    if env.is_marimo_notebook:
+        import marimo as mo
+        return mo.Html(html)
+
+    # Jupyter/IPython environment
+    if env.ipython_available:
+        from IPython.display import HTML, display as ipy_display
+        return ipy_display(HTML(html))
+
+    # Fallback: just return the HTML string
+    return html

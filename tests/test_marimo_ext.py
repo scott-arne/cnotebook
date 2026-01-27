@@ -389,60 +389,6 @@ class TestDisplayImage:
         mock_ctx.copy.assert_called_once()
 
 
-class TestRenderMoleculeGridMarimo:
-    """Test render_molecule_grid works in Marimo context via OEImage._mime_"""
-
-    def test_grid_returns_oeimage(self):
-        """Test that render_molecule_grid returns OEImage which has _mime_ handler"""
-        from cnotebook.render import render_molecule_grid
-        from openeye import oedepict
-
-        mol1 = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol1, "CCO")
-
-        result = render_molecule_grid([mol1])
-
-        # Result should be OEImage
-        assert isinstance(result, oedepict.OEImage)
-        # OEImage should have _mime_ attribute (set by marimo_ext)
-        assert hasattr(oedepict.OEImage, '_mime_')
-
-    @patch('cnotebook.marimo_ext.oeimage_to_html')
-    @patch('cnotebook.marimo_ext.cnotebook_context')
-    def test_oeimage_mime_renders_grid(self, mock_context_var, mock_oeimage_to_html):
-        """Test that OEImage._mime_ renders grid output correctly"""
-        mock_ctx = MagicMock()
-        mock_context_var.get.return_value = mock_ctx
-        mock_ctx.copy.return_value = mock_ctx
-        mock_oeimage_to_html.return_value = '<img>grid</img>'
-
-        mock_image = MagicMock(spec=oedepict.OEImage)
-
-        mime_type, html_content = cnotebook.marimo_ext._display_image(mock_image)
-
-        assert mime_type == "text/html"
-        assert html_content == '<img>grid</img>'
-        # Context should be copied but format is no longer forced
-        mock_ctx.copy.assert_called_once()
-
-    def test_grid_with_multiple_molecules_for_marimo(self):
-        """Test grid with multiple molecules returns valid OEImage for Marimo"""
-        from cnotebook.render import render_molecule_grid
-        from openeye import oedepict
-
-        mols = []
-        for smiles in ["CCO", "CCC", "CCCC", "c1ccccc1"]:
-            mol = oechem.OEGraphMol()
-            oechem.OESmilesToMol(mol, smiles)
-            mols.append(mol)
-
-        result = render_molecule_grid(mols, ncols=2)
-
-        assert isinstance(result, oedepict.OEImage)
-        assert result.GetWidth() > 0
-        assert result.GetHeight() > 0
-
-
 class TestPolarsSupport:
     """Test Polars DataFrame support in Marimo"""
 
