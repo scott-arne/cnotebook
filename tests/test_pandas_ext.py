@@ -482,6 +482,12 @@ class TestDataFrameAccessors:
         assert hasattr(df.chem, 'reset_depictions')
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_dataframe_clear_formatting_rules_accessor(self):
+        """Test DataFrame clear_formatting_rules accessor via .chem"""
+        df = pd.DataFrame({'A': [1, 2]})
+        assert hasattr(df.chem, 'clear_formatting_rules')
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_dataframe_highlight_using_column_accessor(self):
         """Test DataFrame highlight_using_column accessor via .chem"""
         df = pd.DataFrame({'A': [1, 2]})
@@ -514,6 +520,12 @@ class TestSeriesAccessors:
         """Test Series reset_depictions accessor via .chem"""
         series = pd.Series([1, 2, 3])
         assert hasattr(series.chem, 'reset_depictions')
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_series_clear_formatting_rules_accessor(self):
+        """Test Series clear_formatting_rules accessor via .chem"""
+        series = pd.Series([1, 2, 3])
+        assert hasattr(series.chem, 'clear_formatting_rules')
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_series_align_depictions_accessor(self):
@@ -569,6 +581,152 @@ class TestIntegration:
         """Test that logging is properly configured"""
         from cnotebook.pandas_ext import log
         assert log is not None
+
+
+class TestPandasDataFrameHighlight:
+    """Test DataFrame highlight method."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_adds_callback(self):
+        """highlight() should add callback to molecule column."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        df.chem.highlight("mol", "c1ccccc1")
+
+        arr = df["mol"].array
+        ctx = arr.metadata.get("cnotebook")
+        assert ctx is not None
+        assert len(ctx.callbacks) > 0
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_with_color(self):
+        """highlight() should accept color parameter."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        # Should not raise
+        df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
+
+        arr = df["mol"].array
+        ctx = arr.metadata.get("cnotebook")
+        assert ctx is not None
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_requires_molecule_type(self):
+        """highlight() should raise TypeError on non-molecule columns."""
+        df = pd.DataFrame({"text": ["abc", "def"]})
+
+        with pytest.raises(TypeError):
+            df.chem.highlight("text", "abc")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_requires_valid_column(self):
+        """highlight() should raise ValueError on non-existent columns."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        with pytest.raises(ValueError):
+            df.chem.highlight("nonexistent", "c1ccccc1")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_with_multiple_patterns(self):
+        """highlight() should accept multiple patterns."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        # Should accept list of patterns
+        df.chem.highlight("mol", ["c1ccccc1", "[OH]"])
+
+        arr = df["mol"].array
+        ctx = arr.metadata.get("cnotebook")
+        assert ctx is not None
+        # Should have 2 callbacks (one for each pattern)
+        assert len(ctx.callbacks) == 2
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_clear_formatting_rules_clears_callbacks(self):
+        """clear_formatting_rules() should clear callbacks."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        # Add highlight
+        df.chem.highlight("mol", "c1ccccc1")
+
+        # Verify callback was added
+        arr = df["mol"].array
+        ctx = arr.metadata.get("cnotebook")
+        assert ctx is not None
+        assert len(ctx.callbacks) == 1
+
+        # Clear formatting rules
+        df.chem.clear_formatting_rules("mol")
+
+        # Verify callback was cleared
+        ctx = arr.metadata.get("cnotebook")
+        assert ctx is not None  # Context should still exist
+        assert len(ctx.callbacks) == 0  # But callbacks should be cleared
+
+
+class TestPandasDataFrameCopyMolecules:
+    """Test DataFrame copy_molecules method."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_copy_molecules_creates_new_column(self):
+        """copy_molecules() should create a new column with copied molecules."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        df.chem.copy_molecules("mol", "mol_copy")
+
+        assert "mol_copy" in df.columns
+        assert isinstance(df["mol_copy"].dtype, oepd.MoleculeDtype)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_copy_molecules_creates_deep_copy(self):
+        """copy_molecules() should create independent molecule copies."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        df.chem.copy_molecules("mol", "mol_copy")
+
+        # Original and copy should be different objects
+        original = df["mol"].iloc[0]
+        copy = df["mol_copy"].iloc[0]
+        assert original is not copy
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_copy_molecules_requires_molecule_type(self):
+        """copy_molecules() should raise TypeError on non-molecule columns."""
+        df = pd.DataFrame({"text": ["abc", "def"]})
+
+        with pytest.raises(TypeError):
+            df.chem.copy_molecules("text", "text_copy")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_copy_molecules_requires_valid_column(self):
+        """copy_molecules() should raise ValueError on non-existent columns."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+
+        with pytest.raises(ValueError):
+            df.chem.copy_molecules("nonexistent", "copy")
 
 
 class TestHighlightMetadataPreservation:
@@ -636,3 +794,68 @@ class TestHighlightMetadataPreservation:
         html = render_dataframe(df)
         assert isinstance(html, str)
         assert '<table' in html
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_clear_formatting_rules_clears_callbacks(self):
+        """Test that clear_formatting_rules clears callbacks but preserves context"""
+        from cnotebook.context import get_series_context
+
+        # Create a molecule with a pattern to highlight
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1cncnc1")  # Pyrimidine has "ncn" pattern
+
+        # Create DataFrame
+        df = pd.DataFrame({
+            'Name': ['Pyrimidine'],
+            'Molecule': pd.Series([mol], dtype=oepd.MoleculeDtype())
+        })
+
+        # Add highlighting
+        df.Molecule.chem.highlight("ncn")
+
+        # Verify callback is registered
+        arr = df['Molecule'].array
+        ctx = get_series_context(arr.metadata)
+        assert len(ctx.callbacks) > 0, "Highlight callback should be registered"
+
+        # Remove highlighting
+        df.Molecule.chem.clear_formatting_rules()
+
+        # Verify callbacks are cleared
+        ctx_after = get_series_context(arr.metadata)
+        assert len(ctx_after.callbacks) == 0, "Callbacks should be cleared after clear_formatting_rules"
+
+        # Verify context still exists in metadata
+        assert "cnotebook" in arr.metadata, "Context should still exist in metadata"
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_dataframe_clear_formatting_rules_clears_callbacks(self):
+        """Test that DataFrame.chem.clear_formatting_rules clears callbacks from molecule columns"""
+        from cnotebook.context import get_series_context
+
+        # Create molecules
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1cncnc1")
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+        # Create DataFrame with two molecule columns
+        df = pd.DataFrame({
+            'Name': ['Pyrimidine', 'Benzene'],
+            'Molecule': pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
+        })
+
+        # Add highlighting
+        df.Molecule.chem.highlight("c")
+
+        # Verify callback is registered
+        arr = df['Molecule'].array
+        ctx = get_series_context(arr.metadata)
+        assert len(ctx.callbacks) > 0, "Highlight callback should be registered"
+
+        # Remove highlighting using DataFrame accessor
+        df.chem.clear_formatting_rules()
+
+        # Verify callbacks are cleared
+        ctx_after = get_series_context(arr.metadata)
+        assert len(ctx_after.callbacks) == 0, "Callbacks should be cleared after DataFrame clear_formatting_rules"

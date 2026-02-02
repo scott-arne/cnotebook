@@ -5,7 +5,6 @@ Auto-detects available backends (Pandas/Polars) and environments (Jupyter/Marimo
 Only requires openeye-toolkits; all other dependencies are optional.
 """
 import logging
-from typing import Optional
 
 # Required imports (openeye-toolkits)
 from openeye import oechem, oedepict
@@ -14,18 +13,27 @@ from openeye import oechem, oedepict
 from .context import cnotebook_context, CNotebookContext
 from .helpers import highlight_smarts
 
-__version__ = '2.0.0'
+__version__ = '2.1.0'
 
 # Configure logging first
 log = logging.getLogger("cnotebook")
 
 
 class LevelSpecificFormatter(logging.Formatter):
-    """A logging formatter that uses level-specific formats."""
+    """A logging formatter that uses level-specific formats.
+
+    Uses a simple format for INFO and above, and includes the level name
+    for DEBUG messages to help distinguish debug output.
+
+    :cvar NORMAL_FORMAT: Format string for INFO and above.
+    :cvar DEBUG_FORMAT: Format string for DEBUG level.
+    """
+
     NORMAL_FORMAT = "%(message)s"
     DEBUG_FORMAT = "%(levelname)s: %(message)s"
 
     def __init__(self):
+        """Create the formatter with the normal format as default."""
         super().__init__(fmt=self.NORMAL_FORMAT, datefmt=None, style='%')
 
     def format(self, record: logging.LogRecord) -> str:
@@ -75,6 +83,16 @@ class CNotebookEnvInfo:
         is_jupyter_notebook: bool,
         is_marimo_notebook: bool,
     ):
+        """Create environment info (typically called once at module load).
+
+        :param pandas_version: Detected Pandas version string, or empty if unavailable.
+        :param polars_version: Detected Polars version string, or empty if unavailable.
+        :param ipython_version: Detected IPython version string, or empty if unavailable.
+        :param marimo_version: Detected Marimo version string, or empty if unavailable.
+        :param molgrid_available: Whether MolGrid widget dependencies are available.
+        :param is_jupyter_notebook: Whether running in a Jupyter notebook environment.
+        :param is_marimo_notebook: Whether running in a Marimo notebook environment.
+        """
         self._pandas_version = pandas_version
         self._polars_version = polars_version
         self._ipython_version = ipython_version
@@ -190,6 +208,7 @@ def _detect_environment() -> CNotebookEnvInfo:
     # Detect iPython
     try:
         import IPython
+        # noinspection PyProtectedMember
         from IPython import get_ipython
         ipy = get_ipython()
         if ipy is not None:
@@ -220,8 +239,8 @@ def _detect_environment() -> CNotebookEnvInfo:
     )
 
 
-# Singleton environment info instance
-_env_info: Optional[CNotebookEnvInfo] = None
+# Initialize environment detection at module load (singleton instance)
+_env_info: CNotebookEnvInfo = _detect_environment()
 
 
 def get_env() -> CNotebookEnvInfo:
@@ -239,14 +258,7 @@ def get_env() -> CNotebookEnvInfo:
         if env.pandas_available:
             print(f"Pandas {env.pandas_version} is available")
     """
-    global _env_info
-    if _env_info is None:
-        _env_info = _detect_environment()
     return _env_info
-
-
-# Initialize environment detection at module load
-_env_info = _detect_environment()
 
 
 ########################################################################################################################
@@ -353,6 +365,7 @@ def display(obj, ctx: CNotebookContext | None = None):
     if env.pandas_available:
         import pandas as pd
         if isinstance(obj, pd.DataFrame):
+            # noinspection PyTypeChecker
             html = render_dataframe(obj, ctx=render_ctx)
             return _display_html(html, env)
 

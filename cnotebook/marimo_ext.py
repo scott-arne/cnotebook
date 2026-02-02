@@ -11,6 +11,7 @@ from openeye import oechem, oedepict
 
 # Import oepandas for dtype checking
 try:
+    # noinspection PyUnusedImports
     import oepandas as oepd
     oepandas_available = True
 except ImportError:
@@ -18,7 +19,9 @@ except ImportError:
 
 # Import oepolars for dtype checking
 try:
+    # noinspection PyUnusedImports
     import polars as pl
+    # noinspection PyUnusedImports
     import oepolars as oeplr
     oepolars_available = True
 except ImportError:

@@ -1,14 +1,15 @@
 import logging
 import typing
+import weakref
 import polars as pl
 import oepolars as oeplr
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
-from .context import pass_cnotebook_context, get_series_context
+from .context import pass_cnotebook_context, get_series_context, create_local_context
 from typing import Iterable, Literal
 from .helpers import escape_brackets, create_structure_highlighter
 from .align import fingerprint_maker
 from .render import (
-    CNotebookContext,
+    CNotebookContext,  # noqa
     oemol_to_disp,
     oedisp_to_html,
     render_invalid_molecule,
@@ -27,6 +28,51 @@ if typing.TYPE_CHECKING:
     from .context import CNotebookContext
 
 log = logging.getLogger("cnotebook")
+
+# Global storage for DataFrame column contexts
+# Structure: {id(DataFrame): (weakref(DataFrame), {column_name: CNotebookContext})}
+# We store a weak reference to the DataFrame to allow cleanup
+_dataframe_column_contexts: dict[int, tuple[weakref.ref, dict[str, CNotebookContext]]] = {}
+
+
+def _cleanup_dead_contexts() -> None:
+    """Remove entries for DataFrames that have been garbage collected."""
+    dead_ids = [df_id for df_id, (ref, _) in _dataframe_column_contexts.items() if ref() is None]
+    for df_id in dead_ids:
+        del _dataframe_column_contexts[df_id]
+
+
+def get_dataframe_column_context(df: pl.DataFrame, column: str) -> CNotebookContext | None:
+    """
+    Get the CNotebookContext for a specific DataFrame column.
+
+    :param df: The DataFrame.
+    :param column: The column name.
+    :returns: The CNotebookContext if one exists, otherwise None.
+    """
+    _cleanup_dead_contexts()
+    df_id = id(df)
+    if df_id in _dataframe_column_contexts:
+        ref, col_contexts = _dataframe_column_contexts[df_id]
+        # Verify the DataFrame is still the same object
+        if ref() is df:
+            return col_contexts.get(column)
+    return None
+
+
+def set_dataframe_column_context(df: pl.DataFrame, column: str, ctx: CNotebookContext) -> None:
+    """
+    Set the CNotebookContext for a specific DataFrame column.
+
+    :param df: The DataFrame.
+    :param column: The column name.
+    :param ctx: The CNotebookContext to store.
+    """
+    _cleanup_dead_contexts()
+    df_id = id(df)
+    if df_id not in _dataframe_column_contexts:
+        _dataframe_column_contexts[df_id] = (weakref.ref(df), {})
+    _dataframe_column_contexts[df_id][1][column] = ctx
 
 
 def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEMolBase], str]:
@@ -132,12 +178,17 @@ def render_polars_dataframe(
         if isinstance(dtype, oeplr.MoleculeType):
             molecule_columns.add(col)
 
-            # Get metadata from the original series via .chem.metadata
-            series = df.get_column(col)
-            metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+            # First check for DataFrame-level column context (persists across column accesses)
+            df_col_ctx = get_dataframe_column_context(df, col)
 
-            # Get the cnotebook options for this column (use passed ctx if provided)
-            series_ctx = ctx if ctx is not None else get_series_context(metadata)
+            if df_col_ctx is not None:
+                # Use DataFrame-level context
+                series_ctx = ctx if ctx is not None else df_col_ctx
+            else:
+                # Fall back to series metadata (might be empty due to Polars Series ephemeral nature)
+                series = df.get_column(col)
+                metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
                 log.warning(f'Overwriting existing formatter for {col} with a molecule formatter')
@@ -203,10 +254,9 @@ def render_polars_dataframe(
             copied_molecule_series[col] = copied_series
 
     # Build HTML table natively
-    html_parts = ['<table border="1" class="dataframe">']
+    html_parts = ['<table border="1" class="dataframe">', '<thead><tr style="text-align: right;">']
 
     # Header
-    html_parts.append('<thead><tr style="text-align: right;">')
     for col in df.columns:
         width_style = ""
         if col in col_space:
@@ -249,8 +299,8 @@ def _series_highlight(
         self,
         pattern: Iterable[str] | str | oechem.OESubSearch | Iterable[oechem.OESubSearch],
         *,
-        color: oechem.OEColor = oechem.OEColor(oechem.OELightBlue),
-        style: int = oedepict.OEHighlightStyle_Stick,
+        color: oechem.OEColor | oechem.OEColorIter | None = None,
+        style: int | Literal["overlay_default", "overlay_ball_and_stick"] = "overlay_default",
         ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | None = None,
         method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None
 ) -> None:
@@ -262,12 +312,13 @@ def _series_highlight(
         - oechem.OESubSearch or oechem.OEMCSSearch object
         - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
 
-    :param pattern: Pattern(s) to highlight in the molecule
-    :param color: Highlight color
-    :param style: Highlight style
-    :param ref: Optional reference for alignment
-    :param method: Optional alignment method
-    :return: None
+    :param pattern: Pattern(s) to highlight in the molecule.
+    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
+        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
+    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
+        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
+    :param ref: Optional reference for alignment.
+    :param method: Optional alignment method.
     """
     # Check dtype
     if not isinstance(self._series.dtype, oeplr.MoleculeType):
@@ -337,6 +388,20 @@ def _series_reset_depictions(self) -> None:
     _ = self.metadata.pop("cnotebook", None)
 
 
+def _series_clear_formatting_rules(self) -> None:
+    """
+    Clear all formatting rule callbacks from a molecule series.
+
+    This removes any callbacks applied to the molecule prior to rendering,
+    such as highlighting. Unlike reset_depictions which removes the entire
+    rendering context, this method only clears the callbacks while preserving
+    other context settings like image dimensions and styling.
+    """
+    ctx = self.metadata.get("cnotebook", None)
+    if ctx is not None and isinstance(ctx, CNotebookContext):
+        ctx.reset_callbacks()
+
+
 def _series_recalculate_depiction_coordinates(
         self,
         *,
@@ -368,6 +433,9 @@ def _series_recalculate_depiction_coordinates(
     opts = oedepict.OEPrepareDepictionOptions()
     opts.SetClearCoords(clear_coords)
     opts.SetAddDepictionHydrogens(add_depiction_hydrogens)
+    opts.SetPerceiveBondStereo(perceive_bond_stereo)
+    opts.SetSuppressHydrogens(suppress_explicit_hydrogens)
+    opts.SetDepictOrientation(orientation)
 
     for mol in self._series.to_list():
         if isinstance(mol, oechem.OEMolBase):
@@ -406,6 +474,9 @@ def _series_align_depictions(
             log.warning("No valid molecule found in series for depiction alignment")
             return
 
+    # Make sure the reference has 2D coordinates
+    oedepict.OEPrepareDepiction(ref, False)
+
     # Suppress alignment warnings (there are lots of needless warnings)
     level = oechem.OEThrow.GetLevel()
     oechem.OEThrow.SetLevel(oechem.OEErrorLevel_Error)
@@ -429,9 +500,11 @@ def _series_align_depictions(
 
 
 # Monkey-patch onto oepolars SeriesChemNamespace
+# Note: Series-level highlight is not registered because Polars Series are ephemeral and
+# metadata doesn't persist across column accesses. Use df.chem.highlight() instead.
 from oepolars.namespaces.series import SeriesChemNamespace
-SeriesChemNamespace.highlight = _series_highlight
 SeriesChemNamespace.reset_depictions = _series_reset_depictions
+SeriesChemNamespace.clear_formatting_rules = _series_clear_formatting_rules
 SeriesChemNamespace.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates
 SeriesChemNamespace.align_depictions = _series_align_depictions
 
@@ -449,11 +522,20 @@ _fingerprint_overlap_tag = oechem.OEGetTag("fingerprint_overlap")
 
 
 class ColorBondByOverlapScore(oegrapheme.OEBondGlyphBase):
+    """Bond glyph that colors bonds by fingerprint overlap score.
+
+    Used internally by fingerprint similarity visualization to highlight
+    bonds based on their contribution to molecular similarity.
+
+    See: https://docs.eyesopen.com/toolkits/cookbook/python/depiction/simcalc.html
     """
-    Color molecule by bond overlap score:
-    https://docs.eyesopen.com/toolkits/cookbook/python/depiction/simcalc.html
-    """
-    def __init__(self, cg, tag):
+
+    def __init__(self, cg: oechem.OELinearColorGradient, tag: int):
+        """Create a bond coloring glyph.
+
+        :param cg: Color gradient to map overlap scores to colors.
+        :param tag: OEChem data tag containing overlap scores on bonds.
+        """
         oegrapheme.OEBondGlyphBase.__init__(self)
         self.colorg = cg
         self.tag = tag
@@ -507,6 +589,50 @@ def _dataframe_reset_depictions(self, *, molecule_columns: str | Iterable[str] |
         columns
     ):
         self._df.get_column(col).chem.reset_depictions()
+
+
+def _dataframe_clear_formatting_rules(self, molecule_columns: str | Iterable[str] | None = None) -> None:
+    """
+    Clear all formatting rule callbacks from one or more molecule columns.
+
+    This removes any callbacks applied to molecules prior to rendering,
+    such as highlighting. Unlike reset_depictions which removes the entire
+    rendering context, this method only clears the callbacks while preserving
+    other context settings like image dimensions and styling.
+
+    :param molecule_columns: Optional molecule column(s) to clear formatting rules from.
+        If None, clears formatting rules from all molecule columns.
+
+    Example::
+
+        # Clear formatting rules from all molecule columns
+        df.chem.clear_formatting_rules()
+
+        # Clear formatting rules from a specific column
+        df.chem.clear_formatting_rules("smiles")
+
+        # Clear formatting rules from multiple columns
+        df.chem.clear_formatting_rules(["mol1", "mol2"])
+    """
+    columns = set()
+    if molecule_columns is None:
+        columns.update(self._df.columns)
+
+    elif isinstance(molecule_columns, str):
+        columns.add(molecule_columns)
+
+    else:
+        columns.update(molecule_columns)
+
+    # Filter invalid and non-molecule columns and clear their formatting rules
+    for col in filter(
+        lambda c: c in self._df.columns and isinstance(self._df.schema[c], oeplr.MoleculeType),
+        columns
+    ):
+        # Clear DataFrame-level column context callbacks
+        ctx = get_dataframe_column_context(self._df, col)
+        if ctx is not None:
+            ctx.reset_callbacks()
 
 
 def _dataframe_recalculate_depiction_coordinates(
@@ -566,12 +692,105 @@ def _dataframe_recalculate_depiction_coordinates(
             log.warning(f'{col} not found in DataFrame columns: ({", ".join(self._df.columns)})')
 
 
+def _dataframe_highlight(
+        self,
+        molecule_column: str,
+        pattern: Iterable[str] | str | oechem.OESubSearch | Iterable[oechem.OESubSearch],
+        *,
+        color: oechem.OEColor | oechem.OEColorIter | None = None,
+        style: int | Literal["overlay_default", "overlay_ball_and_stick"] = "overlay_default",
+) -> None:
+    """
+    Highlight chemical features in molecules within a specified column.
+
+    This method stores the highlighting callbacks at the DataFrame level, ensuring they persist
+    across column accesses. This is necessary because Polars Series objects are ephemeral.
+
+    The pattern argument can be:
+        - SMARTS pattern
+        - oechem.OESubSearch or oechem.OEMCSSearch object
+        - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
+
+    :param molecule_column: Name of the molecule column to highlight.
+    :param pattern: Pattern(s) to highlight in the molecules.
+    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
+        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
+    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
+        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
+    """
+    # Check the column exists and is a molecule type
+    if molecule_column not in self._df.columns:
+        raise ValueError(f'Column {molecule_column} not found in DataFrame columns: ({", ".join(self._df.columns)})')
+
+    if not isinstance(self._df.schema[molecule_column], oeplr.MoleculeType):
+        raise TypeError(
+            f"highlight only works on molecule columns (oepolars.MoleculeType). Column '{molecule_column}' "
+            f"has type {self._df.schema[molecule_column]}."
+        )
+
+    # Get or create the context for this DataFrame column
+    ctx = get_dataframe_column_context(self._df, molecule_column)
+    if ctx is None:
+        ctx = create_local_context()
+        set_dataframe_column_context(self._df, molecule_column, ctx)
+
+    # Case: Pattern is a single SMARTS string or oechem.OESubSearch object
+    if isinstance(pattern, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
+        ctx.add_callback(create_structure_highlighter(pattern, color=color, style=style))
+
+    # Case: Pattern is an iterable of SMARTS strings and/or oechem.OESubSearch objects
+    elif isinstance(pattern, Iterable):
+        for p in pattern:
+            ctx.add_callback(create_structure_highlighter(p, color=color, style=style))
+
+    else:
+        raise TypeError(f'Unsupported type for pattern: {type(pattern).__name__}')
+
+
+def _dataframe_copy_molecules(
+        self,
+        source_column: str,
+        dest_column: str,
+) -> pl.DataFrame:
+    """
+    Create a deep copy of molecules from one column to a new column.
+
+    This creates independent copies of all molecules, allowing modifications
+    (such as highlighting or alignment) to the new column without affecting
+    the original.
+
+    :param source_column: Name of the source molecule column.
+    :param dest_column: Name of the new column to create with copied molecules.
+    :returns: New DataFrame with the molecule column added.
+
+    Example::
+
+        # Create a copy of molecules for alignment
+        df = df.chem.copy_molecules("Original", "Aligned")
+        df.chem.highlight("Aligned", "c1ccccc1")
+    """
+    if source_column not in self._df.columns:
+        raise ValueError(f'Column {source_column} not found in DataFrame columns: ({", ".join(self._df.columns)})')
+
+    if not isinstance(self._df.schema[source_column], oeplr.MoleculeType):
+        raise TypeError(
+            f"copy_molecules only works on molecule columns (oepolars.MoleculeType). Column '{source_column}' "
+            f"has type {self._df.schema[source_column]}."
+        )
+
+    # Use the series-level copy_molecules (or deepcopy) and add as a new column
+    copied_series = self._df.get_column(source_column).chem.copy_molecules()
+    return self._df.with_columns(copied_series.alias(dest_column))
+
+
 def _dataframe_highlight_using_column(
         self,
         molecule_column: str,
         pattern_column: str,
         *,
         highlighted_column: str = "highlighted_substructures",
+        color: oechem.OEColor | oechem.OEColorIter | None = None,
+        style: int | Literal["overlay_default", "overlay_ball_and_stick"] = "overlay_default",
         ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | None = None,
         alignment_opts: oedepict.OEAlignmentOptions | None = None,
         prepare_opts: oedepict.OEPrepareDepictionOptions | None = None,
@@ -586,14 +805,18 @@ def _dataframe_highlight_using_column(
         - oechem.OESubSearch or oechem.OEMCSSearch object
         - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
 
-    :param molecule_column: Name of the molecule column
-    :param pattern_column: Name of the pattern column
-    :param highlighted_column: Optional name of the column with highlighted structures
-    :param ref: Optional reference for aligning depictions
-    :param alignment_opts: Optional depiction alignment options (oedepict.OEAlignmentOptions)
-    :param prepare_opts: Optional depiction preparation options (oedepict.OEPrepareDepictionOptions)
-    :param inplace: If True, returns the modified DataFrame (note: Polars DataFrames are immutable)
-    :return: Modified DataFrame with highlighted column
+    :param molecule_column: Name of the molecule column.
+    :param pattern_column: Name of the pattern column.
+    :param highlighted_column: Optional name of the column with highlighted structures.
+    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
+        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
+    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
+        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
+    :param ref: Optional reference for aligning depictions.
+    :param alignment_opts: Optional depiction alignment options (oedepict.OEAlignmentOptions).
+    :param prepare_opts: Optional depiction preparation options (oedepict.OEPrepareDepictionOptions).
+    :param inplace: If True, returns the modified DataFrame (note: Polars DataFrames are immutable).
+    :returns: Modified DataFrame with highlighted column.
     """
     df = self._df
 
@@ -608,6 +831,20 @@ def _dataframe_highlight_using_column(
 
     if pattern_column not in df.columns:
         raise KeyError(f'{pattern_column} not found in DataFrame columns: ({", ".join(df.columns)})')
+
+    # Default color
+    if color is None:
+        color = oechem.OEGetLightColors()
+
+    # Determine highlighting approach based on style
+    use_overlay = isinstance(style, str) and style in ("overlay_default", "overlay_ball_and_stick")
+
+    # Check if color is compatible with overlay
+    if use_overlay and isinstance(color, oechem.OEColor):
+        log.warning(
+            "Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
+        use_overlay = False
+        style = oedepict.OEHighlightStyle_BallAndStick
 
     # Create the display objects
     displays = []
@@ -660,11 +897,24 @@ def _dataframe_highlight_using_column(
             elif patterns is not None:
                 log.warning(f'Do not know how to highlight using: {type(patterns).__name__}')
 
-            # Apply substructure highlights
-            highlight = oedepict.OEHighlightOverlayByBallAndStick(oechem.OEGetLightColors())
+            # Overlay highlighting
+            if use_overlay:
+                highlight = oedepict.OEHighlightOverlayByBallAndStick(color)
+                for ss in substructures:
+                    oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(mol, True))
 
-            for ss in substructures:
-                oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(mol, True))
+            else:
+                # Traditional highlighting
+                if isinstance(color, oechem.OEColor):
+                    highlight_color = color
+                else:
+                    highlight_color = oechem.OELightBlue
+                    for c in color:
+                        highlight_color = c
+                        break
+                for ss in substructures:
+                    for match in ss.Match(mol, True):
+                        oedepict.OEAddHighlighting(disp, highlight_color, style, match)
 
             displays.append(disp)
 
@@ -853,8 +1103,8 @@ def _dataframe_fingerprint_similarity(
     targ_series = pl.Series(target_similarity_column, targ_displays, dtype=oeplr.DisplayType())
 
     # Store molecule references in metadata to prevent GC (same as pandas version)
-    ref_series.chem.metadata["molecules"] = ref_molecules
-    targ_series.chem.metadata["molecules"] = targ_molecules
+    ref_series.chem.metadata["molecules"] = ref_molecules  # noqa
+    targ_series.chem.metadata["molecules"] = targ_molecules  # noqa
 
     # Add the columns to the DataFrame
     result = df.with_columns([tanimoto_series, ref_series, targ_series])
@@ -865,9 +1115,12 @@ def _dataframe_fingerprint_similarity(
 # Monkey-patch onto oepolars DataFrameChemNamespace
 from oepolars.namespaces.dataframe import DataFrameChemNamespace
 DataFrameChemNamespace.reset_depictions = _dataframe_reset_depictions
+DataFrameChemNamespace.clear_formatting_rules = _dataframe_clear_formatting_rules
 DataFrameChemNamespace.recalculate_depiction_coordinates = _dataframe_recalculate_depiction_coordinates
+DataFrameChemNamespace.highlight = _dataframe_highlight
 DataFrameChemNamespace.highlight_using_column = _dataframe_highlight_using_column
 DataFrameChemNamespace.fingerprint_similarity = _dataframe_fingerprint_similarity
+DataFrameChemNamespace.copy_molecules = _dataframe_copy_molecules
 
 
 ########################################################################################################################

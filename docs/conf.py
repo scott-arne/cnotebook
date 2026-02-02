@@ -41,17 +41,14 @@ autodoc_default_options = {
     "exclude-members": "__weakref__",
 }
 autodoc_typehints = "description"
+# Note: OpenEye libraries (openeye, oechem, oedepict, oepandas, oepolars) are NOT mocked
+# so that autodoc can extract docstrings. Ensure OE_LICENSE is set when building docs.
+# IPython is mocked to avoid TerminalIPythonApp issues during doc builds.
 autodoc_mock_imports = [
-    "openeye",
-    "oechem",
-    "oedepict",
-    "pandas",
-    "polars",
-    "oepandas",
-    "oepolars",
     "marimo",
     "anywidget",
     "traitlets",
+    "IPython",
 ]
 
 # Intersphinx mapping

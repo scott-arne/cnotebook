@@ -108,12 +108,13 @@ class TestPolarsDataFrameRendering:
         assert "<table" in html
 
 
-class TestPolarsSeriesHighlight:
-    """Test Series highlight method."""
+class TestPolarsDataFrameHighlight:
+    """Test DataFrame highlight method."""
 
     def test_highlight_adds_callback(self):
-        """highlight() should add callback to series metadata."""
-        import cnotebook.polars_ext  # Ensure monkey-patching happens
+        """highlight() should add callback to DataFrame column context."""
+        import cnotebook.polars_ext
+        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -122,18 +123,16 @@ class TestPolarsSeriesHighlight:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        # Keep reference to the same series since oepolars metadata is keyed by series id
-        series = df["mol"]
-        series.chem.highlight("c1ccccc1")
+        df.chem.highlight("mol", "c1ccccc1")
 
-        metadata = series.chem.metadata
-        ctx = metadata.get("cnotebook")
+        ctx = get_dataframe_column_context(df, "mol")
         assert ctx is not None
         assert len(ctx.callbacks) > 0
 
     def test_highlight_with_color(self):
         """highlight() should accept color parameter."""
         import cnotebook.polars_ext
+        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -142,26 +141,39 @@ class TestPolarsSeriesHighlight:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        # Keep reference to the same series
-        series = df["mol"]
         # Should not raise
-        series.chem.highlight("c1ccccc1", color=oechem.OEColor(oechem.OERed))
+        df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
 
-        ctx = series.chem.metadata.get("cnotebook")
+        ctx = get_dataframe_column_context(df, "mol")
         assert ctx is not None
 
     def test_highlight_requires_molecule_type(self):
         """highlight() should raise TypeError on non-molecule columns."""
         import cnotebook.polars_ext
 
-        s = pl.Series("text", ["abc", "def"])
+        df = pl.DataFrame({"text": ["abc", "def"]})
 
         with pytest.raises(TypeError):
-            s.chem.highlight("abc")
+            df.chem.highlight("text", "abc")
+
+    def test_highlight_requires_valid_column(self):
+        """highlight() should raise ValueError on non-existent columns."""
+        import cnotebook.polars_ext
+        from openeye import oechem
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pl.DataFrame({"mol": [mol]})
+        df = df.chem.as_molecule("mol")
+
+        with pytest.raises(ValueError):
+            df.chem.highlight("nonexistent", "c1ccccc1")
 
     def test_highlight_with_multiple_patterns(self):
         """highlight() should accept multiple patterns."""
         import cnotebook.polars_ext
+        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -170,27 +182,75 @@ class TestPolarsSeriesHighlight:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        # Keep reference to the same series
-        series = df["mol"]
-
-        # Get initial callback count (in case of test pollution from metadata reuse)
-        initial_ctx = series.chem.metadata.get("cnotebook")
-        initial_callbacks = len(initial_ctx.callbacks) if initial_ctx else 0
-
         # Should accept list of patterns
-        series.chem.highlight(["c1ccccc1", "[OH]"])
+        df.chem.highlight("mol", ["c1ccccc1", "[OH]"])
 
-        ctx = series.chem.metadata.get("cnotebook")
+        ctx = get_dataframe_column_context(df, "mol")
         assert ctx is not None
-        # Should have 2 more callbacks than before (one for each pattern)
-        assert len(ctx.callbacks) == initial_callbacks + 2
+        # Should have 2 callbacks (one for each pattern)
+        assert len(ctx.callbacks) == 2
+
+    def test_clear_formatting_rules_clears_callbacks(self):
+        """clear_formatting_rules() should clear DataFrame-level callbacks."""
+        import cnotebook.polars_ext
+        from cnotebook.polars_ext import get_dataframe_column_context
+        from openeye import oechem
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pl.DataFrame({"mol": [mol]})
+        df = df.chem.as_molecule("mol")
+
+        # Add highlight
+        df.chem.highlight("mol", "c1ccccc1")
+
+        # Verify callback was added
+        ctx = get_dataframe_column_context(df, "mol")
+        assert ctx is not None
+        assert len(ctx.callbacks) == 1
+
+        # Clear formatting rules
+        df.chem.clear_formatting_rules("mol")
+
+        # Verify callback was cleared
+        ctx = get_dataframe_column_context(df, "mol")
+        assert ctx is not None  # Context should still exist
+        assert len(ctx.callbacks) == 0  # But callbacks should be cleared
+
+    def test_clear_formatting_rules_all_columns(self):
+        """clear_formatting_rules() with no args should clear all columns."""
+        import cnotebook.polars_ext
+        from cnotebook.polars_ext import get_dataframe_column_context
+        from openeye import oechem
+
+        mol1 = oechem.OEMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        mol2 = oechem.OEMol()
+        oechem.OESmilesToMol(mol2, "CCO")
+
+        df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
+        df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
+
+        # Add highlights to both columns
+        df.chem.highlight("mol1", "c1ccccc1")
+        df.chem.highlight("mol2", "CCO")
+
+        # Clear all formatting rules
+        df.chem.clear_formatting_rules()
+
+        # Verify both were cleared
+        ctx1 = get_dataframe_column_context(df, "mol1")
+        ctx2 = get_dataframe_column_context(df, "mol2")
+        assert ctx1 is None or len(ctx1.callbacks) == 0
+        assert ctx2 is None or len(ctx2.callbacks) == 0
 
 
-class TestPolarsSeriesMethods:
-    """Test remaining Series accessor methods."""
+class TestPolarsDataFrameCopyMolecules:
+    """Test DataFrame copy_molecules method."""
 
-    def test_reset_depictions(self):
-        """reset_depictions() should clear callbacks."""
+    def test_copy_molecules_creates_new_column(self):
+        """copy_molecules() should create a new column with copied molecules."""
         import cnotebook.polars_ext
         from openeye import oechem
 
@@ -200,15 +260,55 @@ class TestPolarsSeriesMethods:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        # Keep reference to the same series
-        series = df["mol"]
+        result = df.chem.copy_molecules("mol", "mol_copy")
 
-        # Add highlight then reset
-        series.chem.highlight("c1ccccc1")
-        series.chem.reset_depictions()
+        assert "mol_copy" in result.columns
+        assert isinstance(result.schema["mol_copy"], oeplr.MoleculeType)
 
-        ctx = series.chem.metadata.get("cnotebook")
-        assert ctx is None or len(getattr(ctx, 'callbacks', [])) == 0
+    def test_copy_molecules_creates_deep_copy(self):
+        """copy_molecules() should create independent molecule copies."""
+        import cnotebook.polars_ext
+        from openeye import oechem
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pl.DataFrame({"mol": [mol]})
+        df = df.chem.as_molecule("mol")
+
+        result = df.chem.copy_molecules("mol", "mol_copy")
+
+        # Original and copy should be different objects
+        original = result["mol"].to_list()[0]
+        copy = result["mol_copy"].to_list()[0]
+        assert original is not copy
+
+    def test_copy_molecules_requires_molecule_type(self):
+        """copy_molecules() should raise TypeError on non-molecule columns."""
+        import cnotebook.polars_ext
+
+        df = pl.DataFrame({"text": ["abc", "def"]})
+
+        with pytest.raises(TypeError):
+            df.chem.copy_molecules("text", "text_copy")
+
+    def test_copy_molecules_requires_valid_column(self):
+        """copy_molecules() should raise ValueError on non-existent columns."""
+        import cnotebook.polars_ext
+        from openeye import oechem
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pl.DataFrame({"mol": [mol]})
+        df = df.chem.as_molecule("mol")
+
+        with pytest.raises(ValueError):
+            df.chem.copy_molecules("nonexistent", "copy")
+
+
+class TestPolarsSeriesMethods:
+    """Test remaining Series accessor methods."""
 
     def test_align_depictions(self):
         """align_depictions() should not raise."""
@@ -266,38 +366,6 @@ class TestPolarsSeriesMethods:
 class TestPolarsDataFrameMethods:
     """Test DataFrame accessor methods."""
 
-    def test_dataframe_reset_depictions(self):
-        """DataFrame reset_depictions() should reset depictions on retrieved series.
-
-        Note: In Polars, each column access creates a new Series instance with
-        its own metadata. The reset_depictions method clears metadata on the
-        series instances it retrieves, which is the same behavior that occurs
-        during rendering.
-        """
-        import cnotebook.polars_ext
-        from openeye import oechem
-
-        mol = oechem.OEMol()
-        oechem.OESmilesToMol(mol, "c1ccccc1")
-
-        df = pl.DataFrame({"mol": [mol]})
-        df = df.chem.as_molecule("mol")
-
-        # Get a series, add a highlight, then reset it
-        series = df.get_column("mol")
-        series.chem.highlight("c1ccccc1")
-
-        # Verify highlight was added to this series
-        ctx = series.chem.metadata.get("cnotebook")
-        assert ctx is not None and len(getattr(ctx, 'callbacks', [])) > 0
-
-        # Reset depictions on this specific series reference
-        series.chem.reset_depictions()
-
-        # Verify callbacks were cleared on this series
-        ctx = series.chem.metadata.get("cnotebook")
-        assert ctx is None or len(getattr(ctx, 'callbacks', [])) == 0
-
     def test_dataframe_reset_depictions_method_exists(self):
         """DataFrame chem accessor should have reset_depictions method."""
         import cnotebook.polars_ext
@@ -332,6 +400,32 @@ class TestPolarsDataFrameMethods:
 
         # Should also accept string argument
         df.chem.reset_depictions(molecule_columns="mol2")
+
+    def test_dataframe_clear_formatting_rules(self):
+        """DataFrame clear_formatting_rules() should not raise.
+
+        Note: In Polars, each column access creates a new Series instance with
+        its own metadata. This test just verifies the method is available and
+        doesn't raise errors.
+        """
+        import cnotebook.polars_ext
+        from openeye import oechem
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pl.DataFrame({"mol": [mol]})
+        df = df.chem.as_molecule("mol")
+
+        # Should not raise
+        df.chem.clear_formatting_rules()
+
+    def test_dataframe_clear_formatting_rules_method_exists(self):
+        """DataFrame should have clear_formatting_rules method."""
+        import cnotebook.polars_ext
+
+        df = pl.DataFrame({"a": [1]})
+        assert hasattr(df.chem, "clear_formatting_rules")
 
     def test_highlight_using_column(self):
         """highlight_using_column() should create display column."""

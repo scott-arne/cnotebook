@@ -40,7 +40,16 @@ def _is_marimo() -> bool:
 
 
 class MolGridWidget(anywidget.AnyWidget):
-    """Widget for MolGrid selection sync."""
+    """Jupyter widget for MolGrid selection synchronization.
+
+    This widget handles communication between the MolGrid iframe and the
+    Jupyter kernel for selection state and SMARTS query functionality.
+
+    :ivar grid_id: Unique identifier for this grid instance.
+    :ivar selection: JSON-encoded dictionary of selected molecule indices.
+    :ivar smarts_query: Current SMARTS query string from user input.
+    :ivar smarts_matches: JSON-encoded list of molecule indices matching the SMARTS query.
+    """
 
     _esm = """
     function render({ model, el }) {
@@ -595,25 +604,7 @@ body {
 
 
 class MolGrid:
-    """Interactive molecule grid widget.
-
-    :param mols: Iterable of OpenEye molecule objects.
-    :param dataframe: Optional DataFrame with molecule data.
-    :param mol_col: Column name containing molecules (if using DataFrame).
-    :param title_field: Molecule field to display as title (None to hide).
-    :param tooltip_fields: List of fields for tooltip display.
-    :param n_items_per_page: Number of molecules per page.
-    :param width: Image width in pixels.
-    :param height: Image height in pixels.
-    :param atom_label_font_scale: Scale factor for atom labels.
-    :param image_format: Image format ("svg" or "png").
-    :param select: Enable selection checkboxes.
-    :param information: Enable info button with hover tooltip.
-    :param data: Column(s) to display in info tooltip. If None, auto-detects
-        simple types (string, int, float) from DataFrame.
-    :param search_fields: Fields for text search.
-    :param name: Grid identifier.
-    """
+    """Interactive molecule grid widget for displaying and selecting molecules."""
 
     # Class-level selection storage
     _selections: Dict[str, Dict[int, str]] = {}
@@ -637,6 +628,25 @@ class MolGrid:
         search_fields: Optional[List[str]] = None,
         name: Optional[str] = None,
     ):
+        """Create an interactive molecule grid widget.
+
+        :param mols: Iterable of OpenEye molecule objects.
+        :param dataframe: Optional DataFrame with molecule data.
+        :param mol_col: Column name containing molecules (if using DataFrame).
+        :param title_field: Molecule field to display as title (None to hide).
+        :param tooltip_fields: List of fields for tooltip display.
+        :param n_items_per_page: Number of molecules per page.
+        :param width: Image width in pixels.
+        :param height: Image height in pixels.
+        :param atom_label_font_scale: Scale factor for atom labels.
+        :param image_format: Image format ("svg" or "png").
+        :param select: Enable selection checkboxes.
+        :param information: Enable info button with hover tooltip.
+        :param data: Column(s) to display in info tooltip. If None, auto-detects
+            simple types (string, int, float) from DataFrame.
+        :param search_fields: Fields for text search.
+        :param name: Grid identifier.
+        """
         self._molecules = list(mols)
         self._dataframe = dataframe
         self._mol_col = mol_col

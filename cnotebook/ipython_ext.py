@@ -1,8 +1,6 @@
 import logging
 from openeye import oechem, oedepict
 from .render import (
-    CNotebookContext,
-    pass_cnotebook_context,
     oemol_to_html,
     oedisp_to_html,
     oeimage_to_html,

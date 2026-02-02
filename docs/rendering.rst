@@ -41,7 +41,7 @@ Query molecules, such as ``OEQMol`` can also be displayed.
 
     qmol = oechem.OEQMol()
 
-    with oechem.oemolistream("demos/assets/egfr_template.mol") as ifs:
+    with oechem.oemolistream("examples/assets/egfr_template.mol") as ifs:
         oechem.OEReadMDLQueryFile(ifs, qmol)
 
     qmol
@@ -205,45 +205,8 @@ the local context, the change will propogate.
 .. image:: _static/local_context_example.png
     :align: center
 
-You can pass your local context to the following functions for rendering:
-    * ``cnotebook.render`` for molecules and display objects
-    *
-
-Usage Examples
-^^^^^^^^^^^^^^
-
-**Image Dimensions:**
-
-.. code-block:: python
-
-    ctx.width = 250      # Set width in pixels
-    ctx.height = 250     # Set height in pixels
-    ctx.max_width = 1200 # Maximum width (prevents oversized molecules)
-    ctx.max_height = 800 # Maximum height
-
-**Output Format:**
-
-.. code-block:: python
-
-    ctx.image_format = "png"  # Default format
-    # or
-    ctx.image_format = "svg"  # Vector format for better quality
-
-**Scaling:**
-
-.. code-block:: python
-
-    ctx.structure_scale = 15.0        # Increase structure size
-    ctx.atom_label_font_scale = 1.5   # Larger atom labels
-    ctx.title_font_scale = 1.2        # Larger title
-
-**Resetting to Defaults:**
-
-.. code-block:: python
-
-    ctx.reset()  # Reset all settings to defaults
-
-
+You can pass any renderable object (e.g., molecules or DataFrames) to ``cnotebook.display``
+with an optional context and it will render.
 
 Environment-Specific Behavior
 -----------------------------

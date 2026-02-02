@@ -6,17 +6,14 @@ molgrid
    :undoc-members:
    :show-inheritance:
 
+.. _molgrid-class:
+
 MolGrid Class
 -------------
 
 .. autoclass:: cnotebook.grid.MolGrid
    :members:
    :special-members: __init__
-
-molgrid Function
-----------------
-
-.. autofunction:: cnotebook.grid.molgrid
 
 Usage Examples
 --------------

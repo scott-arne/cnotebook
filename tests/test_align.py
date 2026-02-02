@@ -375,86 +375,115 @@ class TestAlignerBase:
 
 class TestOEFingerprintAligner:
     """Test the OEFingerprintAligner class - basic functionality only"""
-    
-    @patch('cnotebook.align.fingerprint_maker')
-    def test_init_with_invalid_refmol(self, mock_fp_maker):
+
+    def test_init_with_invalid_refmol(self):
         """Test initialization with invalid reference molecule"""
-        mock_refmol = MagicMock(spec=oechem.OEMolBase)
-        mock_refmol.CreateCopy.return_value = mock_refmol
-        mock_refmol.IsValid.return_value = False
-        
-        mock_make_fp = MagicMock()
-        mock_fp_maker.return_value = mock_make_fp
-        
-        aligner = OEFingerprintAligner(mock_refmol)
-        
+        # Create an empty (invalid) molecule
+        invalid_mol = oechem.OEGraphMol()
+        # Don't add any atoms - this makes it invalid
+
+        aligner = OEFingerprintAligner(invalid_mol)
+
         assert aligner.reffp is None
         assert aligner.fptype is None
-    
+
     def test_validate_no_reffp(self):
         """Test validation when no reference fingerprint"""
         aligner = OEFingerprintAligner.__new__(OEFingerprintAligner)
         aligner.reffp = None
-        
+
         mock_mol = MagicMock()
         result = aligner.validate(mock_mol)
-        
+
         assert result is False
-    
+
     def test_align_no_fptype(self):
         """Test alignment when no fingerprint type"""
         aligner = OEFingerprintAligner.__new__(OEFingerprintAligner)
         aligner.fptype = None
-        
+
         mock_mol = MagicMock()
         result = aligner.align(mock_mol)
-        
+
         assert result is False
 
 
 class TestCreateAligner:
     """Test the create_aligner function - logic only"""
 
-    # FIXME: Bug reported OpenEye on 11/30/2025 regarding using OESubSearch matches in OEPrepareMultiAlignedDepiction
-    # @patch('cnotebook.align.OESubSearchAligner')
-    # def test_create_aligner_subsearch(self, mock_aligner_class):
-    #     """Test creating aligner with OESubSearch"""
-    #     mock_ss = MagicMock(spec=oechem.OESubSearch)
-    #     mock_aligner = MagicMock()
-    #     mock_aligner_class.return_value = mock_aligner
-    #
-    #     result = create_aligner(mock_ss, method="fingerprint")  # Method should be ignored
-    #
-    #     mock_aligner_class.assert_called_once_with(mock_ss)
-    #     assert result == mock_aligner
+    @patch('cnotebook.align.OESubSearchAligner')
+    def test_create_aligner_subsearch(self, mock_aligner_class):
+        """Test creating aligner with OESubSearch"""
+        mock_ss = MagicMock(spec=oechem.OESubSearch)
+        mock_aligner = MagicMock()
+        mock_aligner_class.return_value = mock_aligner
 
-    # FIXME: Bug reported OpenEye on 11/30/2025 regarding using OEMCSSearch matches in OEPrepareMultiAlignedDepiction
-    # @patch('cnotebook.align.OEMCSSearchAligner')
-    # def test_create_aligner_mcssearch(self, mock_aligner_class):
-    #     """Test creating aligner with OEMCSSearch"""
-    #     mock_mcss = MagicMock(spec=oechem.OEMCSSearch)
-    #     mock_aligner = MagicMock()
-    #     mock_aligner_class.return_value = mock_aligner
-    #
-    #     result = create_aligner(mock_mcss, method="substructure")  # Method should be ignored
-    #
-    #     mock_aligner_class.assert_called_once_with(mock_mcss)
-    #     assert result == mock_aligner
-    
+        result = create_aligner(mock_ss, method="fingerprint")  # Method should be ignored
+
+        mock_aligner_class.assert_called_once_with(mock_ss)
+        assert result == mock_aligner
+
+    @patch('cnotebook.align.OEMCSSearchAligner')
+    def test_create_aligner_mcssearch(self, mock_aligner_class):
+        """Test creating aligner with OEMCSSearch"""
+        mock_mcss = MagicMock(spec=oechem.OEMCSSearch)
+        mock_aligner = MagicMock()
+        mock_aligner_class.return_value = mock_aligner
+
+        result = create_aligner(mock_mcss, method="substructure")  # Method should be ignored
+
+        mock_aligner_class.assert_called_once_with(mock_mcss)
+        assert result == mock_aligner
+
+    @patch('cnotebook.align.OESubSearchAligner')
+    def test_create_aligner_smarts_string(self, mock_aligner_class):
+        """Test creating aligner with SMARTS string"""
+        mock_aligner = MagicMock()
+        mock_aligner_class.return_value = mock_aligner
+
+        result = create_aligner("c1ccccc1")  # SMARTS string
+
+        mock_aligner_class.assert_called_once_with("c1ccccc1")
+        assert result == mock_aligner
+
     @patch('cnotebook.align.OEFingerprintAligner')
     def test_create_aligner_molbase_default(self, mock_aligner_class):
         """Test creating aligner with OEMolBase (default method)"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_aligner = MagicMock()
         mock_aligner_class.return_value = mock_aligner
-        
+
         # This should return the OEFingerprintAligner instance
         result = create_aligner(mock_mol)
-        
+
         # Should return the fingerprint aligner (bug was fixed)
         assert result == mock_aligner
         mock_aligner_class.assert_called_once_with(mock_mol)
-    
+
+    @patch('cnotebook.align.OESubSearchAligner')
+    def test_create_aligner_molbase_substructure(self, mock_aligner_class):
+        """Test creating aligner with OEMolBase and substructure method"""
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_aligner = MagicMock()
+        mock_aligner_class.return_value = mock_aligner
+
+        result = create_aligner(mock_mol, method="substructure")
+
+        mock_aligner_class.assert_called_once_with(mock_mol)
+        assert result == mock_aligner
+
+    @patch('cnotebook.align.OEMCSSearchAligner')
+    def test_create_aligner_molbase_mcss(self, mock_aligner_class):
+        """Test creating aligner with OEMolBase and mcss method"""
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_aligner = MagicMock()
+        mock_aligner_class.return_value = mock_aligner
+
+        result = create_aligner(mock_mol, method="mcss")
+
+        mock_aligner_class.assert_called_once_with(mock_mol)
+        assert result == mock_aligner
+
     def test_create_aligner_unknown_method(self):
         """Test error for unknown alignment method"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -464,16 +493,6 @@ class TestCreateAligner:
 
     def test_create_aligner_unsupported_type(self):
         """Test error for unsupported alignment reference type"""
-        # Pass something that's not an OEMolBase
+        # Pass something that's not a supported type
         with pytest.raises(TypeError, match="Unsupported alignment reference type"):
-            create_aligner("not a molecule")
-
-    # FIXME: Bug reported OpenEye on 11/30/2025 - OESubSearch aligners are disabled
-    # @patch('cnotebook.align.log.warning')
-    # def test_create_aligner_method_warning_subsearch(self, mock_log_warning):
-    #     """Test warning when method conflicts with OESubSearch"""
-    #     mock_ss = MagicMock(spec=oechem.OESubSearch)
-    #
-    #     with patch('cnotebook.align.OESubSearchAligner'):
-    #         create_aligner(mock_ss, method="mcss")
-    #         mock_log_warning.assert_called_once()
+            create_aligner(12345)  # A number is not supported

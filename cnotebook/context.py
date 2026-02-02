@@ -30,10 +30,18 @@ T = TypeVar('T')
 
 
 class DeferredValue(Generic[T]):
+    """A value that can be deferred to the global CNotebook context.
+
+    When a value is set to ``DEFERRED``, accessing it will look up the
+    corresponding attribute from the global context instead.
     """
-    Value that can be deferred to the global CNotebook context
-    """
+
     def __init__(self, name: str, value: T | _Deferred):
+        """Create a deferred value.
+
+        :param name: Attribute name to look up in global context when deferred.
+        :param value: Initial value, or ``DEFERRED`` to use global context.
+        """
         self.name = name
         self._value = value
         self._initial_value = value
@@ -79,9 +87,14 @@ class DeferredValue(Generic[T]):
 
 
 class CNotebookContext:
+    """Context for rendering OpenEye objects in IPython/Jupyter environments.
+
+    This context controls how molecules and other OpenEye objects are rendered
+    as images. It supports deferred values that fall back to a global context.
+
+    :cvar supported_mime_types: Mapping of image formats to MIME types.
     """
-    Context in which to render OpenEye objects within IPython
-    """
+
     # Supported image formats and their MIME types for rendering
     supported_mime_types = {
         'png': 'image/png',
@@ -106,16 +119,24 @@ class CNotebookContext:
             scope: Literal["local", "global"] = "global",
             title: bool = True
     ):
-        """
-        Create the render context
-        :param width: Image width (default of None means it is determined by the structure scale)
-        :param height: Image height (default of None means it is determined by the structure scale)
-        :param min_width: Minimum image width (prevents tiny images)
-        :param min_height: Minimum image height (prevents tiny images)
-        :param structure_scale: Structure scale
-        :param title_font_scale: Font scaling (valid is 0.5 to 2.0)
-        :param image_format: Image format
-        :param bond_width_scaling: Bond width scaling
+        """Create a rendering context.
+
+        :param width: Image width in pixels. If 0, determined by structure scale.
+        :param height: Image height in pixels. If 0, determined by structure scale.
+        :param min_width: Minimum image width in pixels (prevents tiny images).
+        :param min_height: Minimum image height in pixels (prevents tiny images).
+        :param max_width: Maximum image width in pixels, or None for no limit.
+        :param max_height: Maximum image height in pixels, or None for no limit.
+        :param structure_scale: Scale factor for structure rendering.
+        :param atom_label_font_scale: Scale factor for atom labels (0.5 to 2.0).
+        :param title_font_scale: Scale factor for title font (0.5 to 2.0).
+        :param image_format: Output image format ("png" or "svg").
+        :param bond_width_scaling: Whether to scale bond widths with structure scale.
+        :param callbacks: List of callables to invoke on OE2DMolDisplay before rendering.
+            Each callback receives the display object and can modify it.
+        :param scope: Context scope - "local" defers unset values to global context,
+            "global" uses defaults directly.
+        :param title: Whether to display molecule titles.
         """
         self._width = DeferredValue[float]("width", width)
         self._height = DeferredValue[float]("height", height)

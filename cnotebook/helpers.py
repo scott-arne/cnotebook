@@ -1,6 +1,16 @@
+import logging
 import re
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
 from openeye import oechem, oedepict
+
+log = logging.getLogger("cnotebook")
+
+
+# Type alias for highlight style
+HighlightStyle = int | Literal["overlay_default", "overlay_ball_and_stick"]
+
+# Type alias for highlight colors
+HighlightColors = oechem.OEColor | oechem.OEColorIter
 
 
 def escape_html(val):
@@ -44,29 +54,67 @@ def remove_omega_conformer_id(val):
 
 def create_structure_highlighter(
         query: str | oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol,
-        color: oechem.OEColor = oechem.OEColor(oechem.OELightBlue),
-        style: int = oedepict.OEHighlightStyle_Stick
+        color: HighlightColors | None = None,
+        style: HighlightStyle = "overlay_default"
 ) -> Callable[[oedepict.OE2DMolDisplay], None]:
     """
-    Closure that creates a callback to highlight SMARTS patterns or MCSS results in a molecule
-    :param query: SMARTS pattern, oechem.OESubSearch, or oechem.OEMCSSearch object
-    :param color: Highlight color
-    :param style: Highlight style
-    :return: Function that highlights structures
-    """
+    Closure that creates a callback to highlight SMARTS patterns or MCSS results in a molecule.
 
+    :param query: SMARTS pattern, oechem.OESubSearch, or oechem.OEMCSSearch object.
+    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
+        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
+    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
+        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
+    :returns: Callback function that highlights structures.
+    """
+    # Default color
+    if color is None:
+        color = oechem.OEGetLightColors()
+
+    # Create the substructure search object
     if isinstance(query, (str, oechem.OEQMol)):
         ss = oechem.OESubSearch(query)
-
-    elif not isinstance(query, (oechem.OESubSearch, oechem.OEMCSSearch)):
+    elif isinstance(query, (oechem.OESubSearch, oechem.OEMCSSearch)):
+        ss = query
+    else:
         raise TypeError(f'Cannot create structure highlighter with object pattern of type {type(query).__name__}')
 
-    # Create the callback as a closure
-    def _structure_highlighter(disp: oedepict.OE2DMolDisplay):
-        for match in ss.Match(disp.GetMolecule(), True):
-            oedepict.OEAddHighlighting(disp, color, style, match)
+    # Determine highlighting approach based on style
+    use_overlay = isinstance(style, str) and style in ("overlay_default", "overlay_ball_and_stick")
 
-    return _structure_highlighter
+    # Check if color is compatible with overlay
+    if use_overlay and isinstance(color, oechem.OEColor):
+        log.warning(
+            "Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
+        use_overlay = False
+        style = oedepict.OEHighlightStyle_BallAndStick
+
+    if use_overlay:
+        # Overlay highlighting with color iterator
+        highlight = oedepict.OEHighlightOverlayByBallAndStick(color)
+
+        def _overlay_highlighter(disp: oedepict.OE2DMolDisplay):
+            oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(disp.GetMolecule(), True))
+
+        return _overlay_highlighter
+
+    else:
+        # Traditional highlighting with OEHighlightStyle int
+        # For traditional highlighting, we need a single color
+        if isinstance(color, oechem.OEColor):
+            highlight_color = color
+        else:
+            # Get first color from iterator for traditional highlighting
+            highlight_color = oechem.OELightBlue
+            for c in color:
+                highlight_color = c
+                break
+
+        def _structure_highlighter(disp: oedepict.OE2DMolDisplay):
+            for match in ss.Match(disp.GetMolecule(), True):
+                oedepict.OEAddHighlighting(disp, highlight_color, style, match)
+
+        return _structure_highlighter
 
 
 def highlight_smarts(
@@ -103,7 +151,7 @@ def highlight_smarts(
         disp = cnotebook.highlight_smarts(
             mol,
             ["ncn", "c1ccccc1"],
-            color=[oechem.OEColor(oechem.OELightBlue), oechem.OEColor(oechem.OEPink)],
+            color=[oechem.OEColor(oechem.OELightBlue), oechem.OEColor(oechem.OEPink)]
         )
     """
     # Prepare molecule for depiction
