@@ -48,7 +48,7 @@ def test_polars_dataframe_molgrid():
         "MW": [46.07, 30.07]
     })
 
-    grid = df.chem.molgrid(mol_col="mol", title_field="Name", tooltip_fields=["MW"])
+    grid = df.chem.molgrid(mol_col="mol", title="Name", tooltip_fields=["MW"])
 
     assert grid is not None
     data = grid._prepare_data()

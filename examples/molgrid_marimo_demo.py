@@ -137,7 +137,7 @@ def custom_grid(MolGrid, molecules):
         height=150,
         image_format="svg",
         n_items_per_page=8,
-        title_field="Title",
+        title=True,
     )
     return custom_grid,
 
@@ -403,7 +403,7 @@ def complete_grid(MolGrid, df):
         df["Molecule"].tolist(),
         dataframe=df,
         mol_col="Molecule",
-        title_field="Name",
+        title="Name",
         tooltip_fields=["SMILES"],
         data=["Category", "MW"],
         n_items_per_page=6,
@@ -437,7 +437,7 @@ def api_reference(mo):
         | `mols` | Iterable | (required) | OpenEye molecule objects |
         | `dataframe` | DataFrame | None | Optional DataFrame with molecule data |
         | `mol_col` | str | None | Column name containing molecules |
-        | `title_field` | str | "Title" | Field to display as title (None to hide) |
+        | `title` | bool/str | True | True uses mol title, string for field name, None/False hides |
         | `tooltip_fields` | List[str] | None | Fields for hover tooltip |
         | `n_items_per_page` | int | 24 | Molecules per page |
         | `width` | int | 200 | Image width in pixels |

@@ -110,7 +110,7 @@ def test_molgrid_default_parameters(simple_mol):
 
     grid = MolGrid([simple_mol])
 
-    assert grid.title_field == "Title"
+    assert grid.title is True
     assert grid.tooltip_fields == []
     assert grid.n_items_per_page == 24
     assert grid.width == 200
@@ -126,7 +126,7 @@ def test_molgrid_custom_parameters(simple_mol):
 
     grid = MolGrid(
         [simple_mol],
-        title_field="Name",
+        title="Name",
         tooltip_fields=["MW", "Formula"],
         n_items_per_page=12,
         width=250,
@@ -137,7 +137,7 @@ def test_molgrid_custom_parameters(simple_mol):
         name="custom-grid"
     )
 
-    assert grid.title_field == "Name"
+    assert grid.title == "Name"
     assert grid.tooltip_fields == ["MW", "Formula"]
     assert grid.n_items_per_page == 12
     assert grid.width == 250
@@ -212,7 +212,7 @@ def test_molgrid_prepare_data_basic(mol_with_sd_data):
     """Test _prepare_data extracts basic data correctly."""
     from cnotebook import MolGrid
 
-    grid = MolGrid([mol_with_sd_data], title_field="Title", tooltip_fields=["MW"])
+    grid = MolGrid([mol_with_sd_data], title="Title", tooltip_fields=["MW"])
     data = grid._prepare_data()
 
     assert len(data) == 1
@@ -234,10 +234,10 @@ def test_molgrid_prepare_data_smiles(simple_mol):
 
 
 def test_molgrid_prepare_data_no_title(simple_mol):
-    """Test _prepare_data with title_field=None."""
+    """Test _prepare_data with title=None."""
     from cnotebook import MolGrid
 
-    grid = MolGrid([simple_mol], title_field=None)
+    grid = MolGrid([simple_mol], title=None)
     data = grid._prepare_data()
 
     assert data[0]["title"] is None

@@ -615,7 +615,7 @@ class MolGrid:
         *,
         dataframe=None,
         mol_col: Optional[str] = None,
-        title_field: Optional[str] = "Title",
+        title: Union[bool, str, None] = True,
         tooltip_fields: Optional[List[str]] = None,
         n_items_per_page: int = 24,
         width: int = 200,
@@ -633,7 +633,8 @@ class MolGrid:
         :param mols: Iterable of OpenEye molecule objects.
         :param dataframe: Optional DataFrame with molecule data.
         :param mol_col: Column name containing molecules (if using DataFrame).
-        :param title_field: Molecule field to display as title (None to hide).
+        :param title: Title display mode. True uses molecule's title, a string
+            specifies a field name, None/False hides titles.
         :param tooltip_fields: List of fields for tooltip display.
         :param n_items_per_page: Number of molecules per page.
         :param width: Image width in pixels.
@@ -650,7 +651,7 @@ class MolGrid:
         self._molecules = list(mols)
         self._dataframe = dataframe
         self._mol_col = mol_col
-        self.title_field = title_field
+        self.title = title if title else None
         self.tooltip_fields = tooltip_fields or []
         self.n_items_per_page = n_items_per_page
         self.selection_enabled = select
@@ -860,6 +861,7 @@ class MolGrid:
             height=self.height,
             image_format=self.image_format,
             atom_label_font_scale=self.atom_label_font_scale,
+            title=False,
             scope="local",
         )
 
@@ -874,8 +876,12 @@ class MolGrid:
             }
 
             # Extract title
-            if self.title_field:
-                item["title"] = self._get_field_value(idx, mol, self.title_field)
+            if self.title is True:
+                # Use molecule's built-in title
+                item["title"] = mol.GetTitle() if mol.IsValid() else None
+            elif self.title:
+                # Use specified field name
+                item["title"] = self._get_field_value(idx, mol, self.title)
 
             # Extract tooltip fields
             for field in self.tooltip_fields:

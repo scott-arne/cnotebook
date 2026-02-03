@@ -7,7 +7,7 @@ from typing import Iterable, List, Optional, Union
 def molgrid(
     mols: Iterable,
     *,
-    title_field: Optional[str] = "Title",
+    title: Union[bool, str, None] = True,
     tooltip_fields: Optional[List[str]] = None,
     n_items_per_page: int = 24,
     width: int = 200,
@@ -22,7 +22,8 @@ def molgrid(
     """Create an interactive molecule grid.
 
     :param mols: Iterable of OpenEye molecule objects.
-    :param title_field: Molecule field for title (None to hide).
+    :param title: Title display mode. True uses molecule's title, a string
+        specifies a field name, None/False hides titles.
     :param tooltip_fields: List of fields for tooltip.
     :param n_items_per_page: Molecules per page.
     :param width: Image width in pixels (default 200).
@@ -38,7 +39,7 @@ def molgrid(
     """
     return MolGrid(
         mols,
-        title_field=title_field,
+        title=title,
         tooltip_fields=tooltip_fields,
         n_items_per_page=n_items_per_page,
         width=width,

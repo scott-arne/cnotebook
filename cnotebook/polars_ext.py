@@ -1130,13 +1130,14 @@ DataFrameChemNamespace.copy_molecules = _dataframe_copy_molecules
 
 def _polars_series_molgrid(
     self,
-    title_field: str = "Title",
+    title: bool | str | None = True,
     tooltip_fields: list[str] | None = None,
     **kwargs
 ) -> "MolGrid":
     """Display molecules in an interactive grid.
 
-    :param title_field: Field for title (molecule property).
+    :param title: Title display mode. True uses molecule's title, a string
+        specifies a field name, None/False hides titles.
     :param tooltip_fields: Fields for tooltip.
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
@@ -1148,7 +1149,7 @@ def _polars_series_molgrid(
 
     return MolGrid(
         mols,
-        title_field=title_field,
+        title=title,
         tooltip_fields=tooltip_fields,
         **kwargs
     )
@@ -1157,14 +1158,15 @@ def _polars_series_molgrid(
 def _polars_dataframe_molgrid(
     self,
     mol_col: str,
-    title_field: str = "Title",
+    title: bool | str | None = True,
     tooltip_fields: list[str] | None = None,
     **kwargs
 ) -> "MolGrid":
     """Display molecules from a column in an interactive grid.
 
     :param mol_col: Column containing molecules.
-    :param title_field: Column for title display.
+    :param title: Title display mode. True uses molecule's title, a string
+        specifies a field name, None/False hides titles.
     :param tooltip_fields: Columns for tooltip.
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
@@ -1189,7 +1191,7 @@ def _polars_dataframe_molgrid(
         mols,
         dataframe=pdf,
         mol_col=mol_col,
-        title_field=title_field,
+        title=title,
         tooltip_fields=tooltip_fields,
         **kwargs
     )

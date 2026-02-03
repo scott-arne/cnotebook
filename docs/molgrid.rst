@@ -149,14 +149,14 @@ Control molecule title display:
 
 .. code-block:: python
 
-    # Show titles from molecule's Title field
-    grid = MolGrid(molecules, title_field="Title")
+    # Show titles from molecule's built-in title (default)
+    grid = MolGrid(molecules, title=True)
 
     # Show titles from SD data field
-    grid = MolGrid(molecules, title_field="Name")
+    grid = MolGrid(molecules, title="Name")
 
     # Hide titles
-    grid = MolGrid(molecules, title_field=None)
+    grid = MolGrid(molecules, title=None)
 
 Search and Filtering
 --------------------
@@ -352,14 +352,14 @@ API Reference
 MolGrid Class
 ^^^^^^^^^^^^^
 
-.. py:class:: MolGrid(mols, *, dataframe=None, mol_col=None, title_field="Title", tooltip_fields=None, n_items_per_page=24, width=200, height=200, atom_label_font_scale=1.5, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None)
+.. py:class:: MolGrid(mols, *, dataframe=None, mol_col=None, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, atom_label_font_scale=1.5, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None)
 
    Interactive molecule grid widget.
 
    :param mols: Iterable of OpenEye molecule objects
    :param dataframe: Optional DataFrame with molecule data
    :param mol_col: Column name containing molecules (required if dataframe is provided)
-   :param title_field: Molecule field to display as title, or None to hide
+   :param title: Title display mode. True uses molecule's title, a string specifies a field name, None/False hides titles
    :param tooltip_fields: List of fields for hover tooltip
    :param n_items_per_page: Number of molecules per page
    :param width: Image width in pixels
@@ -399,7 +399,7 @@ MolGrid Class
 molgrid Function
 ^^^^^^^^^^^^^^^^
 
-.. py:function:: molgrid(mols, *, title_field="Title", tooltip_fields=None, n_items_per_page=24, width=200, height=200, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None)
+.. py:function:: molgrid(mols, *, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None)
 
    Convenience function to create an interactive molecule grid.
 

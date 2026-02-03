@@ -35,7 +35,7 @@ def test_full_workflow():
     # Create grid with correct parameter name (select, not selection)
     grid = MolGrid(
         mols,
-        title_field="Title",
+        title=True,
         tooltip_fields=["SMILES"],
         n_items_per_page=3,
         select=True,

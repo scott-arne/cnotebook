@@ -48,7 +48,7 @@ def test_dataframe_molgrid():
     df = pd.DataFrame({"mol": [mol1, mol2], "Name": ["Ethanol", "Ethane"], "MW": [46.07, 30.07]})
     df["mol"] = df["mol"].astype(oepd.MoleculeDtype())
 
-    grid = df.chem.molgrid(mol_col="mol", title_field="Name", tooltip_fields=["MW"])
+    grid = df.chem.molgrid(mol_col="mol", title="Name", tooltip_fields=["MW"])
 
     assert grid is not None
     data = grid._prepare_data()
