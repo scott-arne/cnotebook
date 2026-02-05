@@ -555,3 +555,27 @@ def test_molgrid_prepare_data_cluster_nullable_string():
 
     assert data[0]["cluster"] == "Active"
     assert data[1]["cluster"] == "Uncategorized"
+
+
+def test_pandas_molgrid_cluster_parameter():
+    """Test pandas molgrid accessor passes cluster parameter."""
+    import pandas as pd
+    from openeye import oechem
+    import oepandas as oepd
+    import cnotebook.pandas_ext  # Registers the accessor
+
+    mols = []
+    for smiles in ["CCO", "CC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", "Inactive"]
+    })
+    df["mol"] = df["mol"].astype(oepd.MoleculeDtype())
+
+    # Should not raise - cluster parameter should be passed through
+    grid = df.chem.molgrid("mol", cluster="cluster_id")
+    assert grid.cluster == "cluster_id"
