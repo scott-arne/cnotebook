@@ -1289,3 +1289,22 @@ def test_molgrid_html_cluster_data_attribute():
     html = grid.to_html()
 
     assert 'data-cluster="Active"' in html
+
+
+def test_molgrid_html_contains_cluster_css():
+    """Test HTML contains cluster-related CSS when cluster is enabled."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    # CSS should always be included (it's in the static _CSS)
+    assert ".molgrid-cluster-row" in html
+    assert ".molgrid-cluster-dropdown" in html
+    assert ".molgrid-cluster-pill" in html

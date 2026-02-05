@@ -601,6 +601,167 @@ body {
     margin: 4px 0;
     background: #e9ecef;
 }
+
+/* Cluster Filter Row */
+.molgrid-cluster-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 6px 6px 0 0;
+    border: 1px solid #e9ecef;
+    border-bottom: none;
+}
+
+.molgrid-cluster-row + .molgrid-toolbar {
+    border-radius: 0 0 6px 6px;
+    border-top: 1px solid #e9ecef;
+}
+
+/* Cluster Dropdown Button */
+.molgrid-cluster-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    background: white;
+    color: #495057;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    white-space: nowrap;
+}
+
+.molgrid-cluster-btn:hover {
+    background: #e9ecef;
+    border-color: #adb5bd;
+}
+
+.molgrid-cluster-btn svg {
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+}
+
+/* Cluster Dropdown Menu */
+.molgrid-cluster-dropdown {
+    display: none;
+    position: fixed;
+    min-width: 200px;
+    max-width: 300px;
+    max-height: 300px;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.molgrid-cluster-dropdown.show {
+    display: flex;
+    flex-direction: column;
+}
+
+.molgrid-cluster-search {
+    padding: 8px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.molgrid-cluster-search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 13px;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.molgrid-cluster-search input:focus {
+    border-color: #80bdff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.molgrid-cluster-list {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 240px;
+}
+
+.molgrid-cluster-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.molgrid-cluster-item:hover {
+    background: #f8f9fa;
+}
+
+.molgrid-cluster-item.selected {
+    background: #e7f1ff;
+}
+
+.molgrid-cluster-label {
+    font-size: 14px;
+    color: #212529;
+}
+
+.molgrid-cluster-count {
+    font-size: 12px;
+    color: #6c757d;
+    margin-left: 8px;
+}
+
+/* Cluster Pills */
+.molgrid-cluster-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.molgrid-cluster-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #e7f1ff;
+    border: 1px solid #b6d4fe;
+    border-radius: 16px;
+    font-size: 13px;
+    color: #0a58ca;
+}
+
+.molgrid-cluster-pill-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: none;
+    background: transparent;
+    color: #0a58ca;
+    cursor: pointer;
+    border-radius: 50%;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+}
+
+.molgrid-cluster-pill-remove:hover {
+    background: #0a58ca;
+    color: white;
+}
 '''
 
 
