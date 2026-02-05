@@ -1113,3 +1113,96 @@ def test_molgrid_cluster_invalid_type():
 
     with pytest.raises(TypeError, match="must be a string"):
         MolGrid([mol], cluster=123)
+
+
+# ============================================================================
+# Cluster Data Preparation Tests
+# ============================================================================
+
+def test_molgrid_prepare_data_includes_cluster():
+    """Test _prepare_data includes cluster value for each item."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC", "CCC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", "Inactive", "Active"]
+    })
+
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
+    data = grid._prepare_data()
+
+    assert data[0]["cluster"] == "Active"
+    assert data[1]["cluster"] == "Inactive"
+    assert data[2]["cluster"] == "Active"
+
+
+def test_molgrid_prepare_data_cluster_with_dict():
+    """Test _prepare_data uses dict mapping for cluster labels."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_num": [0, 1]
+    })
+
+    cluster_map = {0: "Active", 1: "Inactive"}
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster=cluster_map)
+    data = grid._prepare_data()
+
+    # With dict, cluster should be the index (0, 1) since we need to map it
+    assert "cluster" in data[0]
+
+
+def test_molgrid_prepare_data_cluster_none_value():
+    """Test _prepare_data handles None/NaN cluster values."""
+    import pandas as pd
+    import numpy as np
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", np.nan]
+    })
+
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
+    data = grid._prepare_data()
+
+    assert data[0]["cluster"] == "Active"
+    assert data[1]["cluster"] == "Uncategorized"
+
+
+def test_molgrid_no_cluster_field_when_disabled():
+    """Test _prepare_data does not include cluster when cluster=None."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    data = grid._prepare_data()
+
+    assert "cluster" not in data[0]

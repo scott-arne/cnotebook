@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Union
 
 import anywidget
+import pandas as pd
 import traitlets
 from openeye import oechem
 
@@ -916,6 +917,19 @@ class MolGrid:
             if self.information_fields:
                 for field in self.information_fields:
                     item["info_fields"][field] = self._get_field_value(idx, mol, field)
+
+            # Extract cluster value
+            if self.cluster is not None:
+                if isinstance(self.cluster, str):
+                    # Column name - get value from DataFrame
+                    raw_value = self._dataframe.iloc[idx][self.cluster]
+                    if pd.isna(raw_value):
+                        item["cluster"] = "Uncategorized"
+                    else:
+                        item["cluster"] = str(raw_value)
+                else:
+                    # Dict mapping - use index to look up label
+                    item["cluster"] = str(idx)  # Will be mapped in JS
 
             data.append(item)
 

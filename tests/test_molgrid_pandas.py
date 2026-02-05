@@ -531,3 +531,27 @@ def test_dataframe_molgrid_info_fields_extracted():
     assert "info_fields" in data[0]
     assert data[0]["info_fields"]["Name"] == "Ethanol"
     assert data[0]["info_fields"]["MW"] == 46.07
+
+
+def test_molgrid_prepare_data_cluster_nullable_string():
+    """Test _prepare_data handles pd.NA in nullable string columns."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": pd.array(["Active", pd.NA], dtype="string")
+    })
+
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
+    data = grid._prepare_data()
+
+    assert data[0]["cluster"] == "Active"
+    assert data[1]["cluster"] == "Uncategorized"
