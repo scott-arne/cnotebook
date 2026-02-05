@@ -1308,3 +1308,60 @@ def test_molgrid_html_contains_cluster_css():
     assert ".molgrid-cluster-row" in html
     assert ".molgrid-cluster-dropdown" in html
     assert ".molgrid-cluster-pill" in html
+
+
+def test_molgrid_html_contains_cluster_row():
+    """Test HTML contains cluster row when cluster is enabled."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    assert 'class="molgrid-cluster-row"' in html
+    assert 'class="molgrid-cluster-btn"' in html
+    assert 'class="molgrid-cluster-dropdown"' in html
+    assert 'class="molgrid-cluster-pills"' in html
+
+
+def test_molgrid_html_no_cluster_row_when_disabled():
+    """Test HTML does not contain cluster row when cluster=None."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    html = grid.to_html()
+
+    assert 'class="molgrid-cluster-row"' not in html
+
+
+def test_molgrid_html_cluster_dropdown_contains_items():
+    """Test cluster dropdown contains cluster items."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", "Inactive"]
+    })
+
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    assert 'class="molgrid-cluster-item"' in html
+    assert 'data-cluster="Active"' in html or "Active" in html

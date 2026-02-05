@@ -1231,6 +1231,42 @@ class MolGrid:
             </li>
             '''
 
+        # Build cluster row HTML if enabled
+        cluster_row_html = ""
+        if cluster_enabled:
+            # Get unique cluster labels sorted
+            cluster_labels = sorted(cluster_map.keys())
+
+            # Build cluster items for dropdown
+            cluster_items_html = ""
+            for label in cluster_labels:
+                count_html = ""
+                if self.cluster_counts:
+                    count = len(cluster_map[label])
+                    count_html = f'<span class="molgrid-cluster-count">({count})</span>'
+                cluster_items_html += f'''
+                <div class="molgrid-cluster-item" data-cluster="{escape(str(label))}">
+                    <span class="molgrid-cluster-label">{escape(str(label))}</span>
+                    {count_html}
+                </div>'''
+
+            cluster_row_html = f'''
+        <div class="molgrid-cluster-row">
+            <button class="molgrid-cluster-btn" type="button">
+                Cluster
+                <svg viewBox="0 0 12 12"><path d="M2 4l4 4 4-4z"/></svg>
+            </button>
+            <div class="molgrid-cluster-dropdown">
+                <div class="molgrid-cluster-search">
+                    <input type="text" placeholder="Search clusters..." class="molgrid-cluster-search-input">
+                </div>
+                <div class="molgrid-cluster-list">
+                    {cluster_items_html}
+                </div>
+            </div>
+            <div class="molgrid-cluster-pills"></div>
+        </div>'''
+
         # Prepare search fields for JavaScript
         search_fields_js = json.dumps(self.search_fields or [])
 
@@ -1779,6 +1815,7 @@ class MolGrid:
 </head>
 <body>
     <div id="{grid_id}" class="molgrid-container">
+        {cluster_row_html}
         <div class="molgrid-toolbar">
             <div class="molgrid-search">
                 <input type="text" class="molgrid-search-input" placeholder="Search...">
