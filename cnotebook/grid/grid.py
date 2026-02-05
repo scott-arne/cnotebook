@@ -1794,6 +1794,154 @@ class MolGrid:
                 break;
         }}
     }});
+
+    // ========================================
+    // Cluster Filtering
+    // ========================================
+
+    if (clusterEnabled) {{
+        var selectedClusters = new Set();
+        var clusterBtn = container.querySelector('.molgrid-cluster-btn');
+        var clusterDropdown = container.querySelector('.molgrid-cluster-dropdown');
+        var clusterSearchInput = container.querySelector('.molgrid-cluster-search-input');
+        var clusterList = container.querySelector('.molgrid-cluster-list');
+        var clusterPillsContainer = container.querySelector('.molgrid-cluster-pills');
+
+        // Position cluster dropdown
+        function positionClusterDropdown() {{
+            var rect = clusterBtn.getBoundingClientRect();
+            var dropdownHeight = clusterDropdown.offsetHeight || 300;
+            var viewportHeight = window.innerHeight;
+
+            var spaceBelow = viewportHeight - rect.bottom;
+            if (spaceBelow >= dropdownHeight || spaceBelow >= rect.top) {{
+                clusterDropdown.style.top = rect.bottom + 4 + 'px';
+                clusterDropdown.style.bottom = 'auto';
+            }} else {{
+                clusterDropdown.style.bottom = (viewportHeight - rect.top + 4) + 'px';
+                clusterDropdown.style.top = 'auto';
+            }}
+            clusterDropdown.style.left = rect.left + 'px';
+        }}
+
+        // Toggle cluster dropdown
+        clusterBtn.addEventListener('click', function(e) {{
+            e.stopPropagation();
+            var isShowing = clusterDropdown.classList.contains('show');
+            if (!isShowing) {{
+                positionClusterDropdown();
+            }}
+            clusterDropdown.classList.toggle('show');
+            if (!isShowing) {{
+                clusterSearchInput.focus();
+            }}
+        }});
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {{
+            if (!clusterDropdown.contains(e.target) && e.target !== clusterBtn) {{
+                clusterDropdown.classList.remove('show');
+            }}
+        }});
+
+        // Reposition on scroll
+        window.addEventListener('scroll', function() {{
+            if (clusterDropdown.classList.contains('show')) {{
+                positionClusterDropdown();
+            }}
+        }});
+
+        // Filter cluster list by search
+        clusterSearchInput.addEventListener('input', function(e) {{
+            var query = e.target.value.toLowerCase();
+            var items = clusterList.querySelectorAll('.molgrid-cluster-item');
+            items.forEach(function(item) {{
+                var label = item.querySelector('.molgrid-cluster-label').textContent.toLowerCase();
+                item.style.display = label.indexOf(query) !== -1 ? '' : 'none';
+            }});
+        }});
+
+        // Apply cluster filter to grid
+        function applyClusterFilterToGrid() {{
+            if (selectedClusters.size === 0) {{
+                // No clusters selected - show all
+                molgridList.filter();
+            }} else {{
+                // Filter to selected clusters
+                molgridList.filter(function(item) {{
+                    var cell = item.elm;
+                    var clusterValue = cell.getAttribute('data-cluster');
+                    return selectedClusters.has(clusterValue);
+                }});
+            }}
+            molgridList.i = 1;  // Reset to first page
+            updateShowingInfo();
+        }}
+
+        // Create a pill element
+        function createPill(label) {{
+            var pill = document.createElement('span');
+            pill.className = 'molgrid-cluster-pill';
+            pill.setAttribute('data-cluster', label);
+            var labelSpan = document.createElement('span');
+            labelSpan.textContent = label;
+            var removeBtn = document.createElement('button');
+            removeBtn.className = 'molgrid-cluster-pill-remove';
+            removeBtn.type = 'button';
+            removeBtn.innerHTML = '&times;';
+            pill.appendChild(labelSpan);
+            pill.appendChild(removeBtn);
+
+            removeBtn.addEventListener('click', function(e) {{
+                e.stopPropagation();
+                removeCluster(label);
+            }});
+
+            return pill;
+        }}
+
+        // Add a cluster to selection
+        function addCluster(label) {{
+            if (!selectedClusters.has(label)) {{
+                selectedClusters.add(label);
+                clusterPillsContainer.appendChild(createPill(label));
+
+                // Update item styling
+                var item = clusterList.querySelector('.molgrid-cluster-item[data-cluster="' + CSS.escape(label) + '"]');
+                if (item) item.classList.add('selected');
+
+                applyClusterFilterToGrid();
+            }}
+        }}
+
+        // Remove a cluster from selection
+        function removeCluster(label) {{
+            selectedClusters.delete(label);
+
+            // Remove pill
+            var pill = clusterPillsContainer.querySelector('.molgrid-cluster-pill[data-cluster="' + CSS.escape(label) + '"]');
+            if (pill) pill.remove();
+
+            // Update item styling
+            var item = clusterList.querySelector('.molgrid-cluster-item[data-cluster="' + CSS.escape(label) + '"]');
+            if (item) item.classList.remove('selected');
+
+            applyClusterFilterToGrid();
+        }}
+
+        // Handle cluster item click
+        clusterList.addEventListener('click', function(e) {{
+            var item = e.target.closest('.molgrid-cluster-item');
+            if (!item) return;
+
+            var label = item.getAttribute('data-cluster');
+            if (selectedClusters.has(label)) {{
+                removeCluster(label);
+            }} else {{
+                addCluster(label);
+            }}
+        }});
+    }}
 }})();
 '''
 

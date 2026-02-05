@@ -1365,3 +1365,22 @@ def test_molgrid_html_cluster_dropdown_contains_items():
 
     assert 'class="molgrid-cluster-item"' in html
     assert 'data-cluster="Active"' in html or "Active" in html
+
+
+def test_molgrid_html_contains_cluster_javascript():
+    """Test HTML contains cluster filtering JavaScript."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    # Should have cluster filter function
+    assert "applyClusterFilter" in html or "selectedClusters" in html
+    # Should have pill creation function
+    assert "createPill" in html or "molgrid-cluster-pill" in html
