@@ -1206,3 +1206,86 @@ def test_molgrid_no_cluster_field_when_disabled():
     data = grid._prepare_data()
 
     assert "cluster" not in data[0]
+
+
+# ============================================================================
+# Cluster HTML Output Tests
+# ============================================================================
+
+def test_molgrid_html_contains_cluster_data():
+    """Test HTML contains cluster metadata when cluster is enabled."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC", "CCC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", "Inactive", "Active"]
+    })
+
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    assert "clusterData" in html
+    assert "Active" in html
+    assert "Inactive" in html
+
+
+def test_molgrid_html_cluster_counts():
+    """Test HTML contains cluster counts when cluster_counts=True."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC", "CCC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", "Inactive", "Active"]
+    })
+
+    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id", cluster_counts=True)
+    html = grid.to_html()
+
+    # Should have counts embedded
+    assert "clusterCounts" in html
+
+
+def test_molgrid_html_no_cluster_data_when_disabled():
+    """Test HTML does not contain cluster data when cluster=None."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    html = grid.to_html()
+
+    assert "clusterData" not in html
+
+
+def test_molgrid_html_cluster_data_attribute():
+    """Test grid items have data-cluster attribute."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    assert 'data-cluster="Active"' in html

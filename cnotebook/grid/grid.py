@@ -987,6 +987,26 @@ class MolGrid:
             export_columns.extend([c for c in self._dataframe.columns if c != self._mol_col])
         export_columns_js = json.dumps(export_columns)
 
+        # Prepare cluster data for JavaScript
+        cluster_data_js = "null"
+        cluster_counts_js = "null"
+        cluster_enabled = self.cluster is not None
+
+        if cluster_enabled:
+            # Build cluster metadata: {label: [indices], ...}
+            cluster_map = {}
+            for item in items:
+                label = item.get("cluster", "Uncategorized")
+                if label not in cluster_map:
+                    cluster_map[label] = []
+                cluster_map[label].append(item["index"])
+
+            cluster_data_js = json.dumps(cluster_map)
+
+            if self.cluster_counts:
+                cluster_counts = {label: len(indices) for label, indices in cluster_map.items()}
+                cluster_counts_js = json.dumps(cluster_counts)
+
         # Build item HTML - IMPORTANT: data-smiles on cell element for working selection
         items_html = ""
         for item in items:
@@ -1024,6 +1044,11 @@ class MolGrid:
 
             tooltip_attr = f'title="{tooltip_str}"' if tooltip_str else ""
 
+            # Build data-cluster attribute if enabled
+            cluster_attr = ""
+            if cluster_enabled and "cluster" in item:
+                cluster_attr = f'data-cluster="{escape(str(item["cluster"]))}"'
+
             # Build hidden spans for search fields
             search_fields_html = ""
             for field, value in item["search_fields"].items():
@@ -1033,7 +1058,7 @@ class MolGrid:
             # Keep data-smiles on cell element (critical for selection to work)
             # Add hidden spans for List.js valueNames (index, smiles, title, search fields)
             items_html += f'''
-            <li class="molgrid-cell" data-index="{item["index"]}" data-smiles="{escape(item["smiles"])}" {tooltip_attr}>
+            <li class="molgrid-cell" data-index="{item["index"]}" data-smiles="{escape(item["smiles"])}" {cluster_attr} {tooltip_attr}>
                 {checkbox_html}
                 {info_html}
                 <div class="molgrid-image">{item["img"]}</div>
@@ -1049,13 +1074,20 @@ class MolGrid:
         search_fields_js = json.dumps(self.search_fields or [])
 
         # JavaScript for selection sync with List.js pagination
+        # Only include cluster variables if clustering is enabled
+        cluster_vars_js = ""
+        if cluster_enabled:
+            cluster_vars_js = f"""
+    var clusterData = {cluster_data_js};
+    var clusterCounts = {cluster_counts_js};
+    var clusterEnabled = true;"""
         js = f'''
 (function() {{
     var gridId = "{grid_id}";
     var itemsPerPage = {items_per_page};
     var searchFields = {search_fields_js};
     var exportData = {export_data_js};
-    var exportColumns = {export_columns_js};
+    var exportColumns = {export_columns_js};{cluster_vars_js}
     var container = document.getElementById(gridId);
     var selectedIndices = new Set();
     var searchMode = 'properties';  // 'properties' or 'smarts'
