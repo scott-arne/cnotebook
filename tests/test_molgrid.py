@@ -1384,3 +1384,129 @@ def test_molgrid_html_contains_cluster_javascript():
     assert "applyClusterFilter" in html or "selectedClusters" in html
     # Should have pill creation function
     assert "createPill" in html or "molgrid-cluster-pill" in html
+
+
+# ============================================================================
+# Cluster Integration Tests
+# ============================================================================
+
+def test_molgrid_cluster_full_workflow():
+    """Integration test for cluster filtering workflow."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    # Create test molecules with clusters
+    mols = []
+    smiles_list = ["CCO", "CC", "CCC", "CCCC", "c1ccccc1"]
+    for smiles in smiles_list:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster": ["Active", "Inactive", "Active", "Inactive", "Active"],
+        "property": ["A", "B", "C", "D", "E"]
+    })
+
+    # Create grid with cluster filtering
+    grid = MolGrid(
+        mols,
+        dataframe=df,
+        mol_col="mol",
+        cluster="cluster",
+        cluster_counts=True,
+        search_fields=["property"]
+    )
+
+    # Verify parameters stored
+    assert grid.cluster == "cluster"
+    assert grid.cluster_counts is True
+
+    # Verify HTML generation
+    html = grid.to_html()
+
+    # Check cluster row present
+    assert 'class="molgrid-cluster-row"' in html
+    assert 'class="molgrid-cluster-btn"' in html
+
+    # Check cluster data embedded
+    assert "clusterData" in html
+    assert "Active" in html
+    assert "Inactive" in html
+
+    # Check cluster counts in dropdown
+    assert "(3)" in html  # Active has 3 molecules
+    assert "(2)" in html  # Inactive has 2 molecules
+
+    # Check data-cluster attributes on items
+    assert 'data-cluster="Active"' in html
+    assert 'data-cluster="Inactive"' in html
+
+    # Check JavaScript functions present
+    assert "applyClusterFilter" in html or "selectedClusters" in html
+
+
+def test_molgrid_cluster_dict_mapping():
+    """Test cluster with dict value mapping."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC", "CCC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_num": [0, 1, 0]
+    })
+
+    cluster_map = {0: "Active", 1: "Inactive"}
+    grid = MolGrid(
+        mols,
+        dataframe=df,
+        mol_col="mol",
+        cluster=cluster_map
+    )
+
+    assert grid.cluster == cluster_map
+    html = grid.to_html()
+    assert "molgrid-cluster" in html
+
+
+def test_molgrid_cluster_without_counts():
+    """Test cluster with counts disabled."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mols = []
+    for smiles in ["CCO", "CC"]:
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        mols.append(mol)
+
+    df = pd.DataFrame({
+        "mol": mols,
+        "cluster_id": ["Active", "Inactive"]
+    })
+
+    grid = MolGrid(
+        mols,
+        dataframe=df,
+        mol_col="mol",
+        cluster="cluster_id",
+        cluster_counts=False
+    )
+
+    html = grid.to_html()
+
+    # Should have cluster UI
+    assert 'class="molgrid-cluster-row"' in html
+
+    # Should not have count spans in dropdown items
+    assert 'class="molgrid-cluster-count"' not in html
