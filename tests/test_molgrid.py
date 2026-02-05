@@ -1022,3 +1022,94 @@ def test_molgrid_info_tooltip_displays_data_fields(mol_with_sd_data):
     assert "46.07" in html
     assert "Formula:" in html
     assert "C2H6O" in html
+
+
+# ============================================================================
+# Cluster Parameter Tests
+# ============================================================================
+
+def test_molgrid_cluster_parameter_string():
+    """Test cluster parameter accepts a column name string."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
+
+    assert grid.cluster == "cluster_id"
+    assert grid.cluster_counts is True  # Default
+
+
+def test_molgrid_cluster_parameter_dict():
+    """Test cluster parameter accepts a dict mapping."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    cluster_map = {0: "Active", 1: "Inactive"}
+    grid = MolGrid([mol], cluster=cluster_map)
+
+    assert grid.cluster == cluster_map
+
+
+def test_molgrid_cluster_counts_parameter():
+    """Test cluster_counts parameter can be set to False."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id", cluster_counts=False)
+
+    assert grid.cluster_counts is False
+
+
+def test_molgrid_cluster_string_requires_dataframe():
+    """Test cluster string parameter requires a DataFrame."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+    import pytest
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    with pytest.raises(ValueError, match="requires a DataFrame"):
+        MolGrid([mol], cluster="cluster_id")
+
+
+def test_molgrid_cluster_string_validates_column():
+    """Test cluster string parameter validates column exists."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+    import pytest
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "other_col": ["value"]})
+
+    with pytest.raises(ValueError, match="not found"):
+        MolGrid([mol], dataframe=df, mol_col="mol", cluster="nonexistent")
+
+
+def test_molgrid_cluster_invalid_type():
+    """Test cluster parameter rejects invalid types."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+    import pytest
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    with pytest.raises(TypeError, match="must be a string"):
+        MolGrid([mol], cluster=123)

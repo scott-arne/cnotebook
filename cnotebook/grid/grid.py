@@ -627,6 +627,8 @@ class MolGrid:
         data: Optional[Union[str, List[str]]] = None,
         search_fields: Optional[List[str]] = None,
         name: Optional[str] = None,
+        cluster: Optional[Union[str, Dict]] = None,
+        cluster_counts: bool = True,
     ):
         """Create an interactive molecule grid widget.
 
@@ -647,6 +649,10 @@ class MolGrid:
             simple types (string, int, float) from DataFrame.
         :param search_fields: Fields for text search.
         :param name: Grid identifier.
+        :param cluster: Cluster filtering mode. A string specifies a DataFrame column
+            name containing cluster labels. A dict maps values to display labels.
+            None disables cluster filtering.
+        :param cluster_counts: Show molecule count next to cluster labels in dropdown.
         """
         self._molecules = list(mols)
         self._dataframe = dataframe
@@ -657,6 +663,18 @@ class MolGrid:
         self.selection_enabled = select
         self.information_enabled = information
         self.name = name
+
+        # Cluster filtering
+        if cluster is not None:
+            if isinstance(cluster, str):
+                if dataframe is None:
+                    raise ValueError("cluster parameter requires a DataFrame when using a column name")
+                if cluster not in dataframe.columns:
+                    raise ValueError(f"Column '{cluster}' not found in DataFrame")
+            elif not isinstance(cluster, dict):
+                raise TypeError("cluster must be a string (column name) or dict")
+        self.cluster = cluster
+        self.cluster_counts = cluster_counts
 
         # Handle data parameter for info tooltip columns
         if data is not None:
