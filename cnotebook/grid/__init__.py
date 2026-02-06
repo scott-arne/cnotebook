@@ -1,7 +1,7 @@
 """Interactive molecule grid for Jupyter and Marimo notebooks."""
 
 from cnotebook.grid.grid import MolGrid
-from typing import Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Union
 
 
 def molgrid(
@@ -18,6 +18,8 @@ def molgrid(
     data: Optional[Union[str, List[str]]] = None,
     search_fields: Optional[List[str]] = None,
     name: Optional[str] = None,
+    cluster: Optional[Union[str, Dict]] = None,
+    cluster_counts: bool = True,
 ) -> MolGrid:
     """Create an interactive molecule grid.
 
@@ -35,6 +37,11 @@ def molgrid(
         simple types (string, int, float) from DataFrame.
     :param search_fields: Fields for text search.
     :param name: Grid identifier.
+    :param cluster: Cluster filtering mode. A string specifies a DataFrame
+        column name containing cluster labels. A dict maps values to display
+        labels. None disables cluster filtering.
+    :param cluster_counts: Show molecule count next to each cluster label
+        in the dropdown.
     :returns: MolGrid instance.
     """
     return MolGrid(
@@ -50,6 +57,8 @@ def molgrid(
         data=data,
         search_fields=search_fields,
         name=name,
+        cluster=cluster,
+        cluster_counts=cluster_counts,
     )
 
 

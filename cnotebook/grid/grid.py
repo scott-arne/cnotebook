@@ -89,8 +89,13 @@ class MolGridWidget(anywidget.AnyWidget):
 
         // Listen for height updates from iframe
         window.addEventListener("message", (event) => {
-            if (event.data && event.data.gridId === gridId && event.data.type === "MOLGRID_HEIGHT") {
-                const iframe = document.querySelector("#molgrid-iframe-" + gridId);
+            const isHeightMsg = event.data &&
+                event.data.gridId === gridId &&
+                event.data.type === "MOLGRID_HEIGHT";
+            if (isHeightMsg) {
+                const iframe = document.querySelector(
+                    "#molgrid-iframe-" + gridId
+                );
                 if (iframe) {
                     iframe.style.height = event.data.height + "px";
                 }
@@ -118,7 +123,8 @@ body {
 
 /* MolGrid Container */
 .molgrid-container {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
     font-size: 14px;
     color: #333;
     max-width: 100%;
@@ -281,7 +287,9 @@ body {
 /* Grid List */
 .molgrid-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--molgrid-cell-width, 220px), 1fr));
+    grid-template-columns: repeat(
+        auto-fill, minmax(var(--molgrid-cell-width, 220px), 1fr)
+    );
     gap: 12px;
     list-style: none;
     padding: 0;
@@ -1192,16 +1200,34 @@ class MolGrid:
             info_html = ""
             if self.information_enabled:
                 # Build tooltip content: Index always, Title if available, then data fields
-                info_rows = f'<div class="molgrid-info-tooltip-row"><span class="molgrid-info-tooltip-label">Index:</span><span class="molgrid-info-tooltip-value">{item["index"]}</span></div>'
+                info_rows = (
+                    '<div class="molgrid-info-tooltip-row">'
+                    '<span class="molgrid-info-tooltip-label">Index:</span>'
+                    f'<span class="molgrid-info-tooltip-value">{item["index"]}</span>'
+                    '</div>'
+                )
                 if item.get("mol_title"):
-                    info_rows += f'<div class="molgrid-info-tooltip-row"><span class="molgrid-info-tooltip-label">Title:</span><span class="molgrid-info-tooltip-value">{escape(str(item["mol_title"]))}</span></div>'
+                    mol_title_escaped = escape(str(item["mol_title"]))
+                    info_rows += (
+                        '<div class="molgrid-info-tooltip-row">'
+                        '<span class="molgrid-info-tooltip-label">Title:</span>'
+                        f'<span class="molgrid-info-tooltip-value">{mol_title_escaped}</span>'
+                        '</div>'
+                    )
                 # Add data fields from info_fields
                 for field, value in item.get("info_fields", {}).items():
                     if value is not None:
                         display_value = escape(str(value))
-                        info_rows += f'<div class="molgrid-info-tooltip-row"><span class="molgrid-info-tooltip-label">{escape(field)}:</span><span class="molgrid-info-tooltip-value">{display_value}</span></div>'
-                info_html = f'''<button class="molgrid-info-btn" type="button">i</button>
-                <div class="molgrid-info-tooltip">{info_rows}</div>'''
+                        info_rows += (
+                            '<div class="molgrid-info-tooltip-row">'
+                            f'<span class="molgrid-info-tooltip-label">{escape(field)}:</span>'
+                            f'<span class="molgrid-info-tooltip-value">{display_value}</span>'
+                            '</div>'
+                        )
+                info_html = (
+                    '<button class="molgrid-info-btn" type="button">i</button>\n'
+                    f'                <div class="molgrid-info-tooltip">{info_rows}</div>'
+                )
 
             tooltip_attr = f'title="{tooltip_str}"' if tooltip_str else ""
 
@@ -1213,20 +1239,28 @@ class MolGrid:
             # Build hidden spans for search fields
             search_fields_html = ""
             for field, value in item["search_fields"].items():
-                safe_value = escape(str(value)) if value else ""
-                search_fields_html += f'<span class="{escape(field)}" style="display:none;">{safe_value}</span>\n                '
+                safe_value = escape(str(value)) if value is not None else ""
+                search_fields_html += (
+                    f'<span class="{escape(field)}" style="display:none;">'
+                    f'{safe_value}</span>\n                '
+                )
 
             # Keep data-smiles on cell element (critical for selection to work)
             # Add hidden spans for List.js valueNames (index, smiles, title, search fields)
+            smiles_escaped = escape(item["smiles"])
             items_html += f'''
-            <li class="molgrid-cell" data-index="{item["index"]}" data-smiles="{escape(item["smiles"])}" {cluster_attr} {tooltip_attr}>
+            <li class="molgrid-cell"
+                data-index="{item["index"]}"
+                data-smiles="{smiles_escaped}"
+                {cluster_attr}
+                {tooltip_attr}>
                 {checkbox_html}
                 {info_html}
                 <div class="molgrid-image">{item["img"]}</div>
                 {title_display_html}
                 <span class="title" style="display:none;">{title_value}</span>
                 <span class="index" style="display:none;">{item["index"]}</span>
-                <span class="smiles" style="display:none;">{escape(item["smiles"])}</span>
+                <span class="smiles" style="display:none;">{smiles_escaped}</span>
                 {search_fields_html}
             </li>
             '''
@@ -1258,7 +1292,9 @@ class MolGrid:
             </button>
             <div class="molgrid-cluster-dropdown">
                 <div class="molgrid-cluster-search">
-                    <input type="text" placeholder="Search clusters..." class="molgrid-cluster-search-input">
+                    <input type="text"
+                           placeholder="Search clusters..."
+                           class="molgrid-cluster-search-input">
                 </div>
                 <div class="molgrid-cluster-list">
                     {cluster_items_html}
@@ -1410,7 +1446,10 @@ class MolGrid:
 
     // Listen for SMARTS results from Python
     window.addEventListener("message", function(event) {{
-        if (event.data && event.data.gridId === gridId && event.data.type === "MOLGRID_SMARTS_RESULTS") {{
+        var isSmartsResult = event.data &&
+            event.data.gridId === gridId &&
+            event.data.type === "MOLGRID_SMARTS_RESULTS";
+        if (isSmartsResult) {{
             var matches = JSON.parse(event.data.matches);
             applySmartsFilter(matches);
         }}
@@ -1856,8 +1895,10 @@ class MolGrid:
             var query = e.target.value.toLowerCase();
             var items = clusterList.querySelectorAll('.molgrid-cluster-item');
             items.forEach(function(item) {{
-                var label = item.querySelector('.molgrid-cluster-label').textContent.toLowerCase();
-                item.style.display = label.indexOf(query) !== -1 ? '' : 'none';
+                var labelEl = item.querySelector('.molgrid-cluster-label');
+                var label = labelEl.textContent.toLowerCase();
+                var isMatch = label.indexOf(query) !== -1;
+                item.style.display = isMatch ? '' : 'none';
             }});
         }});
 
@@ -1907,7 +1948,10 @@ class MolGrid:
                 clusterPillsContainer.appendChild(createPill(label));
 
                 // Update item styling
-                var item = clusterList.querySelector('.molgrid-cluster-item[data-cluster="' + CSS.escape(label) + '"]');
+                var escapedLabel = CSS.escape(label);
+                var selector = '.molgrid-cluster-item[data-cluster="' +
+                    escapedLabel + '"]';
+                var item = clusterList.querySelector(selector);
                 if (item) item.classList.add('selected');
 
                 applyClusterFilterToGrid();
@@ -1919,11 +1963,16 @@ class MolGrid:
             selectedClusters.delete(label);
 
             // Remove pill
-            var pill = clusterPillsContainer.querySelector('.molgrid-cluster-pill[data-cluster="' + CSS.escape(label) + '"]');
+            var escapedLabel = CSS.escape(label);
+            var pillSelector = '.molgrid-cluster-pill[data-cluster="' +
+                escapedLabel + '"]';
+            var pill = clusterPillsContainer.querySelector(pillSelector);
             if (pill) pill.remove();
 
             // Update item styling
-            var item = clusterList.querySelector('.molgrid-cluster-item[data-cluster="' + CSS.escape(label) + '"]');
+            var itemSelector = '.molgrid-cluster-item[data-cluster="' +
+                escapedLabel + '"]';
+            var item = clusterList.querySelector(itemSelector);
             if (item) item.classList.remove('selected');
 
             applyClusterFilterToGrid();
@@ -1976,18 +2025,28 @@ class MolGrid:
                 </div>
             </div>
             <div class="molgrid-info">
-                Showing <span class="showing-start">1</span>-<span class="showing-end">{min(items_per_page, total_items)}</span> of <span class="showing-total">{total_items}</span> molecules
+                Showing <span class="showing-start">1</span>-<span
+                    class="showing-end">{min(items_per_page, total_items)}</span>
+                of <span class="showing-total">{total_items}</span> molecules
             </div>
             <div class="molgrid-actions">
-                <button class="molgrid-actions-btn" title="Actions">&#8943;</button>
+                <button class="molgrid-actions-btn" title="Actions">
+                    &#8943;
+                </button>
                 <div class="molgrid-dropdown">
-                    <button class="molgrid-dropdown-item" data-action="select-all">Select All</button>
-                    <button class="molgrid-dropdown-item" data-action="clear-selection">Clear Selection</button>
-                    <button class="molgrid-dropdown-item" data-action="invert-selection">Invert Selection</button>
+                    <button class="molgrid-dropdown-item"
+                            data-action="select-all">Select All</button>
+                    <button class="molgrid-dropdown-item"
+                            data-action="clear-selection">Clear Selection</button>
+                    <button class="molgrid-dropdown-item"
+                            data-action="invert-selection">Invert Selection</button>
                     <div class="molgrid-dropdown-divider"></div>
-                    <button class="molgrid-dropdown-item" data-action="copy-clipboard">Copy to Clipboard</button>
-                    <button class="molgrid-dropdown-item" data-action="save-smiles">Save to SMILES</button>
-                    <button class="molgrid-dropdown-item" data-action="save-csv">Save to CSV</button>
+                    <button class="molgrid-dropdown-item"
+                            data-action="copy-clipboard">Copy to Clipboard</button>
+                    <button class="molgrid-dropdown-item"
+                            data-action="save-smiles">Save to SMILES</button>
+                    <button class="molgrid-dropdown-item"
+                            data-action="save-csv">Save to CSV</button>
                 </div>
             </div>
         </div>

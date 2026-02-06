@@ -29,6 +29,10 @@ Supports both Pandas and Polars DataFrames with automatic environment detection.
 <br>
 <img src="docs/_static/simple_molgrid.png" height="300">
 
+**Cluster exploration in a molecule grid**
+<br>
+<img src="docs/_static/molgrid_cluster_view.png" height="450">
+
 ## Table of Contents
 
 - [Installation](#installation)
@@ -105,6 +109,7 @@ CNotebook registers formatters so OpenEye molecule objects display as chemical s
 
 ### MolGrid Interactive Visualization
 - Paginated grid display for browsing molecules
+- Cluster viewing by cluster labels
 - Text search across molecular properties
 - SMARTS substructure filtering
 - Selection tools with export to SMILES or CSV
@@ -268,6 +273,8 @@ The `examples/` directory contains comprehensive tutorials for learning CNoteboo
 - **[pandas_jupyter_demo.ipynb](examples/pandas_jupyter_demo.ipynb)** - Complete Pandas integration tutorial covering molecule rendering, highlighting, alignment, and fingerprint similarity
 - **[polars_jupyter_demo.ipynb](examples/polars_jupyter_demo.ipynb)** - Complete Polars integration tutorial with the same features adapted for Polars patterns
 - **[molgrid_jupyter_demo.ipynb](examples/molgrid_jupyter_demo.ipynb)** - Interactive molecule grid tutorial with search, selection, and export features
+- **[pandas_jupyter_cluster_viewing.ipynb](examples/pandas_jupyter_cluster_viewing.ipynb)** - Viewing clustering results in molecule grids using Pandas
+- 
 - **[pandas_jupyter_svgs.ipynb](examples/pandas_jupyter_svgs.ipynb)** - SVG vs PNG rendering comparison and quality considerations
 
 ### Marimo Applications

@@ -19,7 +19,7 @@ Key Features
 Native Object Support
 =====================
 
-Make ``OEMol``, ``OEGraphMol``, ``OE2DMolDisplay`` and ``OEDesignUnit``
+Make ``OEMol``, ``OEGraphMol``, ``OE2DMolDisplay`` and ``OEDesignUnit`` (soon)
 first-class citizens in your notebook with native, highly configurable rendering.
 
 .. image:: _static/molecule_with_style.png

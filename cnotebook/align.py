@@ -421,7 +421,10 @@ def create_aligner(
         elif _method == "mcss":
             method = "mcss"
         else:
-            raise ValueError(f'Unknown depiction alignment method: {method}. Valid options: "substructure"/"ss", "mcss", "fingerprint"/"fp".')
+            raise ValueError(
+                f'Unknown depiction alignment method: {method}. Valid options: '
+                '"substructure"/"ss", "mcss", "fingerprint"/"fp".'
+            )
 
     # Auto-detect method based on reference type if not specified
     if isinstance(ref, str):

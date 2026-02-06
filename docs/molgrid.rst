@@ -17,6 +17,8 @@ Key features of MolGrid:
 - **Export**: Export selected molecules to SMILES or CSV files
 - **Info Tooltips**: View molecular data with click-to-pin tooltips
 - **DataFrame Integration**: Automatic field detection from DataFrames
+- **Generic and SD Data**: Recognizes OpenEye generic data and/or SD data on molecules
+- **Cluster Viewing**: Filter and browse molecules by cluster labels
 
 Basic Usage
 -----------
@@ -346,13 +348,52 @@ You can see that only the string ``"IUPAC"`` column is searched.
     Search fields: ['IUPAC']
     Info fields: ['IUPAC', 'HBA', 'HBD']
 
+Viewing Clusters
+----------------
+
+If your DataFrame has cluster labels (or if they are attached to your molecules as SD or OpenEye generic data), then
+you can configure the molecule grid for cluster browsing by providing the ``cluster`` parameter.
+
+.. code-block:: python
+
+    import cnotebook
+    import pandas as pd
+    from openeye import oechem
+
+    # Example data
+    df = pd.DataFrame({
+        "Molecule": ['CCO', 'CC(=O)O', 'c1ccccc1', 'CC(=O)Nc1ccc(O)cc1',
+                     'CC(C)Cc1ccc(C(C)C(=O)O)cc1'],
+        "Name": ['Ethanol', 'Acetic Acid', 'Benzene', 'Acetaminophen', 'Ibuprofen'],
+        "Cluster": ['A', 'A', 'B', 'B', 'C']  # Can be any type
+    }).chem.as_molecule("Molecule")
+
+    # Create the grid specifying that "Cluster" contains cluster labels
+    grid = df.chem.molgrid("Molecule", cluster="Cluster")
+
+    # Display the grid
+    grid.display()
+
+You'll now see a dropdown at the top that allows you to search and select cluster labels to view. Selecting a cluster
+will only show members of that cluster, and selecting multiple clusters will show the union of those clusters. Search will
+only search within the clusters that you have selected. Similarly, selections from the "..." menu (e.g., "Select All")
+will only apply to the selected clusters.
+
+.. image:: _static/molgrid_search_box.png
+    :align: center
+
+Selecting cluster label "B":
+
+.. image:: _static/molgrid_cluster_B.png
+    :align: center
+
 API Reference
 -------------
 
 MolGrid Class
 ^^^^^^^^^^^^^
 
-.. py:class:: MolGrid(mols, *, dataframe=None, mol_col=None, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, atom_label_font_scale=1.5, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None)
+.. py:class:: MolGrid(mols, *, dataframe=None, mol_col=None, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, atom_label_font_scale=1.5, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None, cluster=None, cluster_counts=True)
 
    Interactive molecule grid widget.
 
@@ -371,6 +412,8 @@ MolGrid Class
    :param data: Column(s) to display in info tooltip; auto-detects if None with DataFrame
    :param search_fields: Fields for text search; auto-detects if None with DataFrame
    :param name: Grid identifier for tracking selections
+   :param cluster: Cluster filtering mode. A string specifies a DataFrame column name containing cluster labels. A dict maps values to display labels. None disables cluster filtering.
+   :param cluster_counts: Show molecule count next to each cluster label in the dropdown. Defaults to True.
 
    .. py:method:: display()
 
@@ -399,7 +442,7 @@ MolGrid Class
 molgrid Function
 ^^^^^^^^^^^^^^^^
 
-.. py:function:: molgrid(mols, *, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None)
+.. py:function:: molgrid(mols, *, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None, cluster=None, cluster_counts=True)
 
    Convenience function to create an interactive molecule grid.
 

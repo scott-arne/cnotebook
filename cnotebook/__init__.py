@@ -13,7 +13,7 @@ from openeye import oechem, oedepict
 from .context import cnotebook_context, CNotebookContext
 from .helpers import highlight_smarts
 
-__version__ = '2.1.2'
+__version__ = '2.1.3'
 
 # Configure logging first
 log = logging.getLogger("cnotebook")
@@ -191,6 +191,7 @@ def _detect_environment() -> CNotebookEnvInfo:
 
     # Detect pandas/oepandas
     try:
+        # noinspection PyUnusedImports
         import pandas as pd
         import oepandas as oepd
         pandas_version = pd.__version__
@@ -199,6 +200,7 @@ def _detect_environment() -> CNotebookEnvInfo:
 
     # Detect polars/oepolars
     try:
+        # noinspection PyUnusedImports
         import polars as pl
         import oepolars as oeplr
         polars_version = pl.__version__
