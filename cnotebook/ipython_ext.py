@@ -3,6 +3,7 @@ from openeye import oechem, oedepict
 from .render import (
     oemol_to_html,
     oedisp_to_html,
+    oedu_to_html,
     oeimage_to_html,
 )
 
@@ -41,6 +42,11 @@ if ipython_present:
                 _ = html_formatter.lookup(oedepict.OE2DMolDisplay)
             except KeyError:
                 html_formatter.for_type(oedepict.OE2DMolDisplay, oedisp_to_html)
+
+            try:
+                _ = html_formatter.lookup(oechem.OEDesignUnit)
+            except KeyError:
+                html_formatter.for_type(oechem.OEDesignUnit, oedu_to_html)
 
             try:
                 _ = html_formatter.lookup(oedepict.OEImage)

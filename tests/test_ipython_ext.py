@@ -1,59 +1,97 @@
 import pytest
-from unittest.mock import MagicMock, patch
-from openeye import oechem
+from unittest.mock import MagicMock, patch, call
+from openeye import oechem, oedepict
 from cnotebook.ipython_ext import register_ipython_formatters
+from cnotebook.render import oemol_to_html, oedisp_to_html, oedu_to_html, oeimage_to_html
+
+
+# The expected type-to-renderer mappings
+EXPECTED_REGISTRATIONS = {
+    oechem.OEMolBase: oemol_to_html,
+    oedepict.OE2DMolDisplay: oedisp_to_html,
+    oechem.OEDesignUnit: oedu_to_html,
+    oedepict.OEImage: oeimage_to_html,
+}
+
+
+def _make_mock_ipython(already_registered=None):
+    """Create a mock IPython instance with an HTML formatter.
+
+    :param already_registered: Set of types that should appear already registered
+        (i.e. ``lookup`` will succeed for them). Defaults to none.
+    :returns: Tuple of (mock ipython instance, mock html_formatter).
+    """
+    if already_registered is None:
+        already_registered = set()
+
+    mock_ipython = MagicMock()
+    mock_html_formatter = MagicMock()
+
+    def lookup_side_effect(type_):
+        if type_ in already_registered:
+            return MagicMock()  # already registered
+        raise KeyError(type_)
+
+    mock_html_formatter.lookup.side_effect = lookup_side_effect
+    mock_ipython.display_formatter.formatters.__getitem__.return_value = mock_html_formatter
+
+    return mock_ipython, mock_html_formatter
 
 
 class TestRegisterIpythonFormatters:
     """Test the register_ipython_formatters function"""
 
-    def test_register_formatters_exists(self):
-        """Test that register function exists"""
-        assert callable(register_ipython_formatters)
+    @patch('cnotebook.ipython_ext.get_ipython')
+    def test_registers_all_types(self, mock_get_ipython):
+        """Test that all expected types are registered with correct renderers"""
+        mock_ipython, mock_html_formatter = _make_mock_ipython()
+        mock_get_ipython.return_value = mock_ipython
 
-    def test_register_formatters_no_ipython(self):
-        """Test registration when IPython is not available"""
-        # Should not raise an error even if IPython is not available
         register_ipython_formatters()
 
-    def test_register_formatters_with_mock_ipython(self):
-        """Test registration with mocked IPython"""
-        # Test that the function exists and can be called without raising an error
-        # In environments where IPython is available, this will use the real IPython
-        # In environments where IPython is not available, it will handle gracefully
-        try:
-            register_ipython_formatters()
-            # If we get here, the function completed successfully
-            success = True
-        except Exception:
-            # If there's an exception, the function should handle it gracefully
-            # For this test, we just verify it doesn't crash the test suite
-            success = False
+        for type_, renderer in EXPECTED_REGISTRATIONS.items():
+            mock_html_formatter.for_type.assert_any_call(type_, renderer)
 
-        # The important thing is that the function exists and can be called
-        assert callable(register_ipython_formatters)
-        # Whether it succeeds or fails gracefully, both are acceptable outcomes
+        assert mock_html_formatter.for_type.call_count == len(EXPECTED_REGISTRATIONS)
 
+    @patch('cnotebook.ipython_ext.get_ipython')
+    def test_skips_already_registered_types(self, mock_get_ipython):
+        """Test idempotent behavior: already registered types are not re-registered"""
+        all_types = set(EXPECTED_REGISTRATIONS.keys())
+        mock_ipython, mock_html_formatter = _make_mock_ipython(already_registered=all_types)
+        mock_get_ipython.return_value = mock_ipython
 
-class TestModuleLevel:
-    """Test module-level functionality"""
-
-    def test_imports_available(self):
-        """Test that key imports are available"""
-        # Test that the main functions are importable
-        assert callable(register_ipython_formatters)
-
-
-class TestIntegration:
-    """Integration tests for IPython extension"""
-
-    def test_complete_workflow(self):
-        """Test complete workflow without OpenEye dependencies"""
-        # Test that we can call the registration function without errors
         register_ipython_formatters()
 
-    def test_function_availability(self):
-        """Test that all expected functions are available"""
-        import cnotebook.ipython_ext as ipython_ext
+        mock_html_formatter.for_type.assert_not_called()
 
-        assert hasattr(ipython_ext, 'register_ipython_formatters')
+    @patch('cnotebook.ipython_ext.get_ipython')
+    def test_partial_registration(self, mock_get_ipython):
+        """Test that only unregistered types get registered when some already exist"""
+        already = {oechem.OEMolBase, oedepict.OEImage}
+        mock_ipython, mock_html_formatter = _make_mock_ipython(already_registered=already)
+        mock_get_ipython.return_value = mock_ipython
+
+        register_ipython_formatters()
+
+        registered_types = {c.args[0] for c in mock_html_formatter.for_type.call_args_list}
+        expected_new = set(EXPECTED_REGISTRATIONS.keys()) - already
+        assert registered_types == expected_new
+
+    @patch('cnotebook.ipython_ext.get_ipython')
+    def test_no_ipython_instance(self, mock_get_ipython):
+        """Test graceful handling when get_ipython() returns None"""
+        mock_get_ipython.return_value = None
+
+        # Should not raise
+        register_ipython_formatters()
+
+    @patch('cnotebook.ipython_ext.get_ipython')
+    def test_looks_up_text_html_formatter(self, mock_get_ipython):
+        """Test that the html formatter is retrieved via 'text/html' key"""
+        mock_ipython, _ = _make_mock_ipython()
+        mock_get_ipython.return_value = mock_ipython
+
+        register_ipython_formatters()
+
+        mock_ipython.display_formatter.formatters.__getitem__.assert_called_with('text/html')

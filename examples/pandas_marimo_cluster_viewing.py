@@ -14,6 +14,19 @@ def _():
     return HDBSCAN, mo, oepd
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Table of Contents
+
+    - [Viewing Clusters](#viewing-clusters)
+      - [Step 1: Create Fingerprints](#step-1-create-fingerprints)
+      - [Step 2: Molecular Clustering](#step-2-molecular-clustering)
+    - [Step 3: Visualize](#step-3-visualize)
+    """)
+    return
+
+
 @app.cell
 def _(mo):
     mo.md(r"""

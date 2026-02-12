@@ -12,6 +12,7 @@ from .render import (
     CNotebookContext,  # noqa
     oemol_to_disp,
     oedisp_to_html,
+    oedu_to_html,
     render_invalid_molecule,
     render_empty_molecule
 )
@@ -140,6 +141,21 @@ def create_disp_formatter(
     return _oedisp_to_html
 
 
+def create_du_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEDesignUnit], str]:
+    """
+    Closure that creates a function that renders an OEDesignUnit to HTML.
+
+    :param ctx: CNotebook rendering context.
+    :returns: Function that renders design units to HTML.
+    """
+    def _oedu_to_html(du: oechem.OEDesignUnit):
+        if isinstance(du, oechem.OEDesignUnit):
+            return oedu_to_html(du, ctx=ctx)
+        return str(du)
+
+    return _oedu_to_html
+
+
 def escape_formatter(obj: typing.Any) -> str:
     return escape_brackets(str(obj))
 
@@ -232,9 +248,30 @@ def render_polars_dataframe(
     if len(display_columns) > 0:
         log.debug(f'Detected display columns: {", ".join(display_columns)}')
 
+    # Detect Design Unit columns
+    designunit_columns: set[str] = set()
+
+    for col in df.columns:
+        dtype = df.schema[col]
+        if isinstance(dtype, oeplr.DesignUnitType):
+            designunit_columns.add(col)
+
+            series = df.get_column(col)
+            metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+            series_ctx = ctx if ctx is not None else get_series_context(metadata)
+
+            if col in formatters:
+                log.warning(f'Overwriting existing formatter for {col} with a design unit formatter')
+
+            formatters[col] = create_du_formatter(ctx=series_ctx)
+            col_space[col] = float(series_ctx.width)
+
+    if len(designunit_columns) > 0:
+        log.debug(f'Detected design unit columns: {", ".join(designunit_columns)}')
+
     # All other columns get escape formatter
     for col in df.columns:
-        if col not in display_columns and col not in molecule_columns:
+        if col not in display_columns and col not in molecule_columns and col not in designunit_columns:
             if col not in formatters:
                 formatters[col] = escape_formatter
 

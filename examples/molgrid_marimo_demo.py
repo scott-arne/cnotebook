@@ -56,6 +56,28 @@ def intro(mo):
     return
 
 
+@app.cell(hide_code=True)
+def toc(mo):
+    """Table of Contents."""
+    mo.md(
+        """
+        ## Table of Contents
+
+        - [Basic Usage](#basic-usage)
+        - [Customizing the Display](#customizing-the-display)
+        - [Search and Filtering](#search-and-filtering)
+        - [Selection](#selection)
+        - [Info Button and Tooltips](#info-button-and-tooltips)
+        - [DataFrame Integration](#dataframe-integration)
+        - [Complete Example](#complete-example)
+        - [API Reference](#api-reference)
+          - [MolGrid Parameters](#molgrid-parameters)
+          - [MolGrid Methods](#molgrid-methods)
+        """
+    )
+    return
+
+
 @app.cell
 def create_molecules(oechem):
     """Create test molecules."""

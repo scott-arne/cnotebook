@@ -18,6 +18,25 @@ def _():
     return DEMO_DIRECTORY, cnotebook, mo, molgrid, oechem, oedepict, oeplr, pl
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Table of Contents
+
+    - [Basic Usage](#basic-usage)
+      - [Displaying Grids of Molecules](#displaying-grids-of-molecules)
+      - [Design Units](#design-units)
+      - [Advanced: Changing the Rendering Options](#advanced-changing-the-rendering-options)
+    - [Polars Usage](#polars-usage)
+      - [Substructure Highlighting](#substructure-highlighting)
+    - [Empty Molecules](#empty-molecules)
+    - [Design Unit DataFrames](#design-unit-dataframes)
+    - [Aligned Molecule Depictions](#aligned-molecule-depictions)
+    - [Fingerprint Similarity](#fingerprint-similarity)
+    """)
+    return
+
+
 @app.cell
 def _(mo):
     mo.md(r"""
@@ -146,6 +165,40 @@ def _(molgrid, oechem):
     grid = molgrid(example_mols)
     grid.display()
     return (example_mols, grid)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Design Units
+
+    If you display a design unit, it will render the ligand or indicate that the design unit is apo.
+    """)
+    return
+
+
+@app.cell
+def _(DEMO_DIRECTORY, oechem):
+    # Read an example design unit
+    du = oechem.OEDesignUnit()
+    oechem.OEReadDesignUnit(str(DEMO_DIRECTORY / "assets" / "spruce_9Q03_ABC__DU__A1CM7_C-502.oedu"), du)
+
+    # Display it
+    du
+    return (du,)
+
+
+@app.cell
+def _(du, oechem):
+    # Modify the design unit by deleting the ligand
+    apo_du = oechem.OEDesignUnit()
+    oechem.OESubsetDesignUnit(
+        apo_du,
+        du,
+        oechem.OEDesignUnitComponents_MacroMolComponents
+    )
+    apo_du
+    return (apo_du,)
 
 
 @app.cell(hide_code=True)
@@ -290,20 +343,19 @@ def _(mo):
     mo.md(r"""
     ## Substructure Highlighting
 
-    We can easily highlight substructures. With Polars, we need to keep a reference to the series we want to modify:
+    We can easily highlight substructures. With Polars, highlighting is applied at the DataFrame level to ensure metadata persists across column accesses:
     """)
     return
 
 
 @app.cell
 def _(df_with_count):
-    # Get the molecule series and highlight aromatic N-C-N bonds
-    mol_series = df_with_count.get_column("Molecule")
-    mol_series.chem.highlight("ncn")
+    # Highlight aromatic N-C-N bonds
+    df_with_count.chem.highlight("Molecule", "ncn")
 
-    # Display it - the highlighting is stored in the series metadata
+    # Display it
     df_with_count
-    return (mol_series,)
+    return
 
 
 @app.cell
@@ -380,6 +432,31 @@ def _(oechem):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Design Unit DataFrames
+
+    You can also use design units in DataFrames in the same way as molecules.
+    """)
+    return
+
+
+@app.cell
+def _(apo_du, du, pl):
+    # Create a DataFrame and indicate that "DesignUnit" is an OEDesignUnit column
+    du_df = pl.DataFrame({
+        "DesignUnit": [du, apo_du],
+        "Ligand": ["BCL6-760", "Apo"],
+        "PDB ID": ["9Q03", "9Q03"],
+        "Notes": ["Spruce prepared PDB", "Manually deleted ligand"]
+    }).chem.as_design_unit("DesignUnit")
+
+    # Display it
+    du_df.head()
+    return
+
+
 @app.cell
 def _(mo):
     mo.md(r"""
@@ -447,21 +524,24 @@ def _(alignment_template, egfr_df):
 @app.cell
 def _(mo):
     mo.md(r"""
-    Now lets look at the highlight route. Note that we are providing the template to the ```highlight``` function twice, once for actually highlighting the structure and once for aligning the structure. This allows you to align and highlight using different templates if you wish.
+    Now lets look at the highlight route. We first align the molecules using ```align_depictions```, then highlight the template substructure at the DataFrame level. This allows you to align and highlight using different templates if you wish.
     """)
     return
 
 
 @app.cell
 def _(alignment_template, egfr_df_aligned):
-    # Create a deep copy for highlighting
+    # Create a deep copy for highlighting and align to the template
     highlighted_series = egfr_df_aligned.get_column("Original").chem.deepcopy()
-    highlighted_series.chem.highlight(alignment_template, ref=alignment_template)
+    highlighted_series.chem.align_depictions(alignment_template)
 
-    # Add the highlighted column to the DataFrame
+    # Add the aligned column to the DataFrame
     egfr_df_full = egfr_df_aligned.with_columns(highlighted_series.alias("Highlighted"))
+
+    # Highlight the template substructure
+    egfr_df_full.chem.highlight("Highlighted", alignment_template)
     egfr_df_full.head()
-    return egfr_df_full, highlighted_series
+    return (egfr_df_full,)
 
 
 @app.cell

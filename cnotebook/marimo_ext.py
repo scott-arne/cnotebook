@@ -31,10 +31,11 @@ from .context import cnotebook_context, get_series_context
 from .render import (
     oemol_to_html,
     oedisp_to_html,
+    oedu_to_html,
     oeimage_to_html,
     oemol_to_disp,
-    render_empty_molecule,
-    render_invalid_molecule
+    oemol_to_image,
+    oedu_to_image,
 )
 from .pandas_ext import render_dataframe
 
@@ -59,6 +60,14 @@ def _display_display(self: oedepict.OE2DMolDisplay):
     return "text/html", oedisp_to_html(self, ctx=ctx)
 
 oedepict.OE2DMolDisplay._mime_ = _display_display
+
+
+def _display_du(self: oechem.OEDesignUnit):
+    ctx = cnotebook_context.get().copy()
+    # Allow user's image_format preference (SVG or PNG)
+    return "text/html", oedu_to_html(self, ctx=ctx)
+
+oechem.OEDesignUnit._mime_ = _display_du
 
 
 def _display_image(self: oedepict.OEImage):
@@ -87,24 +96,17 @@ def _create_molecule_formatter(ctx):
         if not isinstance(mol, oechem.OEMolBase):
             return str(mol)
 
-        # Handle invalid molecules
-        if not mol.IsValid():
-            return render_invalid_molecule(ctx=ctx)
-
-        # Handle empty molecules
-        if mol.NumAtoms() == 0:
-            return render_empty_molecule(ctx=ctx)
-
-        # Create display object
-        disp = oemol_to_disp(mol, ctx=ctx)
-
-        # Apply callbacks (highlighting, etc.)
-        if ctx.callbacks:
+        # Valid molecules with callbacks need the intermediate display step
+        if mol.IsValid() and mol.NumAtoms() > 0 and ctx.callbacks:
+            disp = oemol_to_disp(mol, ctx=ctx)
             for callback in ctx.callbacks:
                 callback(disp)
+            image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
+            oedepict.OERenderMolecule(image, disp)
+            return image
 
-        # Return display object
-        return disp
+        # All other cases (valid without callbacks, empty, invalid)
+        return oemol_to_image(mol, ctx=ctx)
 
     return formatter
 
@@ -134,7 +136,29 @@ def _create_display_formatter(ctx):
             for callback in ctx.callbacks:
                 callback(disp_copy)
 
-        return disp_copy
+        # Render to OEImage for consistent return type
+        image = oedepict.OEImage(disp_copy.GetWidth(), disp_copy.GetHeight())
+        oedepict.OERenderMolecule(image, disp_copy)
+        return image
+
+    return formatter
+
+
+def _create_du_formatter(ctx):
+    """
+    Create a formatter closure that renders OEDesignUnit objects.
+
+    :param ctx: CNotebookContext for rendering options.
+    :returns: Formatter function for use in mo.ui.table format_mapping.
+    """
+    def formatter(du):
+        if du is None:
+            return ""
+
+        if not isinstance(du, oechem.OEDesignUnit):
+            return str(du)
+
+        return oedu_to_image(du, ctx=ctx)
 
     return formatter
 
@@ -146,7 +170,7 @@ def _create_display_formatter(ctx):
 # to handle DataFrames containing molecule columns. The formatter:
 # - Detects MoleculeDtype and DisplayDtype columns
 # - Creates format_mapping entries that apply callbacks (highlighting, alignment, etc.)
-# - Returns OE2DMolDisplay objects which Marimo renders via their _mime_() method
+# - Returns OEImage objects which Marimo renders via their _mime_() method
 ########################################################################################################################
 
 try:
@@ -178,6 +202,16 @@ try:
                     arr = df[col].array
                     ctx = get_series_context(arr.metadata).copy()
                     format_mapping[col] = _create_display_formatter(ctx)
+
+        # Check for DesignUnitDtype (OEPandas specific)
+        if oepandas_available:
+            for col in df.columns:
+                if col not in format_mapping:
+                    dtype = df[col].dtype
+                    if isinstance(dtype, oepd.DesignUnitDtype):
+                        arr = df[col].array
+                        ctx = get_series_context(arr.metadata).copy()
+                        format_mapping[col] = _create_du_formatter(ctx)
 
         # Return a Marimo table with our custom mapping
         # noinspection PyProtectedMember,PyTypeChecker
@@ -217,6 +251,17 @@ try:
                     metadata = series.chem.metadata if hasattr(series, 'chem') else {}
                     ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_display_formatter(ctx)
+
+        # Check for DesignUnitType (OEPolars specific)
+        if oepolars_available:
+            for col in df.columns:
+                if col not in format_mapping:
+                    dtype = df.schema[col]
+                    if isinstance(dtype, oeplr.DesignUnitType):
+                        series = df.get_column(col)
+                        metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                        ctx = get_series_context(metadata).copy()
+                        format_mapping[col] = _create_du_formatter(ctx)
 
         # Return a Marimo table with our custom mapping
         # noinspection PyProtectedMember,PyTypeChecker

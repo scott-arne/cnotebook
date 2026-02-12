@@ -8,7 +8,11 @@ from cnotebook.render import (
     render_empty_molecule,
     render_invalid_molecule,
     oemol_to_disp,
+    oemol_to_image,
     oemol_to_html,
+    oedu_to_disp,
+    oedu_to_image,
+    oedu_to_html,
     oeimage_to_html
 )
 from cnotebook.context import CNotebookContext
@@ -193,60 +197,248 @@ class TestOemolToDisp:
         assert result == mock_disp
 
 
-class TestOemolToHtml:
-    """Test the oemol_to_html function"""
-    
-    @patch('cnotebook.render.oedisp_to_html')
+class TestOemolToImage:
+    """Test the oemol_to_image function"""
+
+    @patch('cnotebook.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.render.oedepict.OEImage')
     @patch('cnotebook.render.oemol_to_disp')
-    def test_oemol_to_html_valid_molecule(self, mock_to_disp, mock_disp_to_html):
-        """Test converting valid molecule to HTML"""
+    def test_valid_molecule(self, mock_to_disp, mock_oeimage, mock_render):
+        """Test converting valid molecule to OEImage"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = True
-        mock_mol.NumAtoms.return_value = 5
-        
+
         mock_disp = MagicMock()
+        mock_disp.GetWidth.return_value = 300
+        mock_disp.GetHeight.return_value = 200
         mock_to_disp.return_value = mock_disp
-        mock_disp_to_html.return_value = '<img>molecule</img>'
-        
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
         ctx = CNotebookContext()
-        
-        result = oemol_to_html(mock_mol, ctx=ctx)
-        
+
+        result = oemol_to_image(mock_mol, ctx=ctx)
+
         mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
-        mock_disp_to_html.assert_called_once_with(mock_disp, ctx=ctx)
-        assert result == '<img>molecule</img>'
-    
-    @patch('cnotebook.render.render_empty_molecule')
-    def test_oemol_to_html_empty_molecule(self, mock_render_empty):
-        """Test converting empty molecule to HTML"""
+        mock_oeimage.assert_called_once_with(300, 200)
+        mock_render.assert_called_once_with(mock_image, mock_disp)
+        assert result == mock_image
+
+    @patch('cnotebook.render.oedepict.OEImage')
+    def test_empty_molecule(self, mock_oeimage):
+        """Test converting empty molecule to OEImage with placeholder text"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = False
         mock_mol.NumAtoms.return_value = 0
-        
-        mock_render_empty.return_value = '<img>empty</img>'
-        
-        ctx = CNotebookContext()
-        
-        result = oemol_to_html(mock_mol, ctx=ctx)
-        
-        mock_render_empty.assert_called_once_with(ctx=ctx)
-        assert result == '<img>empty</img>'
-    
-    @patch('cnotebook.render.render_invalid_molecule')
-    def test_oemol_to_html_invalid_molecule(self, mock_render_invalid):
-        """Test converting invalid molecule to HTML"""
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext(min_width=200, min_height=150)
+
+        result = oemol_to_image(mock_mol, ctx=ctx)
+
+        mock_oeimage.assert_called_once_with(200, 150)
+        mock_image.DrawText.assert_called_once()
+        draw_text_args = mock_image.DrawText.call_args[0]
+        assert draw_text_args[1] == "Empty Molecule"
+        assert result == mock_image
+
+    @patch('cnotebook.render.oedepict.OEImage')
+    def test_invalid_molecule(self, mock_oeimage):
+        """Test converting invalid molecule (with atoms) to OEImage"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = False
-        mock_mol.NumAtoms.return_value = 5  # Has atoms but invalid
-        
-        mock_render_invalid.return_value = '<img>invalid</img>'
-        
+        mock_mol.NumAtoms.return_value = 5
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext(min_width=200, min_height=150)
+
+        result = oemol_to_image(mock_mol, ctx=ctx)
+
+        mock_oeimage.assert_called_once_with(200, 150)
+        mock_image.DrawText.assert_called_once()
+        draw_text_args = mock_image.DrawText.call_args[0]
+        assert draw_text_args[1] == "Invalid Molecule"
+        assert result == mock_image
+
+
+class TestOemolToHtml:
+    """Test the oemol_to_html function"""
+
+    @patch('cnotebook.render.oeimage_to_html')
+    @patch('cnotebook.render.oemol_to_image')
+    def test_oemol_to_html_delegates(self, mock_to_image, mock_image_to_html):
+        """Test that oemol_to_html delegates to oemol_to_image + oeimage_to_html"""
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+
+        mock_image = MagicMock()
+        mock_to_image.return_value = mock_image
+        mock_image_to_html.return_value = '<img>molecule</img>'
+
         ctx = CNotebookContext()
-        
+
         result = oemol_to_html(mock_mol, ctx=ctx)
-        
-        mock_render_invalid.assert_called_once_with(ctx=ctx)
-        assert result == '<img>invalid</img>'
+
+        mock_to_image.assert_called_once_with(mock_mol, ctx=ctx)
+        mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx)
+        assert result == '<img>molecule</img>'
+
+
+class TestOeduToDisp:
+    """Test the oedu_to_disp function"""
+
+    @patch('cnotebook.render.oemol_to_disp')
+    @patch('cnotebook.render.oechem.OEGraphMol')
+    def test_with_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
+        """Test DU with a ligand returns (display, ligand) tuple"""
+        mock_lig = MagicMock()
+        mock_lig.NumAtoms.return_value = 10
+        mock_graphmol_cls.return_value = mock_lig
+
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        mock_oemol_to_disp.return_value = mock_disp
+
+        ctx = MagicMock(spec=CNotebookContext)
+
+        result = oedu_to_disp(mock_du, ctx=ctx)
+
+        mock_du.GetLigand.assert_called_once_with(mock_lig)
+        mock_oemol_to_disp.assert_called_once_with(mock_lig, ctx=ctx)
+        assert result == (mock_disp, mock_lig)
+
+    @patch('cnotebook.render.oemol_to_disp')
+    @patch('cnotebook.render.oechem.OEGraphMol')
+    def test_without_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
+        """Test DU without ligand returns None"""
+        mock_lig = MagicMock()
+        mock_lig.NumAtoms.return_value = 0
+        mock_graphmol_cls.return_value = mock_lig
+
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        ctx = MagicMock(spec=CNotebookContext)
+
+        result = oedu_to_disp(mock_du, ctx=ctx)
+
+        mock_du.GetLigand.assert_called_once_with(mock_lig)
+        mock_oemol_to_disp.assert_not_called()
+        assert result is None
+
+    @patch('cnotebook.render.oemol_to_disp')
+    @patch('cnotebook.render.oechem.OEGraphMol')
+    def test_with_empty_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
+        """Test DU where GetLigand returns True but ligand has 0 atoms"""
+        mock_lig = MagicMock()
+        mock_lig.NumAtoms.return_value = 0
+        mock_graphmol_cls.return_value = mock_lig
+
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+        mock_du.GetLigand.return_value = True
+
+        ctx = MagicMock(spec=CNotebookContext)
+
+        result = oedu_to_disp(mock_du, ctx=ctx)
+
+        mock_oemol_to_disp.assert_not_called()
+        assert result is None
+
+
+class TestOeduToImage:
+    """Test the oedu_to_image function"""
+
+    @patch('cnotebook.render._draw_du_label')
+    @patch('cnotebook.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.render.oedu_to_disp')
+    def test_with_ligand(self, mock_oedu_to_disp, mock_oeimage, mock_render,
+                         mock_draw_label):
+        """Test DU with ligand renders to OEImage with label"""
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        mock_disp.GetWidth.return_value = 400.0
+        mock_disp.GetHeight.return_value = 300.0
+        mock_lig = MagicMock()
+        mock_oedu_to_disp.return_value = (mock_disp, mock_lig)
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext()
+
+        result = oedu_to_image(mock_du, ctx=ctx)
+
+        mock_oedu_to_disp.assert_called_once_with(mock_du, ctx=ctx)
+        mock_oeimage.assert_called_once_with(400.0, 300.0)
+        mock_render.assert_called_once_with(mock_image, mock_disp)
+        mock_draw_label.assert_called_once_with(mock_image)
+        assert result == mock_image
+
+    @patch('cnotebook.render._draw_du_label')
+    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.render.oedu_to_disp')
+    def test_apo_no_ligand(self, mock_oedu_to_disp, mock_oeimage, mock_draw_label):
+        """Test apo DU creates OEImage with label and Apo text"""
+        mock_oedu_to_disp.return_value = None
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext(min_width=200, min_height=150)
+
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+        result = oedu_to_image(mock_du, ctx=ctx)
+
+        mock_oeimage.assert_called_once_with(200, 150)
+        mock_draw_label.assert_called_once_with(mock_image)
+        mock_image.DrawText.assert_called_once()
+        draw_text_args = mock_image.DrawText.call_args[0]
+        assert draw_text_args[1] == "Apo DesignUnit"
+        assert result == mock_image
+
+    @patch('cnotebook.render._draw_du_label')
+    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.render.oedu_to_disp')
+    def test_apo_uses_context_dimensions(self, mock_oedu_to_disp, mock_oeimage,
+                                         mock_draw_label):
+        """Test apo image uses context min_width and min_height"""
+        mock_oedu_to_disp.return_value = None
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext(min_width=350, min_height=250)
+
+        oedu_to_image(MagicMock(spec=oechem.OEDesignUnit), ctx=ctx)
+
+        mock_oeimage.assert_called_once_with(350, 250)
+
+
+class TestOeduToHtml:
+    """Test the oedu_to_html function"""
+
+    @patch('cnotebook.render.oeimage_to_html')
+    @patch('cnotebook.render.oedu_to_image')
+    def test_oedu_to_html_delegates(self, mock_to_image, mock_image_to_html):
+        """Test that oedu_to_html delegates to oedu_to_image + oeimage_to_html"""
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        mock_image = MagicMock()
+        mock_to_image.return_value = mock_image
+        mock_image_to_html.return_value = '<img>design_unit</img>'
+
+        ctx = CNotebookContext()
+
+        result = oedu_to_html(mock_du, ctx=ctx)
+
+        mock_to_image.assert_called_once_with(mock_du, ctx=ctx)
+        mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx)
+        assert result == '<img>design_unit</img>'
 
 
 class TestOeimageToHtml:
@@ -295,5 +487,9 @@ class TestIntegrationWithContext:
         assert callable(render_empty_molecule)
         assert callable(render_invalid_molecule)
         assert callable(oemol_to_disp)
+        assert callable(oemol_to_image)
         assert callable(oemol_to_html)
+        assert callable(oedu_to_disp)
+        assert callable(oedu_to_image)
+        assert callable(oedu_to_html)
         assert callable(oeimage_to_html)

@@ -365,6 +365,41 @@ class TestDisplayDisplay:
         mock_ctx.copy.assert_called_once()
 
 
+class TestDisplayDu:
+    """Test the _display_du function for Marimo OEDesignUnit rendering"""
+
+    @patch('cnotebook.marimo_ext.oedu_to_html')
+    @patch('cnotebook.marimo_ext.cnotebook_context')
+    def test_display_du_basic(self, mock_context_var, mock_oedu_to_html):
+        """Test basic design unit rendering"""
+        mock_ctx = MagicMock()
+        mock_context_var.get.return_value = mock_ctx
+        mock_ctx.copy.return_value = mock_ctx
+        mock_oedu_to_html.return_value = '<img>design_unit</img>'
+
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        mime_type, html_content = cnotebook.marimo_ext._display_du(mock_du)
+
+        assert mime_type == "text/html"
+        assert html_content == '<img>design_unit</img>'
+        mock_ctx.copy.assert_called_once()
+        mock_oedu_to_html.assert_called_once_with(mock_du, ctx=mock_ctx)
+
+    def test_oedesignunit_has_mime_method(self):
+        """Test that OEDesignUnit has the _mime_ method after import"""
+        import cnotebook.marimo_ext
+
+        assert hasattr(oechem.OEDesignUnit, '_mime_')
+        assert callable(oechem.OEDesignUnit._mime_)
+
+    def test_mime_method_is_display_du(self):
+        """Test that the _mime_ method is our display function"""
+        import cnotebook.marimo_ext
+
+        assert oechem.OEDesignUnit._mime_ == cnotebook.marimo_ext._display_du
+
+
 class TestDisplayImage:
     """Test the _display_image function for Marimo OEImage rendering"""
 
