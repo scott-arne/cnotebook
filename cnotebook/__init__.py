@@ -80,6 +80,7 @@ class CNotebookEnvInfo:
         ipython_version: str,
         marimo_version: str,
         molgrid_available: bool,
+        c3d_available: bool,
         is_jupyter_notebook: bool,
         is_marimo_notebook: bool,
     ):
@@ -90,6 +91,7 @@ class CNotebookEnvInfo:
         :param ipython_version: Detected IPython version string, or empty if unavailable.
         :param marimo_version: Detected Marimo version string, or empty if unavailable.
         :param molgrid_available: Whether MolGrid widget dependencies are available.
+        :param c3d_available: Whether C3D viewer dependencies are available.
         :param is_jupyter_notebook: Whether running in a Jupyter notebook environment.
         :param is_marimo_notebook: Whether running in a Marimo notebook environment.
         """
@@ -98,6 +100,7 @@ class CNotebookEnvInfo:
         self._ipython_version = ipython_version
         self._marimo_version = marimo_version
         self._molgrid_available = molgrid_available
+        self._c3d_available = c3d_available
         self._is_jupyter_notebook = is_jupyter_notebook
         self._is_marimo_notebook = is_marimo_notebook
 
@@ -147,6 +150,11 @@ class CNotebookEnvInfo:
         return self._molgrid_available
 
     @property
+    def c3d_available(self) -> bool:
+        """Whether C3D viewer is available (requires anywidget)."""
+        return self._c3d_available
+
+    @property
     def is_jupyter_notebook(self) -> bool:
         """Whether running in a Jupyter notebook environment."""
         return self._is_jupyter_notebook
@@ -164,6 +172,7 @@ class CNotebookEnvInfo:
             f"ipython={self.ipython_available} ({self._ipython_version}), "
             f"marimo={self.marimo_available} ({self._marimo_version}), "
             f"molgrid={self._molgrid_available}, "
+            f"c3d={self._c3d_available}, "
             f"jupyter={self._is_jupyter_notebook}, "
             f"marimo_nb={self._is_marimo_notebook})"
         )
@@ -179,6 +188,7 @@ def _detect_environment() -> CNotebookEnvInfo:
     ipython_version = ""
     marimo_version = ""
     molgrid_available = False
+    c3d_available = False
     is_jupyter = False
     is_marimo = False
 
@@ -186,6 +196,13 @@ def _detect_environment() -> CNotebookEnvInfo:
     try:
         from cnotebook.grid import molgrid, MolGrid
         molgrid_available = True
+    except ImportError:
+        pass
+
+    # Detect C3D viewer (requires anywidget)
+    try:
+        from cnotebook.c3d import C3D
+        c3d_available = True
     except ImportError:
         pass
 
@@ -236,6 +253,7 @@ def _detect_environment() -> CNotebookEnvInfo:
         ipython_version=ipython_version,
         marimo_version=marimo_version,
         molgrid_available=molgrid_available,
+        c3d_available=c3d_available,
         is_jupyter_notebook=is_jupyter,
         is_marimo_notebook=is_marimo,
     )
@@ -302,6 +320,10 @@ if _env_info.marimo_available:
 # Export molgrid at top level if available
 if _env_info.molgrid_available:
     from .grid import molgrid, MolGrid
+
+# Export C3D at top level if available
+if _env_info.c3d_available:
+    from .c3d import C3D
 
 
 ########################################################################################################################

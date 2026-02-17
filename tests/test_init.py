@@ -109,6 +109,7 @@ class TestCNotebookEnvInfo:
             ipython_version="8.0.0",
             marimo_version="",
             molgrid_available=True,
+            c3d_available=True,
             is_jupyter_notebook=True,
             is_marimo_notebook=False,
         )
