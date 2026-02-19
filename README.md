@@ -37,6 +37,10 @@ Supports both Pandas and Polars DataFrames with automatic environment detection.
 <br>
 View proteins, ligands, and design units in an interactive 3Dmol.js-powered viewer with a built-in GUI, terminal, and sidebar.
 
+**View molecules and design units in 3D**
+<br>
+<img src="docs/_static/c3d-1jff.png" height="400">
+
 ## Table of Contents
 
 - [Installation](#installation)

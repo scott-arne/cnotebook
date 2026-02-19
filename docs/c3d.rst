@@ -194,9 +194,11 @@ Control which GUI panels are visible:
     viewer = (
         C3D()
         .add_molecule(mol)
-        .set_ui(sidebar=True, menubar=True, terminal=False)
+        .set_ui(sidebar=True, menubar=True, terminal=True)
     )
     viewer.display()
+
+.. iframe:: _static/c3d-full-ui.html
 
 Background Color
 ----------------
