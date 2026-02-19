@@ -1,12 +1,13 @@
 import pytest
 import re
-from unittest.mock import MagicMock
-from openeye import oechem
+from unittest.mock import MagicMock, patch
+from openeye import oechem, oedepict
 from cnotebook.helpers import (
     escape_html,
-    escape_brackets, 
+    escape_brackets,
     remove_omega_conformer_id,
     create_structure_highlighter,
+    highlight_smarts,
     CONFORMER_ID_REGEX
 )
 
@@ -167,3 +168,139 @@ class TestIntegration:
         assert callable(remove_omega_conformer_id)
         assert callable(create_structure_highlighter)
         assert isinstance(CONFORMER_ID_REGEX, re.Pattern)
+
+
+class TestCreateStructureHighlighterAdvanced:
+    """Advanced tests for the create_structure_highlighter function."""
+
+    def _make_benzene_display(self):
+        """Create a real OE2DMolDisplay for benzene."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+        opts = oedepict.OE2DMolDisplayOptions()
+        return oedepict.OE2DMolDisplay(mol, opts)
+
+    def test_highlighter_with_oesubsearch(self):
+        """Test creating a highlighter with an OESubSearch object."""
+        ss = oechem.OESubSearch("c1ccccc1")
+        highlighter = create_structure_highlighter(ss)
+        assert callable(highlighter)
+
+    def test_highlighter_with_smarts_string(self):
+        """Test creating a highlighter with a SMARTS string returns callable."""
+        highlighter = create_structure_highlighter("c1ccccc1")
+        assert callable(highlighter)
+
+    @patch('cnotebook.helpers.log')
+    def test_highlighter_overlay_single_color_fallback(self, mock_log):
+        """Test that overlay with single OEColor triggers warning and fallback."""
+        color = oechem.OEColor(oechem.OELightBlue)
+        highlighter = create_structure_highlighter("c1ccccc1", color=color, style="overlay_default")
+        assert callable(highlighter)
+        mock_log.warning.assert_called_once()
+        warning_msg = mock_log.warning.call_args[0][0]
+        assert "Overlay coloring is not compatible" in warning_msg
+
+    def test_highlighter_traditional_with_color_iterator(self):
+        """Test creating a traditional highlighter with OEColorIter."""
+        colors = oechem.OEGetLightColors()
+        highlighter = create_structure_highlighter(
+            "c1ccccc1",
+            color=colors,
+            style=oedepict.OEHighlightStyle_BallAndStick
+        )
+        assert callable(highlighter)
+
+    def test_highlighter_traditional_with_single_color(self):
+        """Test creating a traditional highlighter with a single OEColor."""
+        color = oechem.OEColor(oechem.OELightBlue)
+        highlighter = create_structure_highlighter(
+            "c1ccccc1",
+            color=color,
+            style=oedepict.OEHighlightStyle_BallAndStick
+        )
+        assert callable(highlighter)
+
+    def test_overlay_callback_is_callable(self):
+        """Test that an overlay callback with color iterator returns callable."""
+        colors = oechem.OEGetLightColors()
+        highlighter = create_structure_highlighter("c1ccccc1", color=colors, style="overlay_default")
+        assert callable(highlighter)
+
+    def test_traditional_callback_is_callable(self):
+        """Test that a traditional callback returns callable."""
+        color = oechem.OEColor(oechem.OELightBlue)
+        highlighter = create_structure_highlighter(
+            "c1ccccc1",
+            color=color,
+            style=oedepict.OEHighlightStyle_BallAndStick
+        )
+        assert callable(highlighter)
+
+
+class TestHighlightSmarts:
+    """Test the highlight_smarts function."""
+
+    def _make_mol(self, smiles: str = "c1ccc2c(c1)nc(n2)N"):
+        """Create a molecule from SMILES."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, smiles)
+        return mol
+
+    def test_highlight_single_smarts(self):
+        """Test highlighting a single SMARTS pattern returns OE2DMolDisplay."""
+        mol = self._make_mol()
+        disp = highlight_smarts(mol, "c1ccccc1")
+        assert isinstance(disp, oedepict.OE2DMolDisplay)
+
+    def test_highlight_multiple_smarts(self):
+        """Test highlighting multiple SMARTS patterns returns OE2DMolDisplay."""
+        mol = self._make_mol()
+        disp = highlight_smarts(mol, ["ncn", "c1ccccc1"])
+        assert isinstance(disp, oedepict.OE2DMolDisplay)
+
+    def test_highlight_color_length_mismatch_raises(self):
+        """Test that mismatched color list length raises ValueError."""
+        mol = self._make_mol()
+        colors = [
+            oechem.OEColor(oechem.OELightBlue),
+            oechem.OEColor(oechem.OEPink),
+            oechem.OEColor(oechem.OELightGreen),
+        ]
+        with pytest.raises(ValueError, match="Length of color sequence"):
+            highlight_smarts(mol, ["ncn", "c1ccccc1"], color=colors)
+
+    def test_highlight_style_length_mismatch_raises(self):
+        """Test that mismatched style list length raises ValueError."""
+        mol = self._make_mol()
+        styles = [
+            oedepict.OEHighlightStyle_Stick,
+            oedepict.OEHighlightStyle_BallAndStick,
+            oedepict.OEHighlightStyle_Cogwheel,
+        ]
+        with pytest.raises(ValueError, match="Length of style sequence"):
+            highlight_smarts(mol, ["ncn", "c1ccccc1"], style=styles)
+
+    def test_highlight_with_custom_opts(self):
+        """Test highlighting with custom OE2DMolDisplayOptions."""
+        mol = self._make_mol()
+        opts = oedepict.OE2DMolDisplayOptions()
+        opts.SetWidth(400)
+        opts.SetHeight(300)
+        disp = highlight_smarts(mol, "c1ccccc1", opts=opts)
+        assert isinstance(disp, oedepict.OE2DMolDisplay)
+
+    def test_highlight_multiple_colors_and_styles(self):
+        """Test highlighting with per-pattern colors and styles."""
+        mol = self._make_mol()
+        colors = [
+            oechem.OEColor(oechem.OELightBlue),
+            oechem.OEColor(oechem.OEPink),
+        ]
+        styles = [
+            oedepict.OEHighlightStyle_Stick,
+            oedepict.OEHighlightStyle_BallAndStick,
+        ]
+        disp = highlight_smarts(mol, ["ncn", "c1ccccc1"], color=colors, style=styles)
+        assert isinstance(disp, oedepict.OE2DMolDisplay)

@@ -32,6 +32,8 @@ _STYLE_PRESETS = {
     "surface": "surface",
 }
 
+_VIEW_PRESETS = {"simple", "sites", "ball-and-stick"}
+
 
 def _is_marimo() -> bool:
     """Check if running in a marimo notebook environment.
@@ -74,11 +76,17 @@ class C3D:
         viewer.display()
     """
 
-    def __init__(self, width: int = 800, height: int = 600):
+    _DEFAULT_HEIGHT_SMALL = 300
+    _DEFAULT_HEIGHT_LARGE = 600
+    _ATOM_THRESHOLD = 1000
+
+    def __init__(self, width: int = 800, height: int | None = None):
         """Create a new C3D viewer instance.
 
         :param width: Viewer width in pixels.
-        :param height: Viewer height in pixels.
+        :param height: Viewer height in pixels. When ``None`` (the default),
+            the height is chosen automatically: 300 px if the largest
+            molecule has at most 1 000 atoms, otherwise 600 px.
         """
         self._width = width
         self._height = height
@@ -89,14 +97,21 @@ class C3D:
             "menubar": True,
             "terminal": True,
         }
+        self._ui_explicit = False
         self._background: Optional[str] = None
+        self._background_explicit = False
+        self._theme: str = "light"
         self._zoom_to: Optional[Dict[str, Any]] = None
+        self._orient: Optional[Union[bool, str, Dict[str, Any]]] = None
+        self._preset: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Builder methods
     # ------------------------------------------------------------------
 
-    def add_molecule(self, mol: Any, name: str | None = None) -> C3D:
+    def add_molecule(
+        self, mol: Any, name: str | None = None, disabled: bool = False
+    ) -> C3D:
         """Add an OpenEye molecule to the viewer.
 
         The molecule is converted to SDF format via :func:`convert_molecule`.
@@ -105,14 +120,18 @@ class C3D:
 
         :param mol: OpenEye molecule (``OEMolBase`` subclass).
         :param name: Optional display name for the molecule.
+        :param disabled: If True, the molecule is hidden when the viewer
+            starts. It can be made visible later via the sidebar.
         :returns: Self, for method chaining.
         :raises TypeError: If *mol* is not an ``OEMolBase``.
         """
-        mol_data = convert_molecule(mol, name=name)
+        mol_data = convert_molecule(mol, name=name, disabled=disabled)
         self._molecules.append(mol_data)
         return self
 
-    def add_design_unit(self, du: Any, name: str | None = None) -> C3D:
+    def add_design_unit(
+        self, du: Any, name: str | None = None, disabled: bool = False
+    ) -> C3D:
         """Add an OpenEye design unit to the viewer.
 
         The design unit is converted to PDB format via
@@ -120,32 +139,54 @@ class C3D:
 
         :param du: OpenEye design unit (``OEDesignUnit``).
         :param name: Optional display name for the design unit.
+        :param disabled: If True, the design unit is hidden when the viewer
+            starts. It can be made visible later via the sidebar.
         :returns: Self, for method chaining.
         :raises TypeError: If *du* is not an ``OEDesignUnit``.
         """
-        mol_data = convert_design_unit(du, name=name)
+        mol_data = convert_design_unit(du, name=name, disabled=disabled)
         self._molecules.append(mol_data)
         return self
 
     def add_style(
         self,
-        selection: Dict[str, Any],
         style: Union[str, Dict[str, Any]],
+        selection: Union[str, Dict[str, Any], None] = None,
         color: str | None = None,
     ) -> C3D:
         """Add a visual style to apply to selected atoms.
 
-        :param selection: 3Dmol.js selection specification as a dict
-            (e.g. ``{"chain": "A"}``).
         :param style: Either a preset name (``"cartoon"``, ``"stick"``,
             ``"sphere"``, ``"line"``, ``"cross"``, ``"surface"``) or a
             raw 3Dmol.js style dict that is passed through verbatim.
+        :param selection: Atoms to style. Can be ``None`` to style all
+            atoms, a selection expression string (e.g. ``"chain A"``,
+            ``"resn LIG"``), an entry name to target a specific
+            molecule, or a raw 3Dmol.js selection dict (e.g.
+            ``{"chain": "A"}``).
         :param color: Optional color string. When *style* is a preset
             name, this is set as the ``color`` key in the style spec.
             Ignored when *style* is a dict.
         :returns: Self, for method chaining.
         :raises ValueError: If *style* is a string that is not a
             recognised preset name.
+
+        Example::
+
+            viewer = C3D()
+            viewer.add_molecule(mol, name="benzene")
+
+            # Style everything
+            viewer.add_style("stick")
+
+            # Style by selection expression
+            viewer.add_style("cartoon", "chain A")
+
+            # Style a specific entry
+            viewer.add_style("sphere", "benzene")
+
+            # Style with a 3Dmol.js dict
+            viewer.add_style("stick", {"chain": "A"}, color="green")
         """
         if isinstance(style, str):
             if style not in _STYLE_PRESETS:
@@ -160,7 +201,7 @@ class C3D:
         else:
             style_dict = dict(style)
 
-        self._styles.append({"selection": dict(selection), "style": style_dict})
+        self._styles.append({"selection": selection, "style": style_dict})
         return self
 
     def set_ui(
@@ -181,6 +222,7 @@ class C3D:
             "menubar": menubar,
             "terminal": terminal,
         }
+        self._ui_explicit = True
         return self
 
     def set_background(self, color: str) -> C3D:
@@ -190,16 +232,84 @@ class C3D:
         :returns: Self, for method chaining.
         """
         self._background = color
+        self._background_explicit = True
         return self
 
-    def zoom_to(self, selection: Dict[str, Any] | None = None) -> C3D:
+    def set_theme(self, theme: str = "light") -> C3D:
+        """Set the GUI colour theme.
+
+        Controls the overall UI appearance (panel backgrounds, text colour,
+        borders) **and** the viewer background colour when no explicit
+        background has been set via :meth:`set_background`.
+
+        :param theme: ``"light"`` or ``"dark"``.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *theme* is not ``"light"`` or ``"dark"``.
+        """
+        if theme not in ("light", "dark"):
+            raise ValueError(
+                f"Unknown theme '{theme}'. Choose 'light' or 'dark'."
+            )
+        self._theme = theme
+        return self
+
+    def zoom_to(self, selection: Union[str, Dict[str, Any], None] = None) -> C3D:
         """Set the zoom target after loading.
 
-        :param selection: 3Dmol.js selection dict to zoom into, or
-            ``None`` to fit all molecules in view.
+        :param selection: Selection to zoom into. Can be a selection
+            expression string (e.g. ``"resn 502"``, ``"chain A"``),
+            a raw 3Dmol.js selection dict (e.g. ``{"chain": "A"}``),
+            or ``None`` to fit all molecules in view.
         :returns: Self, for method chaining.
         """
         self._zoom_to = selection
+        return self
+
+    def orient(
+        self, selection: Union[bool, str, Dict[str, Any]] = True
+    ) -> C3D:
+        """Orient the view by aligning principal axes with the screen.
+
+        Uses PCA to align the longest molecular dimension horizontally,
+        the second-longest vertically, and the shortest perpendicular to
+        the screen, then zooms to fit.  When used, this replaces any
+        :meth:`zoom_to` setting.
+
+        :param selection: Atoms to orient on. ``True`` orients on all
+            atoms.  A string selection expression (e.g. ``"chain A"``)
+            or a raw 3Dmol.js selection dict (e.g. ``{"chain": "A"}``)
+            restricts orientation to the matching atoms.
+        :returns: Self, for method chaining.
+        """
+        self._orient = selection
+        return self
+
+    def set_preset(self, name: str) -> C3D:
+        """Apply a view preset.
+
+        Presets are compound styles defined in the 3dmol-js-gui that combine
+        multiple representations into a common visualization.  When a preset
+        is set it replaces any styles added via :meth:`add_style`.
+
+        Available presets:
+
+        - ``"simple"`` -- Element-coloured cartoon with per-chain carbons
+          and sticks for ligands.
+        - ``"sites"`` -- Like *simple*, plus stick representation for
+          residues within 5 angstroms of ligands.
+        - ``"ball-and-stick"`` -- Ball-and-stick for ligands only.
+
+        :param name: Preset name (case-insensitive).
+        :returns: Self, for method chaining.
+        :raises ValueError: If *name* is not a recognised preset.
+        """
+        key = name.lower()
+        if key not in _VIEW_PRESETS:
+            raise ValueError(
+                f"Unknown view preset '{name}'. "
+                f"Choose from: {', '.join(sorted(_VIEW_PRESETS))}"
+            )
+        self._preset = key
         return self
 
     # ------------------------------------------------------------------
@@ -212,19 +322,51 @@ class C3D:
         This dict is embedded in the HTML page as
         ``window.__C3D_INIT__`` and consumed by the GUI JavaScript.
 
+        When the user has not explicitly configured UI or background,
+        smart defaults are applied based on molecule count:
+
+        - **1 molecule** -- no GUI panels, white background.
+        - **2 molecules** -- sidebar only (no menubar or terminal).
+        - **3+ molecules** -- full GUI (all panels visible).
+
         :returns: Payload dictionary.
         """
         molecules = [
-            {"name": m.name, "data": m.data, "format": m.format}
+            {
+                "name": m.name,
+                "data": m.data,
+                "format": m.format,
+                "disabled": m.disabled,
+            }
             for m in self._molecules
         ]
+
+        n_mols = len(self._molecules)
+
+        # Smart UI defaults based on molecule count
+        if self._ui_explicit:
+            ui = dict(self._ui)
+        elif n_mols <= 1:
+            ui = {"sidebar": False, "menubar": False, "terminal": False}
+        elif n_mols == 2:
+            ui = {"sidebar": True, "menubar": False, "terminal": False}
+        else:
+            ui = dict(self._ui)
+
+        # Default to orient when neither zoom_to nor orient was set
+        orient = self._orient
+        if self._orient is None and self._zoom_to is None:
+            orient = True
 
         return {
             "molecules": molecules,
             "styles": list(self._styles),
-            "ui": dict(self._ui),
+            "preset": self._preset,
+            "ui": ui,
+            "theme": self._theme,
             "background": self._background,
             "zoomTo": self._zoom_to,
+            "orient": orient,
         }
 
     def to_html(self) -> str:
@@ -279,6 +421,24 @@ class C3D:
     # Display
     # ------------------------------------------------------------------
 
+    @property
+    def _effective_height(self) -> int:
+        """Compute the display height in pixels.
+
+        When the height was explicitly set via the constructor, that value
+        is returned.  Otherwise the height is chosen based on the maximum
+        atom count across all molecules: 300 px when every entry has at
+        most 1 000 atoms, 600 px otherwise.
+
+        :returns: Height in pixels.
+        """
+        if self._height is not None:
+            return self._height
+        max_atoms = max((m.num_atoms for m in self._molecules), default=0)
+        if max_atoms > self._ATOM_THRESHOLD:
+            return self._DEFAULT_HEIGHT_LARGE
+        return self._DEFAULT_HEIGHT_SMALL
+
     def display(self):
         """Display the viewer in the current notebook environment.
 
@@ -286,14 +446,15 @@ class C3D:
         Automatically detects whether the environment is Marimo or Jupyter
         and returns the appropriate display object.
 
-        :returns: A displayable object (``marimo.Html`` or
-            ``IPython.display.HTML``).
+        :returns: A displayable object (``marimo.Html`` or a Jupyter-compatible
+            display object with ``_repr_html_``).
         """
         html_content = self.to_html()
+        height = self._effective_height
 
         iframe_html = (
             '<iframe style="width: 100%; border: none; '
-            f'height: {self._height}px;" '
+            f'height: {height}px;" '
             f'srcdoc="{escape(html_content)}"></iframe>'
         )
 
@@ -302,6 +463,18 @@ class C3D:
 
             return mo.Html(iframe_html)
         else:
-            from IPython.display import HTML
+            return _JupyterIFrame(iframe_html)
 
-            return HTML(iframe_html)
+
+class _JupyterIFrame:
+    """Lightweight wrapper that renders an iframe via ``_repr_html_``.
+
+    Using a custom class avoids the ``IPython.display.HTML`` warning
+    about ``IFrame`` when the HTML data contains ``<iframe``.
+    """
+
+    def __init__(self, html: str):
+        self._html = html
+
+    def _repr_html_(self) -> str:
+        return self._html

@@ -95,3 +95,19 @@ class TestRegisterIpythonFormatters:
         register_ipython_formatters()
 
         mock_ipython.display_formatter.formatters.__getitem__.assert_called_with('text/html')
+
+
+class TestRegisterNoopWhenNoIpython:
+    """Test register_ipython_formatters when IPython is not active."""
+
+    @patch('cnotebook.ipython_ext.get_ipython')
+    def test_register_noop_when_get_ipython_returns_none(self, mock_get_ipython, caplog):
+        """register_ipython_formatters() should emit a debug log when get_ipython() returns None."""
+        import logging
+
+        mock_get_ipython.return_value = None
+
+        with caplog.at_level(logging.DEBUG, logger="cnotebook"):
+            register_ipython_formatters()
+
+        assert any("not in use" in record.message for record in caplog.records)

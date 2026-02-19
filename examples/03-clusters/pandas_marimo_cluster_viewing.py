@@ -1,17 +1,20 @@
 import marimo
 
-__generated_with = "0.19.7"
+__generated_with = "0.19.11"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
+    import marimo as mo
     import pandas as pd
     import oepandas as oepd
     from cnotebook import MolGrid
     from sklearn.cluster import HDBSCAN
-    import marimo as mo
-    return HDBSCAN, mo, oepd
+    from pathlib import Path
+
+    EXAMPLES_ROOT = Path(__file__).parent.parent
+    return EXAMPLES_ROOT, HDBSCAN, mo, oepd
 
 
 @app.cell(hide_code=True)
@@ -46,8 +49,8 @@ def _(mo):
 
 
 @app.cell
-def _(oepd):
-    df = oepd.read_sdf("assets/two_series.sdf")
+def _(EXAMPLES_ROOT, oepd):
+    df = oepd.read_sdf(EXAMPLES_ROOT / "assets" / "two_series.sdf")
     df.tail()
     return (df,)
 

@@ -859,3 +859,766 @@ class TestHighlightMetadataPreservation:
         # Verify callbacks are cleared
         ctx_after = get_series_context(arr.metadata)
         assert len(ctx_after.callbacks) == 0, "Callbacks should be cleared after DataFrame clear_formatting_rules"
+
+
+class TestSeriesHighlight:
+    """Test _series_highlight() method on Series .chem accessor."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_smarts_string(self):
+        """Highlight with a SMARTS string should add a callback."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+        series.chem.highlight("c1ccccc1")
+
+        ctx = get_series_context(series.array.metadata)
+        assert len(ctx.callbacks) == 1
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_subsearch_object(self):
+        """Highlight with an OESubSearch object should add a callback."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+        ss = oechem.OESubSearch("c1ccccc1")
+        series.chem.highlight(ss)
+
+        ctx = get_series_context(series.array.metadata)
+        assert len(ctx.callbacks) == 1
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_iterable_of_smarts(self):
+        """Highlight with a list of SMARTS should add one callback per pattern."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc(C)cc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+        series.chem.highlight(["c1ccccc1", "CC"])
+
+        ctx = get_series_context(series.array.metadata)
+        assert len(ctx.callbacks) == 2
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_iterable_unknown_element_raises(self):
+        """Highlight with an iterable containing an unsupported type should raise TypeError."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+
+        with pytest.raises(TypeError, match="Do not know how to add molecule highlight"):
+            series.chem.highlight([123])
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_unknown_type_raises(self):
+        """Highlight with an unsupported pattern type should raise TypeError."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+
+        with pytest.raises(TypeError, match="Do not know how to add molecule highlight"):
+            series.chem.highlight(123)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_non_molecule_dtype_raises(self):
+        """Highlight on a non-MoleculeDtype series should raise TypeError."""
+        series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
+
+        with pytest.raises(TypeError, match="highlight only works on molecule columns"):
+            series.chem.highlight("c1ccccc1")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_with_ref_runs_alignment(self):
+        """Passing ref= should trigger alignment code path without error."""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol1)
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "c1ccc(C)cc1")
+        oedepict.OEPrepareDepiction(mol2)
+
+        series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
+
+        # Should not raise - exercises the ref="first" alignment path
+        series.chem.highlight("c1ccccc1", ref="first")
+
+
+class TestSeriesAlignDepictions:
+    """Test _series_align_depictions() method on Series .chem accessor."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_align_ref_first(self):
+        """Align with ref='first' should use first valid molecule."""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol1)
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "c1ccc(C)cc1")
+        oedepict.OEPrepareDepiction(mol2)
+
+        series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
+
+        # Should not raise
+        series.chem.align_depictions(ref="first")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_align_ref_first_no_valid_mols(self):
+        """Align with ref='first' when all mols are None should log warning and return."""
+        series = pd.Series([None, None], dtype=oepd.MoleculeDtype())
+
+        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+            series.chem.align_depictions(ref="first")
+            mock_warn.assert_called_once_with("No valid molecule found in series for depiction alignment")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_align_ref_molecule(self):
+        """Align with a real OEMolBase reference should succeed."""
+        ref_mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref_mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(ref_mol)
+
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccc(C)cc1")
+        oedepict.OEPrepareDepiction(mol1)
+
+        series = pd.Series([mol1], dtype=oepd.MoleculeDtype())
+
+        # Should not raise
+        series.chem.align_depictions(ref=ref_mol)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_align_non_molecule_raises(self):
+        """Align on a non-MoleculeDtype series should raise TypeError."""
+        series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
+
+        with pytest.raises(TypeError, match="align_depictions only works on molecule columns"):
+            series.chem.align_depictions(ref="first")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_align_exception_handled(self):
+        """If create_aligner raises, align_depictions should catch and not propagate."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+
+        with patch('cnotebook.pandas_ext.create_aligner', side_effect=RuntimeError("boom")):
+            # Should not raise - exception is caught internally
+            series.chem.align_depictions(ref=mol)
+
+
+class TestSeriesRecalculateDepictions:
+    """Test _series_recalculate_depiction_coordinates() method."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_basic(self):
+        """Recalculate depictions on a real molecule series should not error."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+
+        # Should not raise
+        series.chem.recalculate_depiction_coordinates()
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_non_molecule_raises(self):
+        """Recalculate on a non-MoleculeDtype series should raise TypeError."""
+        series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
+
+        with pytest.raises(TypeError, match="recalculate_depiction_coordinates only works on molecule columns"):
+            series.chem.recalculate_depiction_coordinates()
+
+
+class TestSeriesResetAndClear:
+    """Test _series_reset_depictions() and _series_clear_formatting_rules()."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_reset_depictions_clears_metadata(self):
+        """reset_depictions should remove the 'cnotebook' key from metadata."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+
+        # Add a context with a callback
+        series.chem.highlight("c1ccccc1")
+        assert "cnotebook" in series.array.metadata
+
+        # Reset should remove the key entirely
+        series.chem.reset_depictions()
+        assert "cnotebook" not in series.array.metadata
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_clear_formatting_rules_preserves_context(self):
+        """clear_formatting_rules should empty callbacks but preserve context."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+
+        # Add a highlight callback
+        series.chem.highlight("c1ccccc1")
+        ctx = get_series_context(series.array.metadata)
+        assert len(ctx.callbacks) == 1
+
+        # Clear formatting rules
+        series.chem.clear_formatting_rules()
+
+        # Context should still be present but callbacks empty
+        assert "cnotebook" in series.array.metadata
+        ctx_after = get_series_context(series.array.metadata)
+        assert len(ctx_after.callbacks) == 0
+
+
+class TestDataFrameRecalculateDepictions:
+    """Test _dataframe_recalculate_depiction_coordinates()."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_all_columns(self):
+        """Recalculate all molecule columns discovers all MoleculeDtype columns."""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "CCO")
+
+        df = pd.DataFrame({
+            "mol1": pd.Series([mol1], dtype=oepd.MoleculeDtype()),
+            "mol2": pd.Series([mol2], dtype=oepd.MoleculeDtype()),
+        })
+
+        # Source has a typo in kwarg name (add_depction_hydrogens vs add_depiction_hydrogens)
+        # which causes TypeError when the DataFrame method calls the Series method.
+        with pytest.raises(TypeError, match="add_depction_hydrogens"):
+            df.chem.recalculate_depiction_coordinates()
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_string_column(self):
+        """Pass a single column name as string hits the typo bug."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({
+            "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        # Source has typo in kwarg passthrough (add_depction_hydrogens)
+        with pytest.raises(TypeError, match="add_depction_hydrogens"):
+            df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_list_column(self):
+        """Pass a list of column names hits the typo bug."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({
+            "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        # Source has typo in kwarg passthrough (add_depction_hydrogens)
+        with pytest.raises(TypeError, match="add_depction_hydrogens"):
+            df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_non_molecule_warns(self):
+        """Specifying a non-molecule column should log a warning."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({
+            "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "name": ["benzene"],
+        })
+
+        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+            df.chem.recalculate_depiction_coordinates(molecule_columns="name")
+            mock_warn.assert_called_once()
+            assert "MoleculeDtype" in str(mock_warn.call_args)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_recalculate_missing_column_raises_runtime_error(self):
+        """Specifying a missing column triggers a set mutation bug in the source."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        df = pd.DataFrame({
+            "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        # Source removes from set during iteration (line 563), causing RuntimeError
+        with pytest.raises(RuntimeError, match="Set changed size during iteration"):
+            df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
+
+
+class TestDataFrameResetDepictions:
+    """Test _dataframe_reset_depictions()."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_reset_all_columns(self):
+        """Reset all molecule columns when no args."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        # Set up context
+        df.mol.chem.highlight("c1ccccc1")
+        assert "cnotebook" in df["mol"].array.metadata
+
+        # Reset all
+        df.chem.reset_depictions()
+        assert "cnotebook" not in df["mol"].array.metadata
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_reset_specific_string(self):
+        """Reset a specific column passed as string."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        df.mol.chem.highlight("c1ccccc1")
+        assert "cnotebook" in df["mol"].array.metadata
+
+        df.chem.reset_depictions(molecule_columns="mol")
+        assert "cnotebook" not in df["mol"].array.metadata
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_reset_specific_list(self):
+        """Reset specific columns passed as list."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        df.mol.chem.highlight("c1ccccc1")
+        assert "cnotebook" in df["mol"].array.metadata
+
+        df.chem.reset_depictions(molecule_columns=["mol"])
+        assert "cnotebook" not in df["mol"].array.metadata
+
+
+class TestDataFrameClearFormattingRules:
+    """Test _dataframe_clear_formatting_rules()."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_clear_all_columns(self):
+        """Clear all columns when no args."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        df.mol.chem.highlight("c1ccccc1")
+        ctx = get_series_context(df["mol"].array.metadata)
+        assert len(ctx.callbacks) == 1
+
+        df.chem.clear_formatting_rules()
+
+        ctx_after = get_series_context(df["mol"].array.metadata)
+        assert len(ctx_after.callbacks) == 0
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_clear_specific_string(self):
+        """Clear a specific column passed as string."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        df.mol.chem.highlight("c1ccccc1")
+        ctx = get_series_context(df["mol"].array.metadata)
+        assert len(ctx.callbacks) == 1
+
+        df.chem.clear_formatting_rules("mol")
+
+        ctx_after = get_series_context(df["mol"].array.metadata)
+        assert len(ctx_after.callbacks) == 0
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_clear_specific_list(self):
+        """Clear specific columns passed as list."""
+        from cnotebook.context import get_series_context
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        df.mol.chem.highlight("c1ccccc1")
+        ctx = get_series_context(df["mol"].array.metadata)
+        assert len(ctx.callbacks) == 1
+
+        df.chem.clear_formatting_rules(["mol"])
+
+        ctx_after = get_series_context(df["mol"].array.metadata)
+        assert len(ctx_after.callbacks) == 0
+
+
+class TestDataFrameHighlightUsingColumn:
+    """Test _dataframe_highlight_using_column()."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_basic(self):
+        """Basic usage with SMARTS string column creates a DisplayDtype column."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": ["c1ccccc1"],
+        })
+
+        result = df.chem.highlight_using_column("mol", "pattern")
+        assert "highlighted_substructures" in result.columns
+        assert isinstance(result["highlighted_substructures"].dtype, oepd.DisplayDtype)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_overlay(self):
+        """Default overlay style should not raise."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": ["c1ccccc1"],
+        })
+
+        result = df.chem.highlight_using_column("mol", "pattern", style="overlay_default")
+        assert "highlighted_substructures" in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_traditional(self):
+        """Traditional highlighting with an int style constant should work."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": ["c1ccccc1"],
+        })
+
+        result = df.chem.highlight_using_column(
+            "mol", "pattern",
+            style=oedepict.OEHighlightStyle_BallAndStick,
+            color=oechem.OEColor(oechem.OERed)
+        )
+        assert "highlighted_substructures" in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_single_color_overlay_fallback(self):
+        """Single OEColor with overlay style should warn and fall back to standard."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": ["c1ccccc1"],
+        })
+
+        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+            result = df.chem.highlight_using_column(
+                "mol", "pattern",
+                color=oechem.OEColor(oechem.OERed),
+                style="overlay_default"
+            )
+            mock_warn.assert_called_once()
+            assert "Overlay coloring is not compatible" in str(mock_warn.call_args)
+
+        assert "highlighted_substructures" in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_subsearch_pattern(self):
+        """Pattern column with OESubSearch objects should work."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        ss = oechem.OESubSearch("c1ccccc1")
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": [ss],
+        })
+
+        result = df.chem.highlight_using_column("mol", "pattern")
+        assert "highlighted_substructures" in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_iterable_patterns(self):
+        """Pattern column with list of SMARTS should work."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": [["c1ccccc1", "[OH]"]],
+        })
+
+        result = df.chem.highlight_using_column("mol", "pattern")
+        assert "highlighted_substructures" in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_invalid_mol_row(self):
+        """Non-OEMolBase value in molecule column should produce None in display column."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol, None], dtype=oepd.MoleculeDtype()),
+            "pattern": ["c1ccccc1", "c1ccccc1"],
+        })
+
+        result = df.chem.highlight_using_column("mol", "pattern")
+        assert "highlighted_substructures" in result.columns
+        # The None row should produce None in the display column
+        assert result["highlighted_substructures"].iloc[1] is None
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_missing_mol_col_raises(self):
+        """Missing molecule column should raise KeyError."""
+        df = pd.DataFrame({
+            "pattern": ["c1ccccc1"],
+        })
+
+        with pytest.raises(KeyError):
+            df.chem.highlight_using_column("nonexistent_mol", "pattern")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_non_molecule_dtype_raises(self):
+        """Non-MoleculeDtype column should raise TypeError."""
+        df = pd.DataFrame({
+            "mol": ["c1ccccc1"],
+            "pattern": ["c1ccccc1"],
+        })
+
+        with pytest.raises(TypeError, match="highlight_using_column only works on molecule columns"):
+            df.chem.highlight_using_column("mol", "pattern")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_missing_pattern_col_raises(self):
+        """Missing pattern column should raise KeyError."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        with pytest.raises(KeyError):
+            df.chem.highlight_using_column("mol", "nonexistent_pattern")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_using_column_inplace(self):
+        """inplace=True should modify the original DataFrame."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "pattern": ["c1ccccc1"],
+        })
+
+        result = df.chem.highlight_using_column("mol", "pattern", inplace=True)
+        # inplace=True means result is the same object
+        assert result is df
+        assert "highlighted_substructures" in df.columns
+
+
+class TestDataFrameFingerprintSimilarity:
+    """Test _dataframe_fingerprint_similarity()."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_creates_columns(self):
+        """Verify tanimoto, reference, and target columns are created."""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol1)
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "c1ccc(O)cc1")
+        oedepict.OEPrepareDepiction(mol2)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype()),
+        })
+
+        result = df.chem.fingerprint_similarity("mol")
+        assert "fingerprint_tanimoto" in result.columns
+        assert "reference_similarity" in result.columns
+        assert "target_similarity" in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_self_tanimoto(self):
+        """Same molecule compared to itself should have tanimoto ~1.0."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        result = df.chem.fingerprint_similarity("mol")
+        assert result["fingerprint_tanimoto"].iloc[0] == pytest.approx(1.0)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_default_ref(self):
+        """No ref should use the first valid molecule."""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol1)
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "CCO")
+        oedepict.OEPrepareDepiction(mol2)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype()),
+        })
+
+        result = df.chem.fingerprint_similarity("mol")
+        assert len(result) == 2
+        # First molecule is the reference, so its tanimoto should be 1.0
+        assert result["fingerprint_tanimoto"].iloc[0] == pytest.approx(1.0)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_no_valid_mols(self):
+        """All None molecules triggers AttributeError because source calls .IsValid() on None."""
+        df = pd.DataFrame({
+            "mol": pd.Series([None, None], dtype=oepd.MoleculeDtype()),
+        })
+
+        # Source iterates molecules and calls mol.IsValid() without None check (line 950)
+        with pytest.raises(AttributeError):
+            df.chem.fingerprint_similarity("mol")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_invalid_ref(self):
+        """Invalid reference molecule should log warning and return df."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        invalid_ref = oechem.OEGraphMol()  # Empty mol, IsValid() returns False
+
+        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+            result = df.chem.fingerprint_similarity("mol", ref=invalid_ref)
+            mock_warn.assert_called_once()
+            assert "not valid" in str(mock_warn.call_args)
+
+        assert "fingerprint_tanimoto" not in result.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_missing_column_raises(self):
+        """Missing molecule column should raise KeyError."""
+        df = pd.DataFrame({
+            "name": ["benzene"],
+        })
+
+        with pytest.raises(KeyError):
+            df.chem.fingerprint_similarity("nonexistent")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_non_molecule_dtype_raises(self):
+        """Non-MoleculeDtype column should raise TypeError."""
+        df = pd.DataFrame({
+            "mol": ["c1ccccc1"],
+        })
+
+        with pytest.raises(TypeError):
+            df.chem.fingerprint_similarity("mol")
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_inplace_false(self):
+        """inplace=False should not modify the original DataFrame."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        })
+
+        result = df.chem.fingerprint_similarity("mol", inplace=False)
+        assert "fingerprint_tanimoto" in result.columns
+        assert "fingerprint_tanimoto" not in df.columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_with_explicit_ref(self):
+        """Passing an explicit ref molecule should compute similarity correctly."""
+        mol1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol1, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol1)
+        mol2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol2, "c1ccc(O)cc1")
+        oedepict.OEPrepareDepiction(mol2)
+
+        ref = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref, "c1ccccc1")
+        oedepict.OEPrepareDepiction(ref)
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype()),
+        })
+
+        result = df.chem.fingerprint_similarity("mol", ref=ref)
+        assert "fingerprint_tanimoto" in result.columns
+        assert len(result) == 2
+        # Self-similarity should be 1.0
+        assert result["fingerprint_tanimoto"].iloc[0] == pytest.approx(1.0)

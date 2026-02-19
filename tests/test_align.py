@@ -6,6 +6,8 @@ from cnotebook.align import (
     get_bond_mask,
     fingerprint_maker,
     Aligner,
+    OESubSearchAligner,
+    OEMCSSearchAligner,
     OEFingerprintAligner,
     create_aligner,
     atom_fp_typemap,
@@ -496,3 +498,280 @@ class TestCreateAligner:
         # Pass something that's not a supported type
         with pytest.raises(TypeError, match="Unsupported alignment reference type"):
             create_aligner(12345)  # A number is not supported
+
+
+class TestOESubSearchAlignerInit:
+    """Test the OESubSearchAligner initialization and validate method."""
+
+    def test_init_with_smarts_string(self):
+        """Test initialization with a SMARTS string sets ss and refmol is None."""
+        aligner = OESubSearchAligner("c1ccccc1")
+        assert aligner.refmol is None
+        assert hasattr(aligner, 'ss')
+
+    def test_init_with_oesubsearch(self):
+        """Test initialization with an OESubSearch object."""
+        ss = oechem.OESubSearch("c1ccccc1")
+        aligner = OESubSearchAligner(ss)
+        assert aligner.refmol is None
+        assert hasattr(aligner, 'ss')
+
+    def test_init_with_molecule(self):
+        """Test initialization with a real molecule sets refmol."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OESubSearchAligner(mol)
+        assert aligner.refmol is not None
+
+    def test_validate_with_match(self):
+        """Test validate returns True for a matching molecule (phenol contains benzene)."""
+        aligner = OESubSearchAligner("c1ccccc1")
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc(O)cc1")  # phenol
+        assert aligner.validate(mol) is True
+
+    def test_validate_without_match(self):
+        """Test validate returns False for a non-matching molecule (ethane has no ring)."""
+        aligner = OESubSearchAligner("c1ccccc1")
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CC")  # ethane
+        assert aligner.validate(mol) is False
+
+
+class TestOEMCSSearchAlignerInit:
+    """Test the OEMCSSearchAligner initialization and validate method."""
+
+    def test_init_with_molecule_default_func(self):
+        """Test initialization with a molecule and default func (bonds_and_cycles)."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol)
+        assert aligner.refmol is not None
+        assert hasattr(aligner, 'mcss')
+
+    def test_init_with_molecule_atoms_func(self):
+        """Test initialization with func='atoms'."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol, func="atoms")
+        assert hasattr(aligner, 'mcss')
+
+    def test_init_with_molecule_invalid_func_raises(self):
+        """Test initialization with an invalid func raises ValueError."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        with pytest.raises(ValueError, match="Unknown MCS evaluation function name"):
+            OEMCSSearchAligner(mol, func="invalid")
+
+    def test_validate_returns_bool(self):
+        """Test validate returns a boolean value."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol)
+        assert hasattr(aligner, 'validate')
+        assert callable(aligner.validate)
+
+
+class TestOEFingerprintAlignerExtended:
+    """Extended tests for the OEFingerprintAligner validate method."""
+
+    def test_validate_above_threshold(self):
+        """Test validate returns True for similar molecules with low threshold."""
+        ref = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref, "c1ccccc1")
+        aligner = OEFingerprintAligner(ref, threshold=0.1)
+
+        target = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target, "Cc1ccccc1")  # toluene
+        assert aligner.validate(target) is True
+
+    def test_validate_below_threshold(self):
+        """Test validate returns False for dissimilar molecules with high threshold."""
+        ref = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref, "c1ccccc1")
+        aligner = OEFingerprintAligner(ref, threshold=0.9)
+
+        target = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target, "C(C)C")  # propane
+        assert aligner.validate(target) is False
+
+
+class TestFingerprintMakerAdditionalTypes:
+    """Test fingerprint_maker with maccs and lingo types."""
+
+    def test_fingerprint_maker_maccs(self):
+        """Test MACCS fingerprint creation."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        maker = fingerprint_maker(
+            fptype="maccs",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=5,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.IsValid()
+
+    def test_fingerprint_maker_lingo(self):
+        """Test Lingo fingerprint creation."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        maker = fingerprint_maker(
+            fptype="lingo",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=5,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.IsValid()
+
+    def test_fingerprint_maker_maccs_case_insensitive(self):
+        """Test MACCS fingerprint type is case insensitive."""
+        maker = fingerprint_maker(
+            fptype="MACCS",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=5,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+        assert callable(maker)
+
+    def test_fingerprint_maker_lingo_case_insensitive(self):
+        """Test Lingo fingerprint type is case insensitive."""
+        maker = fingerprint_maker(
+            fptype="Lingo",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=5,
+            atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
+            bond_type=oegraphsim.OEFPBondType_DefaultBond
+        )
+        assert callable(maker)
+
+
+class TestOESubSearchAlignerAlign:
+    """Test OESubSearchAligner align method."""
+
+    def test_align_matching_molecule(self):
+        """Test align returns True for a molecule matching the pattern."""
+        ref = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref, "c1ccccc1")
+        oedepict.OEPrepareDepiction(ref)
+
+        aligner = OESubSearchAligner(ref)
+
+        target = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target, "c1ccc(O)cc1")
+        oedepict.OEPrepareDepiction(target)
+
+        # Should validate and align successfully
+        assert aligner.validate(target) is True
+        result = aligner.align(target)
+        assert isinstance(result, bool)
+
+    def test_align_with_smarts(self):
+        """Test align using a SMARTS pattern."""
+        aligner = OESubSearchAligner("c1ccccc1")
+
+        target = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target, "c1ccc(O)cc1")
+        oedepict.OEPrepareDepiction(target)
+
+        result = aligner.align(target)
+        assert isinstance(result, bool)
+
+
+class TestOEMCSSearchAlignerFuncVariants:
+    """Test OEMCSSearchAligner initialization with different func values."""
+
+    def test_init_with_bonds_func(self):
+        """Test initialization with func='bonds'."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol, func="bonds")
+        assert hasattr(aligner, 'mcss')
+
+    def test_init_with_atoms_and_cycles_func(self):
+        """Test initialization with func='atoms_and_cycles'."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol, func="atoms_and_cycles")
+        assert hasattr(aligner, 'mcss')
+
+    def test_init_with_oemcssearch(self):
+        """Test initialization with an OEMCSSearch object."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        mcss = oechem.OEMCSSearch(oechem.OEMCSType_Approximate)
+        mcss.Init(mol, oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
+
+        aligner = OEMCSSearchAligner(mcss)
+        assert aligner.refmol is None
+        assert hasattr(aligner, 'mcss')
+
+    def test_validate_method_callable(self):
+        """Test validate method exists and is callable."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol)
+        assert callable(aligner.validate)
+
+    def test_align_method_callable(self):
+        """Test align method exists and is callable."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        aligner = OEMCSSearchAligner(mol)
+        assert callable(aligner.align)
+
+
+class TestCreateAlignerMethodAliases:
+    """Test create_aligner with method aliases."""
+
+    def test_create_aligner_ss_alias(self):
+        """Test create_aligner with method='ss' (alias for substructure)."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        result = create_aligner(mol, method="ss")
+        assert isinstance(result, OESubSearchAligner)
+
+    def test_create_aligner_fp_alias(self):
+        """Test create_aligner with method='fp' (alias for fingerprint)."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        result = create_aligner(mol, method="fp")
+        assert isinstance(result, OEFingerprintAligner)
+
+
+class TestOEFingerprintAlignerAlign:
+    """Test OEFingerprintAligner align method with real molecules."""
+
+    def test_align_similar_molecules(self):
+        """Test align returns True for similar molecules."""
+        ref = oechem.OEGraphMol()
+        oechem.OESmilesToMol(ref, "c1ccccc1")
+        oedepict.OEPrepareDepiction(ref)
+
+        aligner = OEFingerprintAligner(ref, threshold=0.1)
+
+        target = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target, "c1ccc(O)cc1")
+        oedepict.OEPrepareDepiction(target)
+
+        result = aligner.align(target)
+        assert isinstance(result, bool)

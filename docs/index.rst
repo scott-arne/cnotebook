@@ -12,6 +12,8 @@ Key Features
 - **Multiple Environments**: Supports Jupyter Notebooks and Marimo
 - **DataFrame Integration**: Works with Pandas and Polars DataFrames
 - **MolGrid Interactive Grids**: Browse, search, and select molecules
+- **C3D 3D Viewer**: Interactive 3Dmol.js viewer with built-in GUI
+- **Design Unit Support**: Render protein-ligand complexes from ``OEDesignUnit``
 - **Substructure Highlighting**: SMARTS pattern highlighting
 - **Molecular Alignment**: Align molecules to reference structures
 
@@ -19,7 +21,7 @@ Key Features
 Native Object Support
 =====================
 
-Make ``OEMol``, ``OEGraphMol``, ``OE2DMolDisplay`` and ``OEDesignUnit`` (soon)
+Make ``OEMol``, ``OEGraphMol``, ``OE2DMolDisplay``, and ``OEDesignUnit``
 first-class citizens in your notebook with native, highly configurable rendering.
 
 .. image:: _static/molecule_with_style.png
@@ -112,6 +114,7 @@ Contents
    rendering
    dataframes
    molgrid
+   c3d
    advanced_rendering
 
 .. toctree::

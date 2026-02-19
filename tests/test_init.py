@@ -1,6 +1,7 @@
 import pytest
 import logging
 from unittest.mock import MagicMock, patch, Mock
+from openeye import oechem, oedepict
 import cnotebook
 from cnotebook import (
     __version__,
@@ -489,3 +490,197 @@ class TestDocstring:
         assert len(CNotebookEnvInfo.__doc__.strip()) > 0
 
 
+class TestDisplayFunction:
+    """Test the display() function"""
+
+    @patch('cnotebook._display_html')
+    def test_display_molecule(self, mock_display_html):
+        """Test display with an OEMolBase molecule"""
+        from cnotebook import display
+
+        mock_display_html.side_effect = lambda html, env: html
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        result = display(mol)
+
+        mock_display_html.assert_called_once()
+        # Real oemol_to_html produces an HTML img tag
+        assert isinstance(result, str)
+        assert "<" in result
+
+    @patch('cnotebook._display_html')
+    def test_display_molecule_with_ctx(self, mock_display_html):
+        """Test display with an explicit CNotebookContext"""
+        from cnotebook import display
+        from cnotebook.context import CNotebookContext
+
+        mock_display_html.side_effect = lambda html, env: html
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        custom_ctx = CNotebookContext(width=300, height=300)
+
+        result = display(mol, ctx=custom_ctx)
+
+        mock_display_html.assert_called_once()
+        assert isinstance(result, str)
+        assert "<" in result
+
+    @patch('cnotebook._display_html')
+    def test_display_oedisplay(self, mock_display_html):
+        """Test display with an OE2DMolDisplay object"""
+        from cnotebook import display
+
+        mock_display_html.side_effect = lambda html, env: html
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+        disp = oedepict.OE2DMolDisplay(mol, oedepict.OE2DMolDisplayOptions())
+
+        result = display(disp)
+
+        mock_display_html.assert_called_once()
+        assert isinstance(result, str)
+        assert "<" in result
+
+    @patch('cnotebook._display_html')
+    def test_display_pandas_dataframe(self, mock_display_html):
+        """Test display with a Pandas DataFrame"""
+        from cnotebook import display
+
+        mock_display_html.side_effect = lambda html, env: html
+
+        env = get_env()
+        if not env.pandas_available:
+            pytest.skip("Pandas not available")
+
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+        result = display(df)
+
+        mock_display_html.assert_called_once()
+        assert isinstance(result, str)
+        assert "<" in result
+
+    def test_display_unsupported_type_raises(self):
+        """Test display raises TypeError for unsupported types"""
+        from cnotebook import display
+
+        with pytest.raises(TypeError, match="Cannot display object of type int"):
+            display(42)
+
+
+class TestDisplayHtml:
+    """Test the _display_html() function"""
+
+    def test_display_html_fallback(self):
+        """Test that _display_html returns raw HTML when no notebook env is available"""
+        from cnotebook import _display_html
+
+        env = CNotebookEnvInfo(
+            pandas_version="",
+            polars_version="",
+            ipython_version="",
+            marimo_version="",
+            molgrid_available=False,
+            c3d_available=False,
+            is_jupyter_notebook=False,
+            is_marimo_notebook=False,
+        )
+
+        html = "<div>test</div>"
+        result = _display_html(html, env)
+        assert result == html
+
+
+class TestEnvC3dProperty:
+    """Test CNotebookEnvInfo c3d-related properties"""
+
+    def test_env_c3d_available_property(self):
+        """Test that c3d_available returns a bool"""
+        env = get_env()
+        assert isinstance(env.c3d_available, bool)
+
+    def test_env_repr_contains_c3d(self):
+        """Test that repr() includes c3d info"""
+        env = get_env()
+        repr_str = repr(env)
+        assert "c3d=" in repr_str
+
+
+class TestDisplayPolarsDataFrame:
+    """Test display() with Polars DataFrame."""
+
+    @patch('cnotebook._display_html')
+    def test_display_polars_dataframe(self, mock_display_html):
+        """Test display with a Polars DataFrame."""
+        from cnotebook import display
+
+        mock_display_html.side_effect = lambda html, env: html
+
+        env = get_env()
+        if not env.polars_available:
+            pytest.skip("Polars not available")
+
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+        result = display(df)
+
+        mock_display_html.assert_called_once()
+        assert isinstance(result, str)
+        assert "<" in result
+
+
+class TestDisplayHtmlEnvironments:
+    """Test _display_html with different environments."""
+
+    def test_display_html_ipython(self):
+        """Test _display_html uses IPython display when available."""
+        from cnotebook import _display_html
+
+        env = CNotebookEnvInfo(
+            pandas_version="",
+            polars_version="",
+            ipython_version="8.0.0",
+            marimo_version="",
+            molgrid_available=False,
+            c3d_available=False,
+            is_jupyter_notebook=False,
+            is_marimo_notebook=False,
+        )
+
+        mock_html_class = MagicMock()
+        mock_ipy_display = MagicMock(return_value="displayed")
+
+        with patch('IPython.display.HTML', mock_html_class), \
+             patch('IPython.display.display', mock_ipy_display):
+            result = _display_html("<div>test</div>", env)
+            mock_html_class.assert_called_once_with("<div>test</div>")
+
+    def test_display_html_marimo(self):
+        """Test _display_html uses marimo.Html when in marimo."""
+        from cnotebook import _display_html
+
+        env = CNotebookEnvInfo(
+            pandas_version="",
+            polars_version="",
+            ipython_version="",
+            marimo_version="0.1.0",
+            molgrid_available=False,
+            c3d_available=False,
+            is_jupyter_notebook=False,
+            is_marimo_notebook=True,
+        )
+
+        mock_mo = MagicMock()
+        mock_mo.Html.return_value = "marimo_html"
+
+        with patch.dict('sys.modules', {'marimo': mock_mo}):
+            result = _display_html("<div>test</div>", env)
+            mock_mo.Html.assert_called_once_with("<div>test</div>")
+            assert result == "marimo_html"

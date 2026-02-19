@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.11"
 app = marimo.App(width="medium")
 
 
@@ -9,13 +9,22 @@ def _():
     import marimo as mo
     import cnotebook
     from cnotebook import molgrid
-    import polars as pl
-    import oepolars as oeplr
+    import pandas as pd
+    import oepandas as oepd
     from pathlib import Path
     from openeye import oechem, oedepict
 
-    DEMO_DIRECTORY = Path(__file__).parent
-    return DEMO_DIRECTORY, cnotebook, mo, molgrid, oechem, oedepict, oeplr, pl
+    EXAMPLES_DIRECTORY = Path(__file__).parent.parent
+    return (
+        EXAMPLES_DIRECTORY,
+        cnotebook,
+        mo,
+        molgrid,
+        oechem,
+        oedepict,
+        oepd,
+        pd,
+    )
 
 
 @app.cell(hide_code=True)
@@ -27,7 +36,7 @@ def _(mo):
       - [Displaying Grids of Molecules](#displaying-grids-of-molecules)
       - [Design Units](#design-units)
       - [Advanced: Changing the Rendering Options](#advanced-changing-the-rendering-options)
-    - [Polars Usage](#polars-usage)
+    - [Pandas Usage](#pandas-usage)
       - [Substructure Highlighting](#substructure-highlighting)
     - [Empty Molecules](#empty-molecules)
     - [Design Unit DataFrames](#design-unit-dataframes)
@@ -44,7 +53,7 @@ def _(mo):
 
     **Rendering Basic Molecules**
 
-    Let's start with just viewing any object that derives from```oechem.OEMolBase``` (scroll further if you are looking for Polars examples).
+    Let's start with just viewing any object that derives from```oechem.OEMolBase``` (scroll further if you are looking for Pandas examples).
     """)
     return
 
@@ -111,9 +120,9 @@ def _(oechem, oedepict, pyrimidine):
     # Highlight all the matches in the molecule
     for _match in _subs.Match(pyrimidine, True):
         oedepict.OEAddHighlighting(
-            _disp,
+            _disp, 
             oechem.OEColor(oechem.OELightBlue),
-            oedepict.OEHighlightStyle_Stick,
+            oedepict.OEHighlightStyle_Stick, 
             _match
         )
 
@@ -164,7 +173,7 @@ def _(molgrid, oechem):
     # Render into an interactive grid
     grid = molgrid(example_mols)
     grid.display()
-    return (example_mols, grid)
+    return (example_mols,)
 
 
 @app.cell(hide_code=True)
@@ -178,10 +187,10 @@ def _(mo):
 
 
 @app.cell
-def _(DEMO_DIRECTORY, oechem):
+def _(EXAMPLES_DIRECTORY, oechem):
     # Read an example design unit
     du = oechem.OEDesignUnit()
-    oechem.OEReadDesignUnit(str(DEMO_DIRECTORY / "assets" / "spruce_9Q03_ABC__DU__A1CM7_C-502.oedu"), du)
+    oechem.OEReadDesignUnit(str(EXAMPLES_DIRECTORY / "assets" / "spruce_9Q03_ABC__DU__A1CM7_C-502.oedu"), du)
 
     # Display it
     du
@@ -206,7 +215,7 @@ def _(mo):
     mo.md(r"""
     ## Advanced: Changing the Rendering Options
 
-    Basic rendering of molecules within Jupyter Notebooks is controlled by a global context. For simplicity, modifying the global context affects the display of molecules both in Marimo (i.e., when you display molecules as above) and in Polars, which has not yet been introduced.
+    Basic rendering of molecules within Jupyter Notebooks is controlled by a global context. For simplicity, modifying the global context affects the display of molecules both in Marimo (i.e., when you display molecules as above) and in Pandas, which has not yet been introduced.
     """)
     return
 
@@ -263,13 +272,10 @@ def _(ctx):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Polars Usage
+    # Pandas Usage
 
     Similar to the simple examples above, the idea was to develop something that "just works" in a Notebook. Most of the
     time you just don't want to have to think about it.
-
-    **Key Difference from Pandas**: Polars DataFrames are immutable. Operations that modify the DataFrame return a new
-    DataFrame rather than modifying the original in place. This is a fundamental difference from Pandas.
 
     Let's create a sample DataFrame with no molecule objects:
     """)
@@ -277,11 +283,15 @@ def _(mo):
 
 
 @app.cell
-def _(pl):
-    df = pl.DataFrame({
-        "Name": ["Benzene", "Pyridine", "Pyrimidine"],
-        "Molecule": ["c1ccccc1", "c1cnccc1", "n1cnccc1"]
-    })
+def _(pd):
+    data = [
+        {"Name": "Benzene", "Molecule": "c1ccccc1"},
+        {"Name": "Pyridine", "Molecule": "c1cnccc1"},
+        {"Name": "Pyrimidine", "Molecule": "n1cnccc1"}
+    ]
+
+    # Create the DataFrame
+    df = pd.DataFrame(data)
 
     # Display it
     df
@@ -291,22 +301,20 @@ def _(pl):
 @app.cell
 def _(mo):
     mo.md(r"""
-    Now let's convert the SMILES to molecules. This is easy with a transparent extension added to Polars by the ```OEPolars``` package.
-
-    **Note**: Unlike Pandas, Polars returns a new DataFrame instead of modifying in place:
+    Now let's convert the SMILES to molecules. This is easy with a transparent extension added to Pandas by the ```OEPandas``` package:
     """)
     return
 
 
 @app.cell
 def _(df):
-    # Convert the Polars series to molecules
-    # This returns a new DataFrame (Polars is immutable)
-    df_mol = df.chem.as_molecule("Molecule")
+    # Convert the Pandas series to molecules
+    # This can also take a list of columns to convert to molecule as well
+    df.chem.as_molecule("Molecule", inplace=True)
 
     # Display it
-    df_mol
-    return (df_mol,)
+    df
+    return
 
 
 @app.cell
@@ -318,24 +326,19 @@ def _(mo):
 
 
 @app.cell
-def _(df_mol):
-    print(df_mol.dtypes)
+def _(df):
+    print(df.dtypes)
     return
 
 
 @app.cell
-def _(df_mol, oechem, pl):
+def _(df, oechem):
     # Count the number of heavy atoms
-    df_with_count = df_mol.with_columns(
-        pl.col("Molecule").map_elements(
-            lambda x: oechem.OECount(x, oechem.OEIsHeavy()),
-            return_dtype=pl.Int64
-        ).alias("Heavy Atom Count")
-    )
+    df["Heavy Atom Count"] = df.Molecule.apply(lambda x: oechem.OECount(x, oechem.OEIsHeavy()))
 
     # Display it
-    df_with_count
-    return (df_with_count,)
+    df
+    return
 
 
 @app.cell
@@ -343,28 +346,28 @@ def _(mo):
     mo.md(r"""
     ## Substructure Highlighting
 
-    We can easily highlight substructures. With Polars, highlighting is applied at the DataFrame level to ensure metadata persists across column accesses:
+    We can easily highlight substructures:
     """)
     return
 
 
 @app.cell
-def _(df_with_count):
+def _(df):
     # Highlight aromatic N-C-N bonds
-    df_with_count.chem.highlight("Molecule", "ncn")
+    df.Molecule.chem.highlight("ncn")
 
     # Display it
-    df_with_count
+    df
     return
 
 
 @app.cell
-def _(df_with_count):
+def _(df):
     # Remove the highlighting (also removes any other display callbacks)
-    df_with_count.chem.reset_depictions()
+    df.chem.reset_depictions()
 
     # Display it
-    df_with_count
+    df
     return
 
 
@@ -377,28 +380,26 @@ def _(mo):
 
 
 @app.cell
-def _(df_with_count, pl):
+def _(df, pd):
     # Add a SMARTS column with patterns
-    df_with_smarts = df_with_count.with_columns(
-        pl.lit(["cc", "cnc", "ncn"]).alias("SMARTS")
-    )
-    df_with_smarts.head()
-    return (df_with_smarts,)
+    df["SMARTS"] = pd.Series(["cc", "cnc", "ncn"], dtype=str)
+    df.head()
+    return
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
-    Let's highlight those patterns. Note that ```highlight_using_column``` returns a new DataFrame with the highlighted column:
+    Let's highlight those patterns.
     """)
     return
 
 
 @app.cell
-def _(df_with_smarts):
-    df_highlighted = df_with_smarts.chem.highlight_using_column("Molecule", "SMARTS")
-    df_highlighted
-    return (df_highlighted,)
+def _(df):
+    df.chem.highlight_using_column("Molecule", "SMARTS", inplace=True)
+    df
+    return
 
 
 @app.cell
@@ -410,8 +411,8 @@ def _(mo):
 
 
 @app.cell
-def _(df_highlighted):
-    print(df_highlighted.dtypes)
+def _(df):
+    print(df.dtypes)
     return
 
 
@@ -432,7 +433,7 @@ def _(oechem):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md(r"""
     # Design Unit DataFrames
@@ -443,9 +444,9 @@ def _(mo):
 
 
 @app.cell
-def _(apo_du, du, pl):
+def _(apo_du, du, pd):
     # Create a DataFrame and indicate that "DesignUnit" is an OEDesignUnit column
-    du_df = pl.DataFrame({
+    du_df = pd.DataFrame({
         "DesignUnit": [du, apo_du],
         "Ligand": ["BCL6-760", "Apo"],
         "PDB ID": ["9Q03", "9Q03"],
@@ -473,9 +474,9 @@ def _(mo):
 
 
 @app.cell
-def _(DEMO_DIRECTORY, oeplr):
-    egfr_df = oeplr.read_smi(DEMO_DIRECTORY / "assets" / "egfr.smi")
-    egfr_df = egfr_df.rename({"Molecule": "Original"})
+def _(EXAMPLES_DIRECTORY, oepd):
+    egfr_df = oepd.read_smi(EXAMPLES_DIRECTORY / "assets" / "egfr.smi")
+    egfr_df = egfr_df.rename(columns={"Molecule": "Original"})
     egfr_df.head()
     return (egfr_df,)
 
@@ -489,9 +490,9 @@ def _(mo):
 
 
 @app.cell
-def _(DEMO_DIRECTORY, oechem):
+def _(EXAMPLES_DIRECTORY, oechem):
     alignment_template = oechem.OEQMol()
-    with oechem.oemolistream(str(DEMO_DIRECTORY / "assets" / "egfr_template.mol")) as _ifs:
+    with oechem.oemolistream(str(EXAMPLES_DIRECTORY / "assets" / "egfr_template.mol")) as _ifs:
         oechem.OEReadMDLQueryFile(_ifs, alignment_template)
 
     # Show the template
@@ -503,45 +504,32 @@ def _(DEMO_DIRECTORY, oechem):
 def _(mo):
     mo.md(r"""
     Let's take a look at the ```align_depictions``` route, first. We're creating a new column called ```Aligned``` so that we can compare it to the original structure.
-
-    **Note**: With Polars, we need to use ```deepcopy``` to create a copy of the molecules, then align them:
     """)
     return
 
 
 @app.cell
 def _(alignment_template, egfr_df):
-    # Create a deep copy of the Original column for alignment
-    aligned_series = egfr_df.get_column("Original").chem.deepcopy()
-    aligned_series.chem.align_depictions(alignment_template)
-
-    # Add the aligned column to the DataFrame
-    egfr_df_aligned = egfr_df.with_columns(aligned_series.alias("Aligned"))
-    egfr_df_aligned.head()
-    return aligned_series, egfr_df_aligned
+    egfr_df["Aligned"] = egfr_df.Original.chem.copy_molecules()
+    egfr_df.Aligned.chem.align_depictions(alignment_template)
+    egfr_df.head()
+    return
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
-    Now lets look at the highlight route. We first align the molecules using ```align_depictions```, then highlight the template substructure at the DataFrame level. This allows you to align and highlight using different templates if you wish.
+    Now lets look at the highlight route. Note that we are providing the template to the ```highlight``` function twice, once for actually highlighting the structure and once for aligning the structure. This allows you to align and highlight using different templates if you wish.
     """)
     return
 
 
 @app.cell
-def _(alignment_template, egfr_df_aligned):
-    # Create a deep copy for highlighting and align to the template
-    highlighted_series = egfr_df_aligned.get_column("Original").chem.deepcopy()
-    highlighted_series.chem.align_depictions(alignment_template)
-
-    # Add the aligned column to the DataFrame
-    egfr_df_full = egfr_df_aligned.with_columns(highlighted_series.alias("Highlighted"))
-
-    # Highlight the template substructure
-    egfr_df_full.chem.highlight("Highlighted", alignment_template)
-    egfr_df_full.head()
-    return (egfr_df_full,)
+def _(alignment_template, egfr_df):
+    egfr_df["Highlighted"] = egfr_df.Original.chem.copy_molecules()
+    egfr_df.Highlighted.chem.highlight(alignment_template, ref=alignment_template)
+    egfr_df.head()
+    return
 
 
 @app.cell
@@ -559,11 +547,11 @@ def _(mo):
 
 
 @app.cell
-def _(DEMO_DIRECTORY, oechem):
+def _(EXAMPLES_DIRECTORY, oechem):
     # Read a reference molecule
     refmol = oechem.OEGraphMol()
 
-    with oechem.oemolistream(str(DEMO_DIRECTORY / "assets" / "egfr.smi")) as ifs:
+    with oechem.oemolistream(str(EXAMPLES_DIRECTORY / "assets" / "egfr.smi")) as ifs:
         oechem.OEReadMolecule(ifs, refmol)
         refmol.SetTitle('')
 
@@ -573,14 +561,14 @@ def _(DEMO_DIRECTORY, oechem):
 
 
 @app.cell
-def _(DEMO_DIRECTORY, oeplr, refmol):
+def _(EXAMPLES_DIRECTORY, oepd, refmol):
     # Re-read the EGFR DataFrame
-    egfr_fpsim_df = oeplr.read_smi(str(DEMO_DIRECTORY / "assets" / "egfr.smi"))
+    egfr_fpsim_df = oepd.read_smi(str(EXAMPLES_DIRECTORY / "assets" / "egfr.smi"))
 
-    # Calculate fingerprint similarity (returns a new DataFrame)
-    egfr_fpsim_df = egfr_fpsim_df.chem.fingerprint_similarity("Molecule", refmol)
+    # Calculate fingerprint similarity
+    egfr_fpsim_df.chem.fingerprint_similarity("Molecule", refmol, inplace=True)
     egfr_fpsim_df.head()
-    return (egfr_fpsim_df,)
+    return
 
 
 @app.cell

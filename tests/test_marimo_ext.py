@@ -458,3 +458,180 @@ class TestPolarsSupport:
                 assert callable(cnotebook.marimo_ext.marimo_polars_formatter)
         except ImportError:
             pytest.skip("Marimo not installed")
+
+
+class TestCreateMoleculeFormatter:
+    """Test the _create_molecule_formatter factory function"""
+
+    def test_none_returns_empty(self):
+        """Test that formatter returns empty string for None input"""
+        from cnotebook.marimo_ext import _create_molecule_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_molecule_formatter(ctx)
+        assert formatter(None) == ""
+
+    def test_non_molecule_returns_str(self):
+        """Test that formatter returns str() for non-OEMolBase input"""
+        from cnotebook.marimo_ext import _create_molecule_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_molecule_formatter(ctx)
+        assert formatter("hello") == "hello"
+
+    def test_valid_molecule_with_callbacks(self):
+        """Test that valid molecule with callbacks uses oemol_to_disp and applies callbacks"""
+        from cnotebook.marimo_ext import _create_molecule_formatter
+        from cnotebook.context import CNotebookContext
+
+        callback_called = []
+
+        def my_callback(disp):
+            callback_called.append(disp)
+
+        ctx = CNotebookContext(callbacks=[my_callback])
+        formatter = _create_molecule_formatter(ctx)
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        result = formatter(mol)
+
+        assert len(callback_called) == 1
+        assert isinstance(callback_called[0], oedepict.OE2DMolDisplay)
+        assert isinstance(result, oedepict.OEImage)
+
+    def test_valid_molecule_without_callbacks(self):
+        """Test that valid molecule without callbacks falls back to oemol_to_image"""
+        from cnotebook.marimo_ext import _create_molecule_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(callbacks=[])
+        formatter = _create_molecule_formatter(ctx)
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        result = formatter(mol)
+
+        assert isinstance(result, oedepict.OEImage)
+
+
+class TestCreateDisplayFormatter:
+    """Test the _create_display_formatter factory function"""
+
+    def test_none_returns_empty(self):
+        """Test that formatter returns empty string for None input"""
+        from cnotebook.marimo_ext import _create_display_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_display_formatter(ctx)
+        assert formatter(None) == ""
+
+    def test_non_display_returns_str(self):
+        """Test that formatter returns str() for non-OE2DMolDisplay input"""
+        from cnotebook.marimo_ext import _create_display_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_display_formatter(ctx)
+        assert formatter("hello") == "hello"
+
+    def test_invalid_display_returns_str(self):
+        """Test that formatter returns str() for invalid display object"""
+        from cnotebook.marimo_ext import _create_display_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_display_formatter(ctx)
+
+        # Create a display from an empty molecule (0 atoms)
+        empty_mol = oechem.OEGraphMol()
+        disp = oedepict.OE2DMolDisplay(empty_mol, oedepict.OE2DMolDisplayOptions())
+
+        if disp.IsValid():
+            # Some toolkit versions consider empty displays valid;
+            # in that case the formatter renders to an OEImage
+            result = formatter(disp)
+            assert isinstance(result, oedepict.OEImage)
+        else:
+            # Invalid display falls through to str()
+            result = formatter(disp)
+            assert isinstance(result, str)
+
+    def test_valid_display_with_callbacks(self):
+        """Test that valid display with callbacks copies and applies callbacks"""
+        from cnotebook.marimo_ext import _create_display_formatter
+        from cnotebook.context import CNotebookContext
+
+        callback = MagicMock()
+        ctx = CNotebookContext(callbacks=[callback])
+        formatter = _create_display_formatter(ctx)
+
+        # Create a real molecule and display
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        oedepict.OEPrepareDepiction(mol)
+        disp = oedepict.OE2DMolDisplay(mol, ctx.display_options)
+
+        result = formatter(disp)
+
+        # Verify callback was applied
+        callback.assert_called_once()
+        # Result should be an OEImage
+        assert isinstance(result, oedepict.OEImage)
+
+
+class TestCreateDuFormatter:
+    """Test the _create_du_formatter factory function"""
+
+    def test_none_returns_empty(self):
+        """Test that formatter returns empty string for None input"""
+        from cnotebook.marimo_ext import _create_du_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_du_formatter(ctx)
+        assert formatter(None) == ""
+
+    def test_non_du_returns_str(self):
+        """Test that formatter returns str() for non-OEDesignUnit input"""
+        from cnotebook.marimo_ext import _create_du_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_du_formatter(ctx)
+        assert formatter("hello") == "hello"
+
+    def test_valid_du(self):
+        """Test that valid OEDesignUnit is rendered to an OEImage"""
+        from cnotebook.marimo_ext import _create_du_formatter
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext()
+        formatter = _create_du_formatter(ctx)
+
+        # Empty DesignUnit (apo, no ligand) still produces an OEImage
+        du = oechem.OEDesignUnit()
+
+        result = formatter(du)
+        assert isinstance(result, oedepict.OEImage)
+
+
+class TestDisplayDataframe:
+    """Test the _display_dataframe function"""
+
+    def test_pandas_dataframe_mime_returns_html(self):
+        """Test that _display_dataframe returns text/html MIME tuple"""
+        from cnotebook.marimo_ext import _display_dataframe
+        import pandas as pd
+
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        mime_type, content = _display_dataframe(df)
+
+        assert mime_type == "text/html"
+        assert isinstance(content, str)
+        assert len(content) > 0

@@ -7,8 +7,8 @@
 
 **Documentation:** https://cnotebook.readthedocs.io/en/latest/
 
-CNotebook provides chemistry visualization for Jupyter Notebooks and Marimo using the OpenEye Toolkits. 
-Import the package and your molecular data will automatically render as chemical structures without additional 
+CNotebook provides chemistry visualization for Jupyter Notebooks and Marimo using the OpenEye Toolkits.
+Import the package and your molecular data will automatically render as chemical structures without additional
 configuration.
 
 Supports both Pandas and Polars DataFrames with automatic environment detection.
@@ -33,14 +33,18 @@ Supports both Pandas and Polars DataFrames with automatic environment detection.
 <br>
 <img src="docs/_static/molgrid_cluster_view.png" height="450">
 
+**Interactive 3D molecule viewing with C3D**
+<br>
+View proteins, ligands, and design units in an interactive 3Dmol.js-powered viewer with a built-in GUI, terminal, and sidebar.
+
 ## Table of Contents
 
 - [Installation](#installation)
 - [Getting Started](#getting-started)
 - [Features](#features)
+- [C3D Interactive 3D Viewer](#c3d-interactive-3d-viewer)
 - [MolGrid Interactive Visualization](#molgrid-interactive-visualization)
 - [DataFrame Integration](#dataframe-integration)
-- [Advanced Usage](#advanced-usage)
 - [Example Notebooks](#example-notebooks)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
@@ -66,10 +70,10 @@ Both backends can be installed together, neither are required unless you want to
 
 The fastest way to learn CNotebook is through the example notebooks in the `examples/` directory:
 
-| Environment | Pandas                                                          | Polars                                                          | MolGrid                                                           |
-|-------------|-----------------------------------------------------------------|-----------------------------------------------------------------|-------------------------------------------------------------------|
-| **Jupyter** | [pandas_jupyter_demo.ipynb](examples/pandas_jupyter_demo.ipynb) | [polars_jupyter_demo.ipynb](examples/polars_jupyter_demo.ipynb) | [molgrid_jupyter_demo.ipynb](examples/molgrid_jupyter_demo.ipynb) |
-| **Marimo**  | [pandas_marimo_demo.py](examples/pandas_marimo_demo.py)         | [polars_marimo_demo.py](examples/polars_marimo_demo.py)         | [molgrid_marimo_demo.py](examples/molgrid_marimo_demo.py)         |
+| Environment | Pandas                                                                        | Polars                                                                        | MolGrid                                                                             |
+|-------------|-------------------------------------------------------------------------------|-------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
+| **Jupyter** | [pandas_jupyter_demo.ipynb](examples/01-demo/pandas_jupyter_demo.ipynb)       | [polars_jupyter_demo.ipynb](examples/01-demo/polars_jupyter_demo.ipynb)       | [molgrid_jupyter_demo.ipynb](examples/02-molgrid/molgrid_jupyter_demo.ipynb)        |
+| **Marimo**  | [pandas_marimo_demo.py](examples/01-demo/pandas_marimo_demo.py)               | [polars_marimo_demo.py](examples/01-demo/polars_marimo_demo.py)               | [molgrid_marimo_demo.py](examples/02-molgrid/molgrid_marimo_demo.py)                |
 
 ### Basic Usage
 
@@ -98,6 +102,7 @@ CNotebook registers formatters so OpenEye molecule objects display as chemical s
 ### Molecule Support
 - Direct rendering of `oechem.OEMolBase` objects
 - Advanced rendering with `OE2DMolDisplay` options
+- `OEDesignUnit` rendering (protein-ligand complexes)
 - Pandas integration via OEPandas
 - Polars integration via OEPolars
 
@@ -106,6 +111,16 @@ CNotebook registers formatters so OpenEye molecule objects display as chemical s
 - Configurable width, height, and scaling
 - Substructure highlighting with SMARTS patterns
 - Molecular alignment to reference structures
+
+### C3D Interactive 3D Viewer
+- Self-contained 3Dmol.js viewer with built-in GUI
+- Builder-style API for adding molecules and design units
+- View presets (`simple`, `sites`, `ball-and-stick`)
+- Custom atom styles and selections
+- String-based selection expressions (e.g., `"resn 502"`, `"chain A"`)
+- Configurable sidebar, menubar, and terminal panels
+- Enable/disable individual molecules at load time
+- Works in both Jupyter and Marimo
 
 ### MolGrid Interactive Visualization
 - Paginated grid display for browsing molecules
@@ -122,6 +137,82 @@ CNotebook registers formatters so OpenEye molecule objects display as chemical s
 - Molecular alignment within DataFrames
 - Fingerprint similarity visualization
 - Property calculations on molecule columns
+
+## C3D Interactive 3D Viewer
+
+C3D provides an interactive 3D molecule viewer powered by [3Dmol.js](https://3dmol.csb.pitt.edu/) with a built-in GUI. It renders self-contained HTML with no external network requests, making it suitable for offline use and secure environments.
+
+### Basic Example
+
+```python
+from cnotebook.c3d import C3D
+from openeye import oechem
+
+mol = oechem.OEMol()
+oechem.OESmilesToMol(mol, "c1ccccc1")
+
+viewer = C3D(width=800, height=600).add_molecule(mol, name="benzene")
+viewer.display()
+```
+
+### Design Units
+
+Load protein-ligand complexes from OpenEye design units:
+
+```python
+from cnotebook.c3d import C3D
+from openeye import oechem
+
+du = oechem.OEDesignUnit()
+oechem.OEReadDesignUnit("complex.oedu", du)
+
+viewer = (
+    C3D(width=800, height=800)
+    .add_design_unit(du, name="complex")
+    .set_preset("sites")
+    .zoom_to("resn 502")
+)
+viewer.display()
+```
+
+### View Presets
+
+C3D includes compound view presets that combine multiple representations:
+
+- **`simple`** - Element-coloured cartoon with per-chain carbons and sticks for ligands
+- **`sites`** - Like `simple`, plus stick representation for residues within 5 angstroms of ligands
+- **`ball-and-stick`** - Ball-and-stick for ligands only
+
+### Builder API
+
+All methods return `self` for chaining:
+
+```python
+viewer = (
+    C3D(width=1024, height=768)
+    .add_molecule(mol, name="ligand")
+    .add_design_unit(du, name="protein", disabled=True)
+    .add_style({"chain": "A"}, "cartoon", color="blue")
+    .set_preset("sites")
+    .set_ui(sidebar=True, menubar=True, terminal=False)
+    .set_background("#ffffff")
+    .zoom_to({"chain": "A"})
+)
+viewer.display()
+```
+
+### Disabled Molecules
+
+Molecules can be loaded in a hidden state and toggled via the sidebar:
+
+```python
+viewer = (
+    C3D()
+    .add_molecule(mol1, name="active")
+    .add_molecule(mol2, name="hidden", disabled=True)
+)
+viewer.display()
+```
 
 ## MolGrid Interactive Visualization
 
@@ -270,18 +361,17 @@ The `examples/` directory contains comprehensive tutorials for learning CNoteboo
 
 ### Jupyter Notebooks
 
-- **[pandas_jupyter_demo.ipynb](examples/pandas_jupyter_demo.ipynb)** - Complete Pandas integration tutorial covering molecule rendering, highlighting, alignment, and fingerprint similarity
-- **[polars_jupyter_demo.ipynb](examples/polars_jupyter_demo.ipynb)** - Complete Polars integration tutorial with the same features adapted for Polars patterns
-- **[molgrid_jupyter_demo.ipynb](examples/molgrid_jupyter_demo.ipynb)** - Interactive molecule grid tutorial with search, selection, and export features
-- **[pandas_jupyter_cluster_viewing.ipynb](examples/pandas_jupyter_cluster_viewing.ipynb)** - Viewing clustering results in molecule grids using Pandas
-- 
-- **[pandas_jupyter_svgs.ipynb](examples/pandas_jupyter_svgs.ipynb)** - SVG vs PNG rendering comparison and quality considerations
+- **[pandas_jupyter_demo.ipynb](examples/01-demo/pandas_jupyter_demo.ipynb)** - Complete Pandas integration tutorial covering molecule rendering, highlighting, alignment, and fingerprint similarity
+- **[polars_jupyter_demo.ipynb](examples/01-demo/polars_jupyter_demo.ipynb)** - Complete Polars integration tutorial with the same features adapted for Polars patterns
+- **[molgrid_jupyter_demo.ipynb](examples/02-molgrid/molgrid_jupyter_demo.ipynb)** - Interactive molecule grid tutorial with search, selection, and export features
+- **[pandas_jupyter_cluster_viewing.ipynb](examples/03-clusters/pandas_jupyter_cluster_viewing.ipynb)** - Viewing clustering results in molecule grids using Pandas
+- **[pandas_jupyter_svgs.ipynb](examples/01-demo/pandas_jupyter_svgs.ipynb)** - SVG vs PNG rendering comparison and quality considerations
 
 ### Marimo Applications
 
-- **[pandas_marimo_demo.py](examples/pandas_marimo_demo.py)** - Pandas tutorial in reactive Marimo environment
-- **[polars_marimo_demo.py](examples/polars_marimo_demo.py)** - Polars tutorial in reactive Marimo environment
-- **[molgrid_marimo_demo.py](examples/molgrid_marimo_demo.py)** - MolGrid tutorial with reactive selection feedback
+- **[pandas_marimo_demo.py](examples/01-demo/pandas_marimo_demo.py)** - Pandas tutorial in reactive Marimo environment
+- **[polars_marimo_demo.py](examples/01-demo/polars_marimo_demo.py)** - Polars tutorial in reactive Marimo environment
+- **[molgrid_marimo_demo.py](examples/02-molgrid/molgrid_marimo_demo.py)** - MolGrid tutorial with reactive selection feedback
 
 **Recommended starting point:** Begin with the MolGrid demo for your preferred environment, then explore the Pandas or Polars tutorials for DataFrame integration.
 

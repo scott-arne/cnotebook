@@ -8,6 +8,7 @@ This section provides detailed API documentation for all CNotebook modules.
 
    cnotebook
    molgrid
+   c3d
    context
    render
    pandas_ext
@@ -43,6 +44,8 @@ Visualization
      - Description
    * - :doc:`molgrid`
      - Interactive molecule grid visualization
+   * - :doc:`c3d`
+     - Interactive 3D molecule viewer (3Dmol.js)
 
 DataFrame Extensions
 ^^^^^^^^^^^^^^^^^^^^

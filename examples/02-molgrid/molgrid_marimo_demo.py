@@ -17,12 +17,10 @@ Run with: marimo run molgrid_marimo_demo.py
 
 import marimo
 
-__generated_with = "0.10.0"
+__generated_with = "0.19.11"
 app = marimo.App(width="medium")
 
-
-@app.cell
-def setup():
+with app.setup:
     """Import required packages."""
     import marimo as mo
     import cnotebook
@@ -31,11 +29,9 @@ def setup():
     import pandas as pd
     import oepandas as oepd
 
-    return MolGrid, cnotebook, mo, molgrid, oechem, oepd, pd
-
 
 @app.cell
-def intro(mo):
+def intro():
     """Introduction."""
     mo.md(
         """
@@ -57,7 +53,7 @@ def intro(mo):
 
 
 @app.cell(hide_code=True)
-def toc(mo):
+def toc():
     """Table of Contents."""
     mo.md(
         """
@@ -79,9 +75,9 @@ def toc(mo):
 
 
 @app.cell
-def create_molecules(oechem):
+def create_molecules():
     """Create test molecules."""
-    smiles_data = [
+    _smiles_data = [
         ("CCO", "Ethanol"),
         ("CC(=O)O", "Acetic Acid"),
         ("c1ccccc1", "Benzene"),
@@ -97,19 +93,18 @@ def create_molecules(oechem):
     ]
 
     molecules = []
-    for smi, name in smiles_data:
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, smi)
-        mol.SetTitle(name)
-        oechem.OESetSDData(mol, "MW", f"{oechem.OECalculateMolecularWeight(mol):.2f}")
-        oechem.OESetSDData(mol, "Formula", oechem.OEMolecularFormula(mol))
-        molecules.append(mol)
-
-    return molecules, smiles_data
+    for _smi, _name in _smiles_data:
+        _mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(_mol, _smi)
+        _mol.SetTitle(_name)
+        oechem.OESetSDData(_mol, "MW", f"{oechem.OECalculateMolecularWeight(_mol):.2f}")
+        oechem.OESetSDData(_mol, "Formula", oechem.OEMolecularFormula(_mol))
+        molecules.append(_mol)
+    return (molecules,)
 
 
 @app.cell
-def basic_usage_header(mo):
+def basic_usage_header():
     """Basic usage header."""
     mo.md(
         """
@@ -122,20 +117,21 @@ def basic_usage_header(mo):
 
 
 @app.cell
-def basic_grid(MolGrid, molecules):
+def basic_grid(molecules):
     """Create a basic grid."""
     grid = MolGrid(molecules, n_items_per_page=6)
-    return grid,
+    return (grid,)
 
 
 @app.cell
 def display_basic_grid(grid):
     """Display the basic grid."""
     grid.display()
+    return
 
 
 @app.cell
-def customization_header(mo):
+def customization_header():
     """Customization header."""
     mo.md(
         """
@@ -151,7 +147,7 @@ def customization_header(mo):
 
 
 @app.cell
-def custom_grid(MolGrid, molecules):
+def custom_grid(molecules):
     """Create a customized grid."""
     custom_grid = MolGrid(
         molecules,
@@ -161,17 +157,18 @@ def custom_grid(MolGrid, molecules):
         n_items_per_page=8,
         title=True,
     )
-    return custom_grid,
+    return (custom_grid,)
 
 
 @app.cell
 def display_custom_grid(custom_grid):
     """Display customized grid."""
     custom_grid.display()
+    return
 
 
 @app.cell
-def search_header(mo):
+def search_header():
     """Search and filtering header."""
     mo.md(
         """
@@ -193,20 +190,21 @@ def search_header(mo):
 
 
 @app.cell
-def search_grid(MolGrid, molecules):
+def search_grid(molecules):
     """Create a grid for search demonstration."""
     search_grid = MolGrid(molecules, n_items_per_page=8)
-    return search_grid,
+    return (search_grid,)
 
 
 @app.cell
 def display_search_grid(search_grid):
     """Display search grid."""
     search_grid.display()
+    return
 
 
 @app.cell
-def selection_header(mo):
+def selection_header():
     """Selection header."""
     mo.md(
         """
@@ -227,44 +225,45 @@ def selection_header(mo):
 
 
 @app.cell
-def selection_grid(MolGrid, molecules):
+def selection_grid(molecules):
     """Create a grid for selection demonstration."""
     selection_grid = MolGrid(molecules, select=True, name="selection-demo")
-    return selection_grid,
+    return (selection_grid,)
 
 
 @app.cell
 def display_selection_grid(selection_grid):
     """Display selection grid."""
     selection_grid.display()
+    return
 
 
 @app.cell
-def get_selection(mo, selection_grid):
+def get_selection(selection_grid):
     """Display selected molecules."""
     selected_mols = selection_grid.get_selection()
     indices = selection_grid.get_selection_indices()
 
     if selected_mols:
-        names = [mol.GetTitle() for mol in selected_mols]
+        _names = [_mol.GetTitle() for _mol in selected_mols]
         mo.md(
             f"""
             ### Selected Molecules
 
             **Count:** {len(selected_mols)}
 
-            **Names:** {', '.join(names)}
+            **Names:** {', '.join(_names)}
 
             **Indices:** {indices}
             """
         )
     else:
         mo.md("*No molecules selected. Click on molecules in the grid above to select them.*")
-    return indices, selected_mols
+    return
 
 
 @app.cell
-def info_button_header(mo):
+def info_button_header():
     """Info button header."""
     mo.md(
         """
@@ -286,24 +285,25 @@ def info_button_header(mo):
 
 
 @app.cell
-def info_grid(MolGrid, molecules):
+def info_grid(molecules):
     """Create a grid with info fields."""
     info_grid = MolGrid(
         molecules,
         data=["MW", "Formula"],
         n_items_per_page=6,
     )
-    return info_grid,
+    return (info_grid,)
 
 
 @app.cell
 def display_info_grid(info_grid):
     """Display info grid."""
     info_grid.display()
+    return
 
 
 @app.cell
-def dataframe_header(mo):
+def dataframe_header():
     """DataFrame integration header."""
     mo.md(
         """
@@ -319,7 +319,7 @@ def dataframe_header(mo):
 
 
 @app.cell
-def create_dataframe(oechem, oepd, pd):
+def create_dataframe():
     """Create a DataFrame with molecules."""
     df = pd.DataFrame(
         {
@@ -345,21 +345,20 @@ def create_dataframe(oechem, oepd, pd):
     )
 
     # Convert SMILES to molecules
-    mols = []
+    _mols = []
     for _, row in df.iterrows():
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, row["SMILES"])
-        mol.SetTitle(row["Name"])
-        mols.append(mol)
+        _mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(_mol, row["SMILES"])
+        _mol.SetTitle(row["Name"])
+        _mols.append(_mol)
 
-    df["Molecule"] = mols
+    df["Molecule"] = _mols
     df["Molecule"] = df["Molecule"].astype(oepd.MoleculeDtype())
-
-    return df, mols
+    return (df,)
 
 
 @app.cell
-def show_dataframe(df, mo):
+def show_dataframe():
     """Display the DataFrame."""
     mo.md("### Sample DataFrame")
     return
@@ -369,10 +368,11 @@ def show_dataframe(df, mo):
 def display_df(df):
     """Show DataFrame."""
     df
+    return
 
 
 @app.cell
-def df_grid(MolGrid, df):
+def df_grid(df):
     """Create a grid from DataFrame."""
     df_grid = MolGrid(
         df["Molecule"].tolist(),
@@ -381,17 +381,18 @@ def df_grid(MolGrid, df):
         data=["Category", "MW"],
         n_items_per_page=6,
     )
-    return df_grid,
+    return (df_grid,)
 
 
 @app.cell
 def display_df_grid(df_grid):
     """Display DataFrame grid."""
     df_grid.display()
+    return
 
 
 @app.cell
-def auto_detection(df_grid, mo):
+def auto_detection(df_grid):
     """Show auto-detected fields."""
     mo.md(
         f"""
@@ -406,7 +407,7 @@ def auto_detection(df_grid, mo):
 
 
 @app.cell
-def complete_example_header(mo):
+def complete_example_header():
     """Complete example header."""
     mo.md(
         """
@@ -419,7 +420,7 @@ def complete_example_header(mo):
 
 
 @app.cell
-def complete_grid(MolGrid, df):
+def complete_grid(df):
     """Create a comprehensive grid."""
     complete_grid = MolGrid(
         df["Molecule"].tolist(),
@@ -436,17 +437,18 @@ def complete_grid(MolGrid, df):
         information=True,
         name="complete-demo",
     )
-    return complete_grid,
+    return (complete_grid,)
 
 
 @app.cell
 def display_complete_grid(complete_grid):
     """Display comprehensive grid."""
     complete_grid.display()
+    return
 
 
 @app.cell
-def api_reference(mo):
+def api_reference():
     """API Reference."""
     mo.md(
         """

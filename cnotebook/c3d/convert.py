@@ -22,15 +22,19 @@ class MoleculeData:
     :param data: String content (SDF or PDB format).
     :param format: Format identifier (``"sdf"`` or ``"pdb"``).
     :param source_type: Origin type (``"molecule"`` or ``"design_unit"``).
+    :param num_atoms: Number of atoms in the molecule.
+    :param disabled: If True, the entry is hidden when the viewer starts.
     """
 
     name: str
     data: str
     format: str
     source_type: str
+    num_atoms: int = 0
+    disabled: bool = False
 
 
-def convert_molecule(mol: oechem.OEMolBase, name: str | None = None) -> MoleculeData:
+def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: bool = False) -> MoleculeData:
     """Convert an OpenEye molecule to SDF string data for 3Dmol.js.
 
     If the molecule lacks 3D coordinates, conformer generation is
@@ -70,10 +74,12 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None) -> Molecule
         data=sdf_string,
         format="sdf",
         source_type="molecule",
+        num_atoms=mol.NumAtoms(),
+        disabled=disabled,
     )
 
 
-def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None) -> MoleculeData:
+def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabled: bool = False) -> MoleculeData:
     """Convert an OpenEye design unit to PDB string data for 3Dmol.js.
 
     Extracts the full complex (all components) from the design unit and
@@ -102,13 +108,18 @@ def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None) -> Mol
         title = du.GetTitle()
         name = title if title else "design_unit"
 
-    pdb_string = _du_to_pdb_string(du)
+    complex_mol = oechem.OEGraphMol()
+    du.GetComponents(complex_mol, oechem.OEDesignUnitComponents_All)
+    num_atoms = complex_mol.NumAtoms()
+    pdb_string = _mol_to_pdb_string(complex_mol)
 
     return MoleculeData(
         name=name,
         data=pdb_string,
         format="pdb",
         source_type="design_unit",
+        num_atoms=num_atoms,
+        disabled=disabled,
     )
 
 
@@ -130,19 +141,16 @@ def _mol_to_sdf_string(mol: oechem.OEMolBase) -> str:
     return oms.GetString().decode("utf-8")
 
 
-def _du_to_pdb_string(du: oechem.OEDesignUnit) -> str:
-    """Extract all components from a design unit and write as PDB.
+def _mol_to_pdb_string(mol: oechem.OEMolBase) -> str:
+    """Write an OEMolBase to a PDB-format string.
 
-    :param du: Design unit to extract from.
+    :param mol: Molecule with valid 3D coordinates.
     :returns: PDB-format string with ATOM/HETATM records.
     """
-    complex_mol = oechem.OEGraphMol()
-    du.GetComponents(complex_mol, oechem.OEDesignUnitComponents_All)
-
     oms = oechem.oemolostream()
     oms.openstring()
     oms.SetFormat(oechem.OEFormat_PDB)
-    oechem.OEWriteMolecule(oms, complex_mol)
+    oechem.OEWriteMolecule(oms, mol)
     return oms.GetString().decode("utf-8")
 
 
@@ -157,11 +165,12 @@ def _ensure_3d_coords(mol: oechem.OEMolBase) -> oechem.OEMolBase:
     :returns: Molecule with 3D coordinates (may be a new OEMol copy).
     :raises ValueError: If Omega conformer generation fails.
     """
-    if mol.GetDimension() == 3:
+    # 2D and 3D are OK
+    if mol.GetDimension() >= 2:
         return mol
 
     log.warning(
-        "Molecule '%s' lacks 3D coordinates; generating with Omega.",
+        "Molecule '%s' lacks 3D coordinates; generating with OEOmega.",
         mol.GetTitle() or "untitled",
     )
 

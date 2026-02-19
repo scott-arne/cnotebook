@@ -14,6 +14,7 @@ release = "2.0.0"
 
 # General configuration
 extensions = [
+    "sphinx_iframes",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",

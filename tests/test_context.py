@@ -360,3 +360,62 @@ class TestEnum:
         assert isinstance(DEFERRED, _Deferred)
         assert DEFERRED == _Deferred.value
         assert DEFERRED.value == 0
+
+
+class TestCNotebookContextEdgeCases:
+    """Edge case tests for CNotebookContext covering additional branches."""
+
+    def test_callbacks_invalid_type_raises(self):
+        """Test that passing an invalid type for callbacks raises TypeError."""
+        with pytest.raises(TypeError, match="Invalid type for display callbacks"):
+            CNotebookContext(callbacks=123)
+
+    @patch('cnotebook.context.log.warning')
+    def test_max_width_below_width_warns(self, mock_warning):
+        """Test that setting max_width below current width triggers a warning."""
+        ctx = CNotebookContext(width=500)
+        ctx.max_width = 400
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "max_width" in warning_msg
+
+    @patch('cnotebook.context.log.warning')
+    def test_max_height_below_height_warns(self, mock_warning):
+        """Test that setting max_height below current height triggers a warning."""
+        ctx = CNotebookContext(height=500)
+        ctx.max_height = 400
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "max_height" in warning_msg
+
+    def test_setters_coverage(self):
+        """Exercise min_height, atom_label_font_scale, title_font_scale,
+        bond_width_scaling, and title setters."""
+        ctx = CNotebookContext()
+
+        ctx.min_height = 300.0
+        assert ctx.min_height == 300.0
+
+        ctx.atom_label_font_scale = 1.5
+        assert ctx.atom_label_font_scale == 1.5
+
+        ctx.title_font_scale = 0.8
+        assert ctx.title_font_scale == 0.8
+
+        ctx.bond_width_scaling = True
+        assert ctx.bond_width_scaling is True
+
+        ctx.title = False
+        assert ctx.title is False
+
+    def test_create_molecule_display_size_enforcement(self):
+        """Test that create_molecule_display respects max_width constraint."""
+        ctx = CNotebookContext(max_width=200)
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")  # large molecule
+        oedepict.OEPrepareDepiction(mol)
+
+        disp = ctx.create_molecule_display(mol)
+        assert isinstance(disp, oedepict.OE2DMolDisplay)
+        assert disp.GetWidth() <= 200

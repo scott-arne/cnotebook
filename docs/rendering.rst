@@ -85,7 +85,50 @@ Outputs:
 Design Units
 ---------------
 
-`Coming soon!`
+OpenEye ``OEDesignUnit`` objects are supported natively in both 2D and 3D contexts.
+
+**2D Rendering (Marimo)**
+
+In Marimo, ``OEDesignUnit`` objects are automatically formatted as 2D images
+when displayed in a notebook cell. The design unit title and a structure overview
+are rendered using the standard CNotebook rendering pipeline.
+
+.. code-block:: python
+    from openeye import oechem
+    from cnotebook.c3d import C3D
+
+    du = oechem.OEDesignUnit()
+    oechem.OEReadDesignUnit("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu", du)
+
+    # Display it
+    du
+
+.. image:: _static/design_unit_image.png
+
+**3D Viewing (C3D)**
+
+For interactive 3D visualization of design units, use the :doc:`C3D viewer <c3d>`:
+
+.. code-block:: python
+
+    from openeye import oechem
+    from cnotebook.c3d import C3D
+
+    du = oechem.OEDesignUnit()
+    oechem.OEReadDesignUnit("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu", du)
+
+    viewer = (
+        C3D()
+        .add_design_unit(du, name="complex")
+        .set_preset("sites")
+        .orient("resi 502")
+    )
+    viewer.display()
+
+.. iframe:: _static/c3d-design-unit.html
+
+The design unit's full complex (all components) is extracted and converted to PDB
+format for 3Dmol.js. See :doc:`c3d` for full documentation of the 3D viewer.
 
 Substructure Highlighting
 -------------------------

@@ -177,3 +177,31 @@ class TestConvertDesignUnit:
         """Passing None should raise TypeError."""
         with pytest.raises(TypeError, match="Expected OEDesignUnit"):
             convert_design_unit(None)
+
+
+# ---------------------------------------------------------------------------
+# TestEnsure3DCoords
+# ---------------------------------------------------------------------------
+
+
+class TestEnsure3DCoords:
+    """Tests for the _ensure_3d_coords helper."""
+
+    def test_ensure_3d_coords_generates_conformer(self):
+        """A SMILES-only molecule (dimension 0) should get 3D coords via Omega."""
+        from cnotebook.c3d.convert import _ensure_3d_coords
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        assert mol.GetDimension() == 0
+
+        result = _ensure_3d_coords(mol)
+        # Omega should have produced a molecule with dimension >= 2
+        assert result.GetDimension() >= 2
+
+    def test_ensure_3d_coords_3d_passthrough(self, mol_3d):
+        """A molecule that already has 3D coords should be returned unchanged."""
+        from cnotebook.c3d.convert import _ensure_3d_coords
+
+        result = _ensure_3d_coords(mol_3d)
+        assert result is mol_3d
