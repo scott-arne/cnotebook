@@ -117,7 +117,8 @@ class CNotebookContext:
             bond_width_scaling: bool | _Deferred = False,
             callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None | _Deferred = None,
             scope: Literal["local", "global"] = "global",
-            title: bool = True
+            title: bool = True,
+            max_heavy_atoms: int | None | _Deferred = 100
     ):
         """Create a rendering context.
 
@@ -137,6 +138,9 @@ class CNotebookContext:
         :param scope: Context scope - "local" defers unset values to global context,
             "global" uses defaults directly.
         :param title: Whether to display molecule titles.
+        :param max_heavy_atoms: Maximum number of heavy atoms for a molecule to be
+            rendered. Molecules exceeding this limit show a placeholder image instead.
+            Set to None to disable the limit.
         """
         self._width = DeferredValue[float]("width", width)
         self._height = DeferredValue[float]("height", height)
@@ -150,6 +154,7 @@ class CNotebookContext:
         self._image_format = DeferredValue[str]("image_format", image_format)
         self._bond_width_scaling = DeferredValue[bool]("bond_width_scaling", bond_width_scaling)
         self._title = DeferredValue[bool]("title", title)
+        self._max_heavy_atoms = DeferredValue[int | None]("max_heavy_atoms", max_heavy_atoms)
         self._scope = scope
 
         # Set the callbacks (and do some type checking)
@@ -292,6 +297,14 @@ class CNotebookContext:
         self._title.set(value)
 
     @property
+    def max_heavy_atoms(self) -> int | None:
+        return self._max_heavy_atoms.get()
+
+    @max_heavy_atoms.setter
+    def max_heavy_atoms(self, value: int | None) -> None:
+        self._max_heavy_atoms.set(value)
+
+    @property
     def image_mime_type(self) -> str:
         mime_type = self.supported_mime_types.get(self.image_format, None)
         if mime_type is None:
@@ -399,6 +412,7 @@ class CNotebookContext:
         self._image_format.reset()
         self._bond_width_scaling.reset()
         self._title.reset()
+        self._max_heavy_atoms.reset()
         self._callbacks.reset()
 
     def copy(self) -> 'CNotebookContext':
@@ -419,6 +433,7 @@ class CNotebookContext:
             image_format=self.image_format,
             bond_width_scaling=self.bond_width_scaling,
             callbacks=self.callbacks,
+            max_heavy_atoms=self.max_heavy_atoms,
         )
 
 
@@ -480,7 +495,8 @@ def create_local_context(
         title_font_scale: float = DEFERRED,
         image_format: str = DEFERRED,
         bond_width_scaling: bool = DEFERRED,
-        callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None = DEFERRED
+        callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None = DEFERRED,
+        max_heavy_atoms: int | None = DEFERRED
 ) -> CNotebookContext:
     return CNotebookContext(
         width=width,
@@ -494,6 +510,7 @@ def create_local_context(
         image_format=image_format,
         bond_width_scaling=bond_width_scaling,
         callbacks=callbacks,
+        max_heavy_atoms=max_heavy_atoms,
         scope="local"
     )
 

@@ -96,6 +96,12 @@ def _create_molecule_formatter(ctx):
         if not isinstance(mol, oechem.OEMolBase):
             return str(mol)
 
+        # Check heavy atom count for valid molecules
+        if (mol.IsValid()
+                and ctx.max_heavy_atoms is not None
+                and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
+            return oemol_to_image(mol, ctx=ctx)
+
         # Valid molecules with callbacks need the intermediate display step
         if mol.IsValid() and mol.NumAtoms() > 0 and ctx.callbacks:
             disp = oemol_to_disp(mol, ctx=ctx)

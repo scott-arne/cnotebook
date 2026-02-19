@@ -132,6 +132,85 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
     )
 
 
+def _create_exceeds_heavy_atoms_image(
+        mol: oechem.OEMolBase,
+        *,
+        ctx: CNotebookContext
+) -> oedepict.OEImage:
+    """Create a placeholder OEImage for molecules that exceed the heavy atom limit.
+
+    Draws "Exceeds Max Heavy Atoms" and "for Rendering" centered on two lines,
+    and optionally the molecule title below if ``ctx.title`` is enabled.
+
+    :param mol: Molecule (used to retrieve the title).
+    :param ctx: Render context.
+    :returns: Placeholder image.
+    """
+    image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+
+    center_x = ctx.min_width / 2
+    center_y = ctx.min_height / 2
+
+    font = oedepict.OEFont(
+        oedepict.OEFontFamily_Arial,
+        oedepict.OEFontStyle_Normal,
+        14,
+        oedepict.OEAlignment_Center,
+        oechem.OEDarkBlue
+    )
+
+    image.DrawText(
+        oedepict.OE2DPoint(center_x, center_y - 10),
+        "Exceeds Max Heavy Atoms",
+        font
+    )
+    image.DrawText(
+        oedepict.OE2DPoint(center_x, center_y + 10),
+        "for Rendering",
+        font
+    )
+
+    if ctx.title:
+        mol_title = mol.GetTitle()
+        if mol_title:
+            title_font = oedepict.OEFont(
+                oedepict.OEFontFamily_Arial,
+                oedepict.OEFontStyle_Normal,
+                14,
+                oedepict.OEAlignment_Center,
+                oechem.OEBlack
+            )
+            image.DrawText(
+                oedepict.OE2DPoint(center_x, center_y + 35),
+                mol_title,
+                title_font
+            )
+
+    return image
+
+
+def render_exceeds_max_heavy_atoms(
+        mol: oechem.OEMolBase,
+        *,
+        ctx: CNotebookContext
+) -> str:
+    """Render a placeholder image for molecules that exceed the heavy atom limit.
+
+    :param mol: Molecule (used to retrieve the title).
+    :param ctx: Render context.
+    :returns: HTML image tag.
+    """
+    image = _create_exceeds_heavy_atoms_image(mol, ctx=ctx)
+
+    return create_img_tag(
+        ctx.min_width,
+        ctx.min_height,
+        image_mime_type=ctx.image_mime_type,
+        image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
+        wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
+    )
+
+
 def oemol_to_disp(
         mol: oechem.OEMolBase,
         *,
@@ -169,6 +248,10 @@ def oemol_to_image(
     :returns: Rendered image.
     """
     if mol.IsValid():
+        if (ctx.max_heavy_atoms is not None
+                and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
+            return _create_exceeds_heavy_atoms_image(mol, ctx=ctx)
+
         disp = oemol_to_disp(mol, ctx=ctx)
         image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
         oedepict.OERenderMolecule(image, disp)

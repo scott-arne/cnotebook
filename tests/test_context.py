@@ -83,6 +83,7 @@ class TestCNotebookContext:
         assert ctx.image_format == "png"
         assert ctx.bond_width_scaling is False
         assert ctx.title is True
+        assert ctx.max_heavy_atoms == 100
         assert len(ctx.callbacks) >= 0
     
     def test_init_with_parameters(self):
@@ -96,7 +97,8 @@ class TestCNotebookContext:
             max_height=600,
             image_format="svg",
             bond_width_scaling=True,
-            title=False
+            title=False,
+            max_heavy_atoms=50
         )
         assert ctx.width == 300
         assert ctx.height == 400
@@ -107,6 +109,7 @@ class TestCNotebookContext:
         assert ctx.image_format == "svg"
         assert ctx.bond_width_scaling is True
         assert ctx.title is False
+        assert ctx.max_heavy_atoms == 50
     
     def test_property_setters(self):
         """Test property setters"""
@@ -223,6 +226,17 @@ class TestCNotebookContext:
         assert hasattr(ctx, 'create_molecule_display')
         assert callable(ctx.create_molecule_display)
     
+    def test_max_heavy_atoms_setter(self):
+        """Test max_heavy_atoms property setter"""
+        ctx = CNotebookContext()
+        assert ctx.max_heavy_atoms == 100
+
+        ctx.max_heavy_atoms = 50
+        assert ctx.max_heavy_atoms == 50
+
+        ctx.max_heavy_atoms = None
+        assert ctx.max_heavy_atoms is None
+
     def test_copy(self):
         """Test copying context"""
         ctx = CNotebookContext(
@@ -230,26 +244,38 @@ class TestCNotebookContext:
             height=400,
             image_format="svg"
         )
-        
+
         ctx_copy = ctx.copy()
         assert ctx_copy.width == 300
         assert ctx_copy.height == 400
         assert ctx_copy.image_format == "svg"
         assert id(ctx) != id(ctx_copy)  # Different objects
     
+    def test_copy_preserves_max_heavy_atoms(self):
+        """Test that copy preserves max_heavy_atoms"""
+        ctx = CNotebookContext(max_heavy_atoms=75)
+        ctx_copy = ctx.copy()
+        assert ctx_copy.max_heavy_atoms == 75
+
+        ctx_none = CNotebookContext(max_heavy_atoms=None)
+        ctx_none_copy = ctx_none.copy()
+        assert ctx_none_copy.max_heavy_atoms is None
+
     def test_reset(self):
         """Test resetting context to defaults"""
         ctx = CNotebookContext()
         ctx.width = 300
         ctx.height = 400
         ctx.image_format = "svg"
-        
+        ctx.max_heavy_atoms = 50
+
         ctx.reset()
-        
+
         # Should be back to defaults
         assert ctx.width == 0
         assert ctx.height == 0
         assert ctx.image_format == "png"
+        assert ctx.max_heavy_atoms == 100
 
 
 class TestPassCNotebookContextDecorator:

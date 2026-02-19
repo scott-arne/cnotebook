@@ -110,22 +110,23 @@ class TestCreateMolFormatter:
     def test_create_mol_formatter_valid_molecule(self):
         """Test formatter with valid molecule"""
         ctx = CNotebookContext()
-        
+
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = True
-        
-        with patch('cnotebook.pandas_ext.oemol_to_disp') as mock_to_disp:
-            with patch('cnotebook.pandas_ext.oedisp_to_html') as mock_to_html:
-                mock_disp = MagicMock()
-                mock_to_disp.return_value = mock_disp
-                mock_to_html.return_value = '<img>valid_mol</img>'
-                
-                formatter = create_mol_formatter(ctx=ctx)
-                result = formatter(mock_mol)
-                
-                assert result == '<img>valid_mol</img>'
-                mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
-                mock_to_html.assert_called_once_with(mock_disp)
+
+        with patch('cnotebook.pandas_ext.oechem.OECount', return_value=10):
+            with patch('cnotebook.pandas_ext.oemol_to_disp') as mock_to_disp:
+                with patch('cnotebook.pandas_ext.oedisp_to_html') as mock_to_html:
+                    mock_disp = MagicMock()
+                    mock_to_disp.return_value = mock_disp
+                    mock_to_html.return_value = '<img>valid_mol</img>'
+
+                    formatter = create_mol_formatter(ctx=ctx)
+                    result = formatter(mock_mol)
+
+                    assert result == '<img>valid_mol</img>'
+                    mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
+                    mock_to_html.assert_called_once_with(mock_disp)
     
     def test_create_mol_formatter_empty_molecule(self):
         """Test formatter with empty molecule"""
@@ -175,22 +176,23 @@ class TestCreateMolFormatter:
         ctx = CNotebookContext()
         mock_callback = MagicMock()
         ctx.add_callback(mock_callback)
-        
+
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = True
-        
-        with patch('cnotebook.pandas_ext.oemol_to_disp') as mock_to_disp:
-            with patch('cnotebook.pandas_ext.oedisp_to_html') as mock_to_html:
-                mock_disp = MagicMock()
-                mock_to_disp.return_value = mock_disp
-                mock_to_html.return_value = '<img>callback_mol</img>'
-                
-                formatter = create_mol_formatter(ctx=ctx)
-                result = formatter(mock_mol)
-                
-                # Callback should have been called
-                mock_callback.assert_called_once_with(mock_disp)
-                assert result == '<img>callback_mol</img>'
+
+        with patch('cnotebook.pandas_ext.oechem.OECount', return_value=10):
+            with patch('cnotebook.pandas_ext.oemol_to_disp') as mock_to_disp:
+                with patch('cnotebook.pandas_ext.oedisp_to_html') as mock_to_html:
+                    mock_disp = MagicMock()
+                    mock_to_disp.return_value = mock_disp
+                    mock_to_html.return_value = '<img>callback_mol</img>'
+
+                    formatter = create_mol_formatter(ctx=ctx)
+                    result = formatter(mock_mol)
+
+                    # Callback should have been called
+                    mock_callback.assert_called_once_with(mock_disp)
+                    assert result == '<img>callback_mol</img>'
 
 
 class TestCreateDispFormatter:

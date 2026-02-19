@@ -7,6 +7,8 @@ from cnotebook.render import (
     oedisp_to_html,
     render_empty_molecule,
     render_invalid_molecule,
+    render_exceeds_max_heavy_atoms,
+    _create_exceeds_heavy_atoms_image,
     oemol_to_disp,
     oemol_to_image,
     oemol_to_html,
@@ -157,6 +159,87 @@ class TestRenderEmptyMessage:
         assert result == '<img>invalid</img>'
 
 
+class TestRenderExceedsMaxHeavyAtoms:
+    """Test render_exceeds_max_heavy_atoms and _create_exceeds_heavy_atoms_image functions"""
+
+    @patch('cnotebook.render.oedepict.OEImage')
+    def test_create_image_draws_two_lines(self, mock_oeimage):
+        """Test that the helper draws error text on two lines"""
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.GetTitle.return_value = ""
+
+        ctx = CNotebookContext(min_width=200, min_height=150, title=False)
+
+        result = _create_exceeds_heavy_atoms_image(mock_mol, ctx=ctx)
+
+        assert result == mock_image
+        mock_oeimage.assert_called_once_with(200, 150)
+        assert mock_image.DrawText.call_count == 2
+
+        draw_calls = mock_image.DrawText.call_args_list
+        assert draw_calls[0][0][1] == "Exceeds Max Heavy Atoms"
+        assert draw_calls[1][0][1] == "for Rendering"
+
+    @patch('cnotebook.render.oedepict.OEImage')
+    def test_create_image_with_title(self, mock_oeimage):
+        """Test that the helper draws the molecule title when ctx.title is True"""
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.GetTitle.return_value = "MyMolecule"
+
+        ctx = CNotebookContext(min_width=200, min_height=150, title=True)
+
+        _create_exceeds_heavy_atoms_image(mock_mol, ctx=ctx)
+
+        assert mock_image.DrawText.call_count == 3
+        draw_calls = mock_image.DrawText.call_args_list
+        assert draw_calls[0][0][1] == "Exceeds Max Heavy Atoms"
+        assert draw_calls[1][0][1] == "for Rendering"
+        assert draw_calls[2][0][1] == "MyMolecule"
+
+    @patch('cnotebook.render.oedepict.OEImage')
+    def test_create_image_title_enabled_but_empty(self, mock_oeimage):
+        """Test that no title is drawn when molecule title is empty"""
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.GetTitle.return_value = ""
+
+        ctx = CNotebookContext(min_width=200, min_height=150, title=True)
+
+        _create_exceeds_heavy_atoms_image(mock_mol, ctx=ctx)
+
+        assert mock_image.DrawText.call_count == 2
+
+    @patch('cnotebook.render.create_img_tag')
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('cnotebook.render._create_exceeds_heavy_atoms_image')
+    def test_render_exceeds_max_heavy_atoms(self, mock_create_image, mock_write_image, mock_create_img):
+        """Test the HTML rendering function delegates to the helper"""
+        mock_image = MagicMock()
+        mock_create_image.return_value = mock_image
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img>exceeds</img>'
+
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        ctx = CNotebookContext(min_width=200, min_height=150, image_format="png")
+
+        result = render_exceeds_max_heavy_atoms(mock_mol, ctx=ctx)
+
+        mock_create_image.assert_called_once_with(mock_mol, ctx=ctx)
+        mock_create_img.assert_called_once()
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 200  # width
+        assert call_args[0][1] == 150  # height
+        assert result == '<img>exceeds</img>'
+
+
 class TestOemolToDisp:
     """Test the oemol_to_disp function - basic functionality"""
 
@@ -200,13 +283,15 @@ class TestOemolToDisp:
 class TestOemolToImage:
     """Test the oemol_to_image function"""
 
+    @patch('cnotebook.render.oechem.OECount')
     @patch('cnotebook.render.oedepict.OERenderMolecule')
     @patch('cnotebook.render.oedepict.OEImage')
     @patch('cnotebook.render.oemol_to_disp')
-    def test_valid_molecule(self, mock_to_disp, mock_oeimage, mock_render):
+    def test_valid_molecule(self, mock_to_disp, mock_oeimage, mock_render, mock_oecount):
         """Test converting valid molecule to OEImage"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = True
+        mock_oecount.return_value = 10  # below default max_heavy_atoms
 
         mock_disp = MagicMock()
         mock_disp.GetWidth.return_value = 300
@@ -263,6 +348,72 @@ class TestOemolToImage:
         mock_image.DrawText.assert_called_once()
         draw_text_args = mock_image.DrawText.call_args[0]
         assert draw_text_args[1] == "Invalid Molecule"
+        assert result == mock_image
+
+    @patch('cnotebook.render._create_exceeds_heavy_atoms_image')
+    @patch('cnotebook.render.oechem.OECount')
+    def test_exceeds_max_heavy_atoms(self, mock_oecount, mock_create_image):
+        """Test that valid molecule exceeding heavy atom limit shows placeholder"""
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.IsValid.return_value = True
+        mock_oecount.return_value = 150
+
+        mock_image = MagicMock()
+        mock_create_image.return_value = mock_image
+
+        ctx = CNotebookContext(max_heavy_atoms=100)
+
+        result = oemol_to_image(mock_mol, ctx=ctx)
+
+        mock_create_image.assert_called_once_with(mock_mol, ctx=ctx)
+        assert result == mock_image
+
+    @patch('cnotebook.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.render.oemol_to_disp')
+    @patch('cnotebook.render.oechem.OECount')
+    def test_within_max_heavy_atoms(self, mock_oecount, mock_to_disp, mock_oeimage, mock_render):
+        """Test that valid molecule within heavy atom limit renders normally"""
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.IsValid.return_value = True
+        mock_oecount.return_value = 50
+
+        mock_disp = MagicMock()
+        mock_disp.GetWidth.return_value = 300
+        mock_disp.GetHeight.return_value = 200
+        mock_to_disp.return_value = mock_disp
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext(max_heavy_atoms=100)
+
+        result = oemol_to_image(mock_mol, ctx=ctx)
+
+        mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
+        assert result == mock_image
+
+    @patch('cnotebook.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.render.oemol_to_disp')
+    def test_max_heavy_atoms_none_disables_check(self, mock_to_disp, mock_oeimage, mock_render):
+        """Test that max_heavy_atoms=None disables the heavy atom check"""
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.IsValid.return_value = True
+
+        mock_disp = MagicMock()
+        mock_disp.GetWidth.return_value = 300
+        mock_disp.GetHeight.return_value = 200
+        mock_to_disp.return_value = mock_disp
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+
+        ctx = CNotebookContext(max_heavy_atoms=None)
+
+        result = oemol_to_image(mock_mol, ctx=ctx)
+
+        mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
         assert result == mock_image
 
 
@@ -486,6 +637,7 @@ class TestIntegrationWithContext:
         assert callable(oedisp_to_html)
         assert callable(render_empty_molecule)
         assert callable(render_invalid_molecule)
+        assert callable(render_exceeds_max_heavy_atoms)
         assert callable(oemol_to_disp)
         assert callable(oemol_to_image)
         assert callable(oemol_to_html)

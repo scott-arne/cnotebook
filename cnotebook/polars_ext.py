@@ -14,7 +14,8 @@ from .render import (
     oedisp_to_html,
     oedu_to_html,
     render_invalid_molecule,
-    render_empty_molecule
+    render_empty_molecule,
+    render_exceeds_max_heavy_atoms
 )
 
 # Only register iPython formatters if that is present
@@ -87,6 +88,11 @@ def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OE
 
             # Render valid molecules
             if mol.IsValid():
+                # Check heavy atom count
+                if (ctx.max_heavy_atoms is not None
+                        and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
+                    return render_exceeds_max_heavy_atoms(mol, ctx=ctx)
+
                 # Create the display object
                 disp = oemol_to_disp(mol, ctx=ctx)
 
