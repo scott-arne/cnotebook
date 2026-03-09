@@ -67,12 +67,17 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
         title = mol.GetTitle()
         name = title if title else "molecule"
 
-    sdf_string = _mol_to_sdf_string(mol)
+    if _has_residue_info(mol):
+        data = _mol_to_pdb_string(mol)
+        fmt = "pdb"
+    else:
+        data = _mol_to_sdf_string(mol)
+        fmt = "sdf"
 
     return MoleculeData(
         name=name,
-        data=sdf_string,
-        format="sdf",
+        data=data,
+        format=fmt,
         source_type="molecule",
         num_atoms=mol.NumAtoms(),
         disabled=disabled,
@@ -128,6 +133,20 @@ def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabl
 # ---------------------------------------------------------------------------
 
 
+def _has_residue_info(mol: oechem.OEMolBase) -> bool:
+    """Check if a molecule contains standard protein residues.
+
+    When a molecule has more than one standard protein residue it likely
+    originated from a PDB file and should be written as PDB to preserve
+    HETATM flags, chain IDs, and residue numbering that 3Dmol.js presets
+    rely on.
+
+    :param mol: Molecule to inspect.
+    :returns: True if the molecule contains standard protein residues.
+    """
+    return oechem.OECount(mol, oechem.OEIsStandardAminoAcid()) > 1
+
+
 def _mol_to_sdf_string(mol: oechem.OEMolBase) -> str:
     """Write an OEMolBase to an SDF-format string.
 
@@ -150,8 +169,14 @@ def _mol_to_pdb_string(mol: oechem.OEMolBase) -> str:
     oms = oechem.oemolostream()
     oms.openstring()
     oms.SetFormat(oechem.OEFormat_PDB)
+    oms.SetFlavor(
+        oechem.OEFormat_PDB,
+        oechem.OEOFlavor_PDB_DEFAULT | oechem.OEOFlavor_PDB_BONDS | oechem.OEOFlavor_PDB_ORDERS
+    )
     oechem.OEWriteMolecule(oms, mol)
-    return oms.GetString().decode("utf-8")
+    val = oms.GetString().decode("utf-8")
+    oms.close()
+    return val
 
 
 def _ensure_3d_coords(mol: oechem.OEMolBase) -> oechem.OEMolBase:

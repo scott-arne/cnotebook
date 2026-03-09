@@ -109,7 +109,7 @@ exclude = ["*test*"]
 [tool.setuptools.package-data]
 
 # Include static files (JS, CSS) in the package
-cnotebook = ["grid/static/*"]
+cnotebook = ["grid/static/*", "c3d/static/*"]
 
 
 [tool.setuptools.dynamic]

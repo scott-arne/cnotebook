@@ -91,7 +91,7 @@ class C3D:
         self._width = width
         self._height = height
         self._molecules: List[MoleculeData] = []
-        self._styles: List[Dict[str, Any]] = []
+        self._operations: List[Dict[str, Any]] = []
         self._ui: Dict[str, bool] = {
             "sidebar": True,
             "menubar": True,
@@ -103,7 +103,6 @@ class C3D:
         self._theme: str = "light"
         self._zoom_to: Optional[Dict[str, Any]] = None
         self._orient: Optional[Union[bool, str, Dict[str, Any]]] = None
-        self._preset: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Builder methods
@@ -169,7 +168,7 @@ class C3D:
             Ignored when *style* is a dict.
         :returns: Self, for method chaining.
         :raises ValueError: If *style* is a string that is not a
-            recognised preset name.
+            recognized preset name.
 
         Example::
 
@@ -201,7 +200,39 @@ class C3D:
         else:
             style_dict = dict(style)
 
-        self._styles.append({"selection": selection, "style": style_dict})
+        self._operations.append({"op": "style", "selection": selection, "style": style_dict})
+        return self
+
+    def set_color(
+        self,
+        selection: Union[str, Dict[str, Any]],
+        color: str,
+        hets: bool = True,
+    ) -> C3D:
+        """Set the color for atoms matching a selection.
+
+        Operations are applied in the order they are called, so colors
+        set after a preset will override the preset's coloring.
+
+        :param selection: Atoms to color. Can be a selection expression
+            string (e.g. ``"chain A"``, ``"resn LIG"``), an entry name
+            to target a specific molecule, or a raw 3Dmol.js selection
+            dict (e.g. ``{"chain": "A"}``).
+        :param color: CSS color string (e.g. ``"green"``, ``"#00ff00"``).
+        :param hets: If ``True`` (default), all atoms in the selection
+            are recolored. If ``False``, only carbon atoms are recolored,
+            preserving element coloring for heteroatoms (N, O, S, etc.).
+        :returns: Self, for method chaining.
+
+        Example::
+
+            viewer = C3D()
+            viewer.add_molecule(mol, name="protein")
+            viewer.set_preset("sites")
+            viewer.set_color("chain A", "blue")
+            viewer.set_color("resn V4M", "magenta", hets=False)
+        """
+        self._operations.append({"op": "color", "selection": selection, "color": color, "hets": hets})
         return self
 
     def set_ui(
@@ -226,9 +257,9 @@ class C3D:
         return self
 
     def set_background(self, color: str) -> C3D:
-        """Set the viewer background colour.
+        """Set the viewer background color.
 
-        :param color: CSS colour string (e.g. ``"#ffffff"`` or ``"white"``).
+        :param color: CSS color string (e.g. ``"#ffffff"`` or ``"white"``).
         :returns: Self, for method chaining.
         """
         self._background = color
@@ -236,10 +267,10 @@ class C3D:
         return self
 
     def set_theme(self, theme: str = "light") -> C3D:
-        """Set the GUI colour theme.
+        """Set the GUI color theme.
 
-        Controls the overall UI appearance (panel backgrounds, text colour,
-        borders) **and** the viewer background colour when no explicit
+        Controls the overall UI appearance (panel backgrounds, text color,
+        borders) **and** the viewer background color when no explicit
         background has been set via :meth:`set_background`.
 
         :param theme: ``"light"`` or ``"dark"``.
@@ -293,7 +324,7 @@ class C3D:
 
         Available presets:
 
-        - ``"simple"`` -- Element-coloured cartoon with per-chain carbons
+        - ``"simple"`` -- Element-colored cartoon with per-chain carbons
           and sticks for ligands.
         - ``"sites"`` -- Like *simple*, plus stick representation for
           residues within 5 angstroms of ligands.
@@ -301,7 +332,7 @@ class C3D:
 
         :param name: Preset name (case-insensitive).
         :returns: Self, for method chaining.
-        :raises ValueError: If *name* is not a recognised preset.
+        :raises ValueError: If *name* is not a recognized preset.
         """
         key = name.lower()
         if key not in _VIEW_PRESETS:
@@ -309,7 +340,7 @@ class C3D:
                 f"Unknown view preset '{name}'. "
                 f"Choose from: {', '.join(sorted(_VIEW_PRESETS))}"
             )
-        self._preset = key
+        self._operations.append({"op": "preset", "name": key})
         return self
 
     # ------------------------------------------------------------------
@@ -317,7 +348,7 @@ class C3D:
     # ------------------------------------------------------------------
 
     def _build_init_payload(self) -> Dict[str, Any]:
-        """Build the JSON-serializable initialisation payload.
+        """Build the JSON-serializable initialization payload.
 
         This dict is embedded in the HTML page as
         ``window.__C3D_INIT__`` and consumed by the GUI JavaScript.
@@ -360,8 +391,7 @@ class C3D:
 
         return {
             "molecules": molecules,
-            "styles": list(self._styles),
-            "preset": self._preset,
+            "operations": list(self._operations),
             "ui": ui,
             "theme": self._theme,
             "background": self._background,
@@ -426,7 +456,7 @@ class C3D:
         """Compute the display height in pixels.
 
         When the height was explicitly set via the constructor, that value
-        is returned.  Otherwise the height is chosen based on the maximum
+        is returned.  Otherwise, the height is chosen based on the maximum
         atom count across all molecules: 300 px when every entry has at
         most 1 000 atoms, 600 px otherwise.
 

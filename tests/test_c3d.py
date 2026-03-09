@@ -102,12 +102,12 @@ class TestC3DConstructor:
         viewer = C3D()
         assert viewer._molecules == []
 
-    def test_empty_styles_list(self):
-        """A new viewer should start with no styles."""
+    def test_empty_operations_list(self):
+        """A new viewer should start with no operations."""
         from cnotebook.c3d import C3D
 
         viewer = C3D()
-        assert viewer._styles == []
+        assert viewer._operations == []
 
     def test_default_ui_config(self):
         """Default UI config should enable all panels."""
@@ -210,8 +210,9 @@ class TestC3DBuilder:
         viewer = C3D()
         viewer.add_style("cartoon", {"chain": "A"})
 
-        assert len(viewer._styles) == 1
-        entry = viewer._styles[0]
+        assert len(viewer._operations) == 1
+        entry = viewer._operations[0]
+        assert entry["op"] == "style"
         assert entry["selection"] == {"chain": "A"}
         assert entry["style"] == {"cartoon": {}}
 
@@ -222,7 +223,7 @@ class TestC3DBuilder:
         viewer = C3D()
         viewer.add_style("stick", {"chain": "A"}, color="red")
 
-        entry = viewer._styles[0]
+        entry = viewer._operations[0]
         assert entry["style"] == {"stick": {"color": "red"}}
 
     def test_add_style_dict_passthrough(self):
@@ -233,7 +234,7 @@ class TestC3DBuilder:
         custom_style = {"cartoon": {"color": "spectrum"}}
         viewer.add_style(custom_style, {"resi": 42})
 
-        entry = viewer._styles[0]
+        entry = viewer._operations[0]
         assert entry["style"] == {"cartoon": {"color": "spectrum"}}
 
     def test_add_style_invalid_preset_raises_value_error(self):
@@ -251,8 +252,9 @@ class TestC3DBuilder:
         viewer = C3D()
         viewer.add_style("stick")
 
-        assert len(viewer._styles) == 1
-        entry = viewer._styles[0]
+        assert len(viewer._operations) == 1
+        entry = viewer._operations[0]
+        assert entry["op"] == "style"
         assert entry["selection"] is None
         assert entry["style"] == {"stick": {}}
 
@@ -263,7 +265,7 @@ class TestC3DBuilder:
         viewer = C3D()
         viewer.add_style("cartoon", "chain A")
 
-        entry = viewer._styles[0]
+        entry = viewer._operations[0]
         assert entry["selection"] == "chain A"
         assert entry["style"] == {"cartoon": {}}
 
@@ -274,7 +276,7 @@ class TestC3DBuilder:
         viewer = C3D()
         viewer.add_style("sphere", "benzene")
 
-        entry = viewer._styles[0]
+        entry = viewer._operations[0]
         assert entry["selection"] == "benzene"
 
     def test_set_ui_returns_self(self):
@@ -410,12 +412,12 @@ class TestC3DBuilder:
         assert result is viewer
 
     def test_set_preset_stores_name(self):
-        """set_preset should store the lowercase preset name."""
+        """set_preset should store the lowercase preset name as an operation."""
         from cnotebook.c3d import C3D
 
         viewer = C3D()
         viewer.set_preset("Sites")
-        assert viewer._preset == "sites"
+        assert viewer._operations[-1] == {"op": "preset", "name": "sites"}
 
     def test_set_preset_all_valid_names(self):
         """All three view presets should be accepted."""
@@ -424,7 +426,7 @@ class TestC3DBuilder:
         for name in ("simple", "sites", "ball-and-stick"):
             viewer = C3D()
             viewer.set_preset(name)
-            assert viewer._preset == name
+            assert viewer._operations[-1] == {"op": "preset", "name": name}
 
     def test_set_preset_raises_on_unknown(self):
         """set_preset should raise ValueError for unknown preset names."""
@@ -450,7 +452,7 @@ class TestC3DBuilder:
 
         assert isinstance(viewer, C3D)
         assert len(viewer._molecules) == 1
-        assert len(viewer._styles) == 2
+        assert len(viewer._operations) == 2
         assert viewer._ui["sidebar"] is False
         assert viewer._background == "#ffffff"
         assert viewer._zoom_to == {"chain": "A"}
@@ -473,8 +475,7 @@ class TestC3DPayload:
         payload = viewer._build_init_payload()
 
         assert "molecules" in payload
-        assert "styles" in payload
-        assert "preset" in payload
+        assert "operations" in payload
         assert "ui" in payload
         assert "theme" in payload
         assert "background" in payload
@@ -482,23 +483,23 @@ class TestC3DPayload:
         assert "orient" in payload
 
     def test_preset_in_payload(self, ethanol_3d):
-        """Payload should include preset when set."""
+        """Payload should include preset operation when set."""
         from cnotebook.c3d import C3D
 
         viewer = C3D()
         viewer.add_molecule(ethanol_3d)
         viewer.set_preset("sites")
         payload = viewer._build_init_payload()
-        assert payload["preset"] == "sites"
+        assert payload["operations"][-1] == {"op": "preset", "name": "sites"}
 
-    def test_preset_default_none(self, ethanol_3d):
-        """Payload preset should be None when not set."""
+    def test_empty_operations_default(self, ethanol_3d):
+        """Payload operations should be empty when nothing is set."""
         from cnotebook.c3d import C3D
 
         viewer = C3D()
         viewer.add_molecule(ethanol_3d)
         payload = viewer._build_init_payload()
-        assert payload["preset"] is None
+        assert payload["operations"] == []
 
     def test_ui_defaults_single_molecule(self, ethanol_3d):
         """Single molecule should default to no GUI panels."""
