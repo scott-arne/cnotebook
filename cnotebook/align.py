@@ -183,12 +183,13 @@ class Aligner(metaclass=ABCMeta):
 class OESubSearchAligner(Aligner):
     """Aligner using substructure search for 2D molecule alignment."""
 
-    def __init__(self, ref: oechem.OESubSearch | oechem.OEMolBase | str, **_kwargs):
+    def __init__(self, ref: oechem.OESubSearch | oechem.OEQMolBase | oechem.OEMolBase | str, **_kwargs):
         """Create a substructure-based aligner.
 
         :param ref: Reference for alignment. Can be:
 
             - ``OESubSearch``: Pre-configured substructure search object.
+            - ``OEQMolBase``: Query molecule (e.g. from MDL query file).
             - ``OEMolBase``: Molecule to use as substructure pattern.
             - ``str``: SMARTS pattern string.
 
@@ -197,7 +198,7 @@ class OESubSearchAligner(Aligner):
         # Reference molecule with 2D coordinates
         self.refmol = None
 
-        if isinstance(ref, (oechem.OESubSearch, str)):
+        if isinstance(ref, (oechem.OESubSearch, oechem.OEQMolBase, str)):
             self.ss = oechem.OESubSearch(ref)
 
         else:
@@ -439,6 +440,11 @@ def create_aligner(
     elif isinstance(ref, oechem.OEMCSSearch):
         log.debug("Using MCS aligner for oechem.OEMCSSearch alignment reference")
         return OEMCSSearchAligner(ref, **kwargs)
+
+    elif isinstance(ref, oechem.OEQMolBase):
+        # Query molecules should use substructure alignment
+        log.debug("Using substructure aligner for oechem.OEQMolBase alignment reference")
+        return OESubSearchAligner(ref, **kwargs)
 
     elif isinstance(ref, oechem.OEMolBase):
         # Use specified method or default to fingerprint
