@@ -1510,3 +1510,61 @@ def test_molgrid_cluster_without_counts():
 
     # Should not have count spans in dropdown items
     assert 'class="molgrid-cluster-count"' not in html
+
+
+# ============================================================================
+# Combined Filter and Export Tests
+# ============================================================================
+
+def test_molgrid_html_combined_filter_function():
+    """Test HTML contains combined filter function for SMARTS + cluster."""
+    import pandas as pd
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
+    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
+    html = grid.to_html()
+
+    # Should have combined filter function
+    assert "applyCombinedFilter" in html
+    # SMARTS filter should delegate to combined filter
+    assert "smartsMatchIndices" in html
+    # Cluster filter should delegate to combined filter
+    assert "applyClusterFilterToGrid" in html
+
+
+def test_molgrid_html_export_respects_filter():
+    """Test that getExportRows intersects selection with matching items."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    html = grid.to_html()
+
+    # Export function should intersect selection with matching indices
+    assert "matchingSet" in html
+    assert "getMatchingIndices" in html
+
+
+def test_molgrid_html_no_combined_filter_without_cluster():
+    """Test combined filter works when clustering is not enabled."""
+    from cnotebook import MolGrid
+    from openeye import oechem
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    grid = MolGrid([mol])
+    html = grid.to_html()
+
+    # Combined filter should still be present (handles SMARTS-only case)
+    assert "applyCombinedFilter" in html
+    # But cluster-specific UI should not be present
+    assert 'class="molgrid-cluster-row"' not in html

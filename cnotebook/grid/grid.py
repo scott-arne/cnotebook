@@ -1416,23 +1416,42 @@ class MolGrid:
         }};
     }}
 
+    // Apply combined filter (SMARTS + cluster) to the grid.
+    // List.js only supports a single filter function, so both filters
+    // must be combined into one call to molgridList.filter().
+    function applyCombinedFilter() {{
+        var hasSmarts = smartsMatchIndices !== null;
+        var hasClusters = typeof selectedClusters !== 'undefined' && selectedClusters.size > 0;
+
+        if (!hasSmarts && !hasClusters) {{
+            molgridList.filter();  // Clear all filters
+        }} else {{
+            molgridList.filter(function(item) {{
+                if (hasSmarts) {{
+                    var idx = parseInt(item.values().index, 10);
+                    if (!smartsMatchIndices.has(idx)) return false;
+                }}
+                if (hasClusters) {{
+                    var clusterValue = item.elm.getAttribute('data-cluster');
+                    if (!selectedClusters.has(clusterValue)) return false;
+                }}
+                return true;
+            }});
+        }}
+        molgridList.i = 1;  // Reset to first page
+        updateShowingInfo();
+    }}
+
     // Apply SMARTS filter based on matching indices
     function applySmartsFilter(matchIndices) {{
         smartsMatchIndices = new Set(matchIndices);
-        molgridList.filter(function(item) {{
-            var idx = parseInt(item.values().index, 10);
-            return smartsMatchIndices.has(idx);
-        }});
-        molgridList.i = 1;  // Reset to first page
-        updateShowingInfo();
+        applyCombinedFilter();
     }}
 
     // Clear SMARTS filter
     function clearSmartsFilter() {{
         smartsMatchIndices = null;
-        molgridList.filter();  // Clear filter
-        molgridList.i = 1;
-        updateShowingInfo();
+        applyCombinedFilter();
     }}
 
     // Send SMARTS query to Python
@@ -1735,11 +1754,19 @@ class MolGrid:
         return str;
     }}
 
-    // Get data for export (selected or all)
+    // Get data for export (selected or all, respecting active filters)
     function getExportRows() {{
-        var indices = selectedIndices.size > 0
-            ? Array.from(selectedIndices).sort(function(a, b) {{ return a - b; }})
-            : getMatchingIndices();
+        var matching = getMatchingIndices();
+        var indices;
+        if (selectedIndices.size > 0) {{
+            // Intersect selection with currently matching (filtered) items
+            var matchingSet = new Set(matching);
+            indices = Array.from(selectedIndices)
+                .filter(function(idx) {{ return matchingSet.has(idx); }})
+                .sort(function(a, b) {{ return a - b; }});
+        }} else {{
+            indices = matching;
+        }}
         return indices.map(function(idx) {{
             return exportData[idx];
         }});
@@ -1902,21 +1929,9 @@ class MolGrid:
             }});
         }});
 
-        // Apply cluster filter to grid
+        // Apply cluster filter to grid (uses combined filter to preserve SMARTS)
         function applyClusterFilterToGrid() {{
-            if (selectedClusters.size === 0) {{
-                // No clusters selected - show all
-                molgridList.filter();
-            }} else {{
-                // Filter to selected clusters
-                molgridList.filter(function(item) {{
-                    var cell = item.elm;
-                    var clusterValue = cell.getAttribute('data-cluster');
-                    return selectedClusters.has(clusterValue);
-                }});
-            }}
-            molgridList.i = 1;  // Reset to first page
-            updateShowingInfo();
+            applyCombinedFilter();
         }}
 
         // Create a pill element
