@@ -87,14 +87,12 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
 def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabled: bool = False) -> MoleculeData:
     """Convert an OpenEye design unit to PDB string data for 3Dmol.js.
 
-    Extracts the full complex (all components) from the design unit and
-    writes it as a PDB string.
+    Extracts the full complex (all components) from the design unit and writes it as a PDB string.
 
     :param du: OpenEye design unit to convert.
-    :param name: Optional display name. Falls back to the design unit
-        title, then to ``"design_unit"``.
-    :returns: :class:`MoleculeData` with ``format="pdb"`` and
-        ``source_type="design_unit"``.
+    :param name: Optional display name. Falls back to the design unit title, then to ``"design_unit"``.
+    :param disabled: bool, if ``True``, the entry will appear as disabled in the entries list.
+    :returns: :class:`MoleculeData` with ``format="pdb"`` and ``source_type="design_unit"``.
     :raises TypeError: If *du* is not an :class:`oechem.OEDesignUnit`.
 
     Example::
@@ -114,7 +112,10 @@ def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabl
         name = title if title else "design_unit"
 
     complex_mol = oechem.OEGraphMol()
-    du.GetComponents(complex_mol, oechem.OEDesignUnitComponents_All)
+    du.GetComponents(
+        complex_mol,
+        oechem.OEDesignUnitComponents_TargetComplex | oechem.OEDesignUnitComponents_ListComponents
+    )
     num_atoms = complex_mol.NumAtoms()
     pdb_string = _mol_to_pdb_string(complex_mol)
 
