@@ -6,6 +6,7 @@ import json
 import sys
 from html import escape
 from pathlib import Path
+from collections.abc import Iterable, Sequence
 from typing import Any, Dict, List, Optional, Union
 
 from cnotebook.c3d.convert import MoleculeData, convert_design_unit, convert_molecule
@@ -145,6 +146,119 @@ class C3D:
         """
         mol_data = convert_design_unit(du, name=name, disabled=disabled)
         self._molecules.append(mol_data)
+        return self
+
+    # ------------------------------------------------------------------
+    # Batch helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_enable(enable: str | Sequence[bool]) -> None:
+        """Validate the enable parameter eagerly.
+
+        :param enable: Enable mode to validate.
+        :raises ValueError: If *enable* is an unrecognized string.
+        :raises TypeError: If *enable* is not a string or ``Sequence``.
+        """
+        if isinstance(enable, str):
+            if enable not in ("all", "first"):
+                raise ValueError(
+                    f"Unknown enable mode '{enable}'. Choose 'all' or 'first'."
+                )
+        elif not isinstance(enable, Sequence):
+            raise TypeError(
+                f"enable must be 'all', 'first', or a Sequence[bool], "
+                f"got {type(enable).__name__}"
+            )
+
+    @staticmethod
+    def _resolve_disabled(enable: str | Sequence[bool], index: int) -> bool:
+        """Compute the disabled flag for a batch entry.
+
+        Assumes *enable* has already been validated by :meth:`_validate_enable`.
+
+        :param enable: Enable mode — ``"all"``, ``"first"``, or a sequence of bools.
+        :param index: 0-based index of the current entry.
+        :returns: True if the entry should be disabled.
+        """
+        if isinstance(enable, str):
+            if enable == "all":
+                return False
+            return index != 0  # "first"
+        if index < len(enable):
+            return not enable[index]
+        return True
+
+    @staticmethod
+    def _resolve_batch_name(title: str, prefix: str, index: int) -> str:
+        """Compute the prefixed name for a batch entry.
+
+        :param title: The object's title (may be empty).
+        :param prefix: The prefix string.
+        :param index: 0-based index of the current entry.
+        :returns: Prefixed name string.
+        """
+        base = title if title else str(index + 1)
+        return f"{prefix}{base}"
+
+    # ------------------------------------------------------------------
+    # Batch add methods
+    # ------------------------------------------------------------------
+
+    def add_molecules(
+        self,
+        mols: Iterable,
+        prefix: str | None = None,
+        enable: str | Sequence[bool] = "first",
+    ) -> C3D:
+        """Add multiple OpenEye molecules to the viewer.
+
+        :param mols: Iterable of OpenEye molecules (``OEMolBase`` subclasses).
+        :param prefix: Optional prefix prepended to each entry's name via
+            ``f"{prefix}{base_name}"``.
+        :param enable: Controls which entries are visible on load.
+            ``"all"`` enables all, ``"first"`` enables only the first
+            (default), or a ``Sequence[bool]`` where ``True`` means enabled.
+            If the sequence is shorter than *mols*, remaining entries are
+            disabled.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *enable* is an unrecognized string.
+        :raises TypeError: If *enable* is not a string or ``Sequence``.
+        """
+        self._validate_enable(enable)
+        items = list(mols)
+        for i, mol in enumerate(items):
+            disabled = self._resolve_disabled(enable, i)
+            name = self._resolve_batch_name(mol.GetTitle(), prefix, i) if prefix is not None else None
+            self.add_molecule(mol, name=name, disabled=disabled)
+        return self
+
+    def add_design_units(
+        self,
+        dus: Iterable,
+        prefix: str | None = None,
+        enable: str | Sequence[bool] = "first",
+    ) -> C3D:
+        """Add multiple OpenEye design units to the viewer.
+
+        :param dus: Iterable of OpenEye design units (``OEDesignUnit``).
+        :param prefix: Optional prefix prepended to each entry's name via
+            ``f"{prefix}{base_name}"``.
+        :param enable: Controls which entries are visible on load.
+            ``"all"`` enables all, ``"first"`` enables only the first
+            (default), or a ``Sequence[bool]`` where ``True`` means enabled.
+            If the sequence is shorter than *dus*, remaining entries are
+            disabled.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *enable* is an unrecognized string.
+        :raises TypeError: If *enable* is not a string or ``Sequence``.
+        """
+        self._validate_enable(enable)
+        items = list(dus)
+        for i, du in enumerate(items):
+            disabled = self._resolve_disabled(enable, i)
+            name = self._resolve_batch_name(du.GetTitle(), prefix, i) if prefix is not None else None
+            self.add_design_unit(du, name=name, disabled=disabled)
         return self
 
     def add_style(

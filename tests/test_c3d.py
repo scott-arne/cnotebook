@@ -900,3 +900,286 @@ class TestC3DDisplay:
         html = "<iframe>test</iframe>"
         iframe = _JupyterIFrame(html)
         assert iframe._repr_html_() == html
+
+
+# ---------------------------------------------------------------------------
+# TestC3DAddMolecules
+# ---------------------------------------------------------------------------
+
+
+class TestC3DAddMolecules:
+    """Verify the add_molecules batch method."""
+
+    def test_invalid_enable_string_raises_value_error(self):
+        """add_molecules should raise ValueError for unknown enable strings."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        with pytest.raises(ValueError, match="Unknown enable mode"):
+            viewer.add_molecules([], enable="none")
+
+    def test_invalid_enable_type_raises_type_error(self):
+        """add_molecules should raise TypeError for non-string, non-Sequence enable."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        with pytest.raises(TypeError, match="enable must be"):
+            viewer.add_molecules([], enable=42)
+
+    def test_enable_all(self, ethanol_3d):
+        """enable='all' should make all entries visible."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules([ethanol_3d, ethanol_3d, ethanol_3d], enable="all")
+        assert all(m.disabled is False for m in viewer._molecules)
+
+    def test_enable_first(self, ethanol_3d):
+        """enable='first' should enable only the first entry."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules([ethanol_3d, ethanol_3d, ethanol_3d], enable="first")
+        assert viewer._molecules[0].disabled is False
+        assert viewer._molecules[1].disabled is True
+        assert viewer._molecules[2].disabled is True
+
+    def test_enable_sequence(self, ethanol_3d):
+        """A Sequence[bool] should map True=enabled, False=disabled."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules(
+            [ethanol_3d, ethanol_3d, ethanol_3d],
+            enable=[True, False, True],
+        )
+        assert viewer._molecules[0].disabled is False
+        assert viewer._molecules[1].disabled is True
+        assert viewer._molecules[2].disabled is False
+
+    def test_enable_sequence_shorter_than_input(self, ethanol_3d):
+        """Short Sequence should disable remaining entries."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules(
+            [ethanol_3d, ethanol_3d, ethanol_3d],
+            enable=[True],
+        )
+        assert viewer._molecules[0].disabled is False
+        assert viewer._molecules[1].disabled is True
+        assert viewer._molecules[2].disabled is True
+
+    def test_enable_first_single_element(self, ethanol_3d):
+        """enable='first' with a single molecule should enable it."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules([ethanol_3d], enable="first")
+        assert len(viewer._molecules) == 1
+        assert viewer._molecules[0].disabled is False
+
+    def test_enable_sequence_longer_than_input(self, ethanol_3d):
+        """Extra enable values beyond len(mols) should be silently ignored."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules([ethanol_3d], enable=[True, False, True])
+        assert len(viewer._molecules) == 1
+        assert viewer._molecules[0].disabled is False
+
+    def test_prefix_with_titled_molecules(self, ethanol_3d):
+        """Prefix should be prepended to existing titles."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules([ethanol_3d], prefix="Series A - ")
+        assert viewer._molecules[0].name == "Series A - ethanol"
+
+    def test_prefix_with_untitled_molecule(self):
+        """Untitled molecules with prefix should get 1-based index names."""
+        from cnotebook.c3d import C3D
+        from openeye import oechem, oeomega
+
+        mol1 = oechem.OEMol()
+        oechem.OESmilesToMol(mol1, "C")
+        mol2 = oechem.OEMol()
+        oechem.OESmilesToMol(mol2, "CC")
+        omega = oeomega.OEOmega()
+        omega.SetMaxConfs(1)
+        omega.SetStrictStereo(False)
+        omega(mol1)
+        omega(mol2)
+
+        viewer = C3D()
+        viewer.add_molecules([mol1, mol2], prefix="Mol ", enable="all")
+        assert viewer._molecules[0].name == "Mol 1"
+        assert viewer._molecules[1].name == "Mol 2"
+
+    def test_no_prefix_delegates_naming(self, ethanol_3d):
+        """Without prefix, name=None is passed and delegate uses its fallback."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules([ethanol_3d])
+        # convert_molecule falls back to mol.GetTitle() which is "ethanol"
+        assert viewer._molecules[0].name == "ethanol"
+
+    def test_no_prefix_untitled_molecule(self):
+        """Without prefix and no title, delegate falls back to 'molecule'."""
+        from cnotebook.c3d import C3D
+        from openeye import oechem, oeomega
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "C")
+        omega = oeomega.OEOmega()
+        omega.SetMaxConfs(1)
+        omega.SetStrictStereo(False)
+        omega(mol)
+
+        viewer = C3D()
+        viewer.add_molecules([mol], enable="all")
+        assert viewer._molecules[0].name == "molecule"
+
+    def test_returns_self(self, ethanol_3d):
+        """add_molecules should return the C3D instance for chaining."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.add_molecules([ethanol_3d])
+        assert result is viewer
+
+    def test_empty_iterable(self):
+        """Empty iterable should be a no-op and return self."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.add_molecules([])
+        assert result is viewer
+        assert len(viewer._molecules) == 0
+
+    def test_ui_defaults_with_batch(self, ethanol_3d):
+        """Batch-added molecules should count toward UI smart defaults."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules(
+            [ethanol_3d, ethanol_3d, ethanol_3d], enable="all"
+        )
+        payload = viewer._build_init_payload()
+        # 3 molecules -> full GUI
+        assert payload["ui"]["sidebar"] is True
+        assert payload["ui"]["menubar"] is True
+        assert payload["ui"]["terminal"] is True
+
+    def test_composition_with_single_add(self, ethanol_3d):
+        """add_molecules should compose with add_molecule."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecule(ethanol_3d, name="solo")
+        viewer.add_molecules([ethanol_3d, ethanol_3d], prefix="Batch ", enable="all")
+        assert len(viewer._molecules) == 3
+        assert viewer._molecules[0].name == "solo"
+        assert viewer._molecules[1].name == "Batch ethanol"
+        assert viewer._molecules[2].name == "Batch ethanol"
+
+    def test_generator_input(self, ethanol_3d):
+        """add_molecules should accept a generator (non-list iterable)."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecules((m for m in [ethanol_3d, ethanol_3d]), enable="all")
+        assert len(viewer._molecules) == 2
+
+
+# ---------------------------------------------------------------------------
+# TestC3DAddDesignUnits
+# ---------------------------------------------------------------------------
+
+
+class TestC3DAddDesignUnits:
+    """Verify the add_design_units batch method."""
+
+    def test_invalid_enable_string_raises_value_error(self):
+        """add_design_units should raise ValueError for unknown enable strings."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        with pytest.raises(ValueError, match="Unknown enable mode"):
+            viewer.add_design_units([], enable="none")
+
+    def test_invalid_enable_type_raises_type_error(self):
+        """add_design_units should raise TypeError for non-string, non-Sequence enable."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        with pytest.raises(TypeError, match="enable must be"):
+            viewer.add_design_units([], enable=42)
+
+    def test_returns_self(self):
+        """add_design_units should return self for method chaining."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.add_design_units([])
+        assert result is viewer
+
+    def test_empty_iterable(self):
+        """Empty iterable should be a no-op and return self."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.add_design_units([])
+        assert result is viewer
+        assert len(viewer._molecules) == 0
+
+    def test_delegates_to_add_design_unit(self):
+        """add_design_units should call add_design_unit for each item."""
+        from unittest.mock import patch, MagicMock
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        du1 = MagicMock()
+        du1.GetTitle.return_value = "complex_1"
+        du2 = MagicMock()
+        du2.GetTitle.return_value = "complex_2"
+
+        with patch.object(viewer, "add_design_unit", return_value=viewer) as mock_add:
+            viewer.add_design_units([du1, du2], prefix="DU ", enable="all")
+
+        assert mock_add.call_count == 2
+        mock_add.assert_any_call(du1, name="DU complex_1", disabled=False)
+        mock_add.assert_any_call(du2, name="DU complex_2", disabled=False)
+
+    def test_enable_first_with_delegation(self):
+        """enable='first' should pass disabled=False for first, True for rest."""
+        from unittest.mock import patch, MagicMock
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        du1 = MagicMock()
+        du1.GetTitle.return_value = ""
+        du2 = MagicMock()
+        du2.GetTitle.return_value = ""
+
+        with patch.object(viewer, "add_design_unit", return_value=viewer) as mock_add:
+            viewer.add_design_units([du1, du2], prefix="P", enable="first")
+
+        calls = mock_add.call_args_list
+        assert calls[0].kwargs["disabled"] is False
+        assert calls[1].kwargs["disabled"] is True
+
+    def test_no_prefix_passes_none_name(self):
+        """Without prefix, name=None should be passed to add_design_unit."""
+        from unittest.mock import patch, MagicMock
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        du = MagicMock()
+        du.GetTitle.return_value = "my_du"
+
+        with patch.object(viewer, "add_design_unit", return_value=viewer) as mock_add:
+            viewer.add_design_units([du], enable="all")
+
+        mock_add.assert_called_once_with(du, name=None, disabled=False)
