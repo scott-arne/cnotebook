@@ -116,6 +116,17 @@ def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabl
         complex_mol,
         oechem.OEDesignUnitComponents_TargetComplex | oechem.OEDesignUnitComponents_ListComponents
     )
+
+    # Extract the ligand separately and mark its atoms as HETATM
+    # (This should probably be reported to OpenEye as a bug, as it should be unnecessary)
+    lig_mol = oechem.OEGraphMol()
+    if du.GetLigand(lig_mol):
+        for atom in lig_mol.GetAtoms():
+            res = oechem.OEAtomGetResidue(atom)
+            res.SetHetAtom(True)
+            oechem.OEAtomSetResidue(atom, res)
+        oechem.OEAddMols(complex_mol, lig_mol)
+
     num_atoms = complex_mol.NumAtoms()
     pdb_string = _mol_to_pdb_string(complex_mol)
 

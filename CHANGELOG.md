@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `invoke update-gui` task to build and copy 3dmol-js-gui assets from the vendor submodule
 - 3dmol-js-gui added as a git submodule at `vendor/3dmol-js-gui`
 
+## [2.2.9] - 2026-03-18
+
+### Fixed
+- C3D: ligand atoms from design units now have HETATM flag set, fixing preset ligand detection (e.g., `sites` preset showing ligands as sticks)
+- C3D: updated 3dmol-js-gui to 0.2.1, fixing empty viewer caused by demo code in the production bundle
+
 ## [2.2.8] - 2026-03-17
 
 ### Added
