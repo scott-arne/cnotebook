@@ -1,0 +1,4 @@
+[submodule "vendor/3dmol-js-gui"]
+	path = vendor/3dmol-js-gui
+	url = https://github.com/scott-arne/3dmol-js-gui.git
+	branch = master

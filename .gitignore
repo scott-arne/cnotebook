@@ -3,6 +3,7 @@
 .idea
 .ipynb_checkpoints
 docs/plans
+docs/superpowers
 *DEBUG*
 
 ### Python template
@@ -67,3 +68,7 @@ target/
 .DS_Store
 /openeye/
 .git_backup/
+
+# Vendor submodule build artifacts
+vendor/3dmol-js-gui/node_modules/
+vendor/3dmol-js-gui/dist/
