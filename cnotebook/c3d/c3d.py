@@ -81,14 +81,20 @@ class C3D:
     _DEFAULT_HEIGHT_LARGE = 600
     _ATOM_THRESHOLD = 1000
 
-    def __init__(self, width: int = 800, height: int | None = None):
+    def __init__(self, width: int = 800, height: int | None = None, theme: str = "auto"):
         """Create a new C3D viewer instance.
 
         :param width: Viewer width in pixels.
         :param height: Viewer height in pixels. When ``None`` (the default),
             the height is chosen automatically: 300 px if the largest
             molecule has at most 1 000 atoms, otherwise 600 px.
+        :param theme: Color theme. ``"auto"`` detects from the host
+            environment, ``"dark"`` or ``"light"`` sets explicitly.
         """
+        if theme not in ("auto", "light", "dark"):
+            raise ValueError(
+                f"Unknown theme '{theme}'. Choose 'auto', 'light', or 'dark'."
+            )
         self._width = width
         self._height = height
         self._molecules: List[MoleculeData] = []
@@ -101,7 +107,7 @@ class C3D:
         self._ui_explicit = False
         self._background: Optional[str] = None
         self._background_explicit = False
-        self._theme: str = "light"
+        self._theme: str = theme
         self._zoom_to: Optional[Dict[str, Any]] = None
         self._orient: Optional[Union[bool, str, Dict[str, Any]]] = None
 
@@ -380,20 +386,20 @@ class C3D:
         self._background_explicit = True
         return self
 
-    def set_theme(self, theme: str = "light") -> C3D:
+    def set_theme(self, theme: str = "auto") -> C3D:
         """Set the GUI color theme.
 
         Controls the overall UI appearance (panel backgrounds, text color,
         borders) **and** the viewer background color when no explicit
         background has been set via :meth:`set_background`.
 
-        :param theme: ``"light"`` or ``"dark"``.
+        :param theme: ``"auto"``, ``"light"``, or ``"dark"``.
         :returns: Self, for method chaining.
-        :raises ValueError: If *theme* is not ``"light"`` or ``"dark"``.
+        :raises ValueError: If *theme* is not ``"auto"``, ``"light"``, or ``"dark"``.
         """
-        if theme not in ("light", "dark"):
+        if theme not in ("auto", "light", "dark"):
             raise ValueError(
-                f"Unknown theme '{theme}'. Choose 'light' or 'dark'."
+                f"Unknown theme '{theme}'. Choose 'auto', 'light', or 'dark'."
             )
         self._theme = theme
         return self

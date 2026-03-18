@@ -134,6 +134,27 @@ class TestC3DConstructor:
         viewer = C3D()
         assert viewer._zoom_to is None
 
+    def test_constructor_theme_parameter(self):
+        """Constructor should accept theme parameter."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D(theme="dark")
+        assert viewer._theme == "dark"
+
+    def test_constructor_theme_default_auto(self):
+        """Constructor should default theme to 'auto'."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        assert viewer._theme == "auto"
+
+    def test_constructor_theme_rejects_invalid(self):
+        """Constructor should raise ValueError for invalid theme."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match="Unknown theme"):
+            C3D(theme="blue")
+
 
 # ---------------------------------------------------------------------------
 # TestC3DBuilder
@@ -338,6 +359,14 @@ class TestC3DBuilder:
         viewer = C3D()
         with pytest.raises(ValueError, match="Unknown theme"):
             viewer.set_theme("blue")
+
+    def test_set_theme_accepts_auto(self):
+        """set_theme should accept 'auto'."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.set_theme("auto")
+        assert viewer._theme == "auto"
 
     def test_zoom_to_returns_self(self):
         """zoom_to should return the C3D instance for chaining."""
@@ -627,15 +656,15 @@ class TestC3DPayload:
 
         assert payload["background"] == "#ff0000"
 
-    def test_theme_default_light_in_payload(self, ethanol_3d):
-        """Default theme should be 'light' in payload."""
+    def test_theme_default_auto_in_payload(self, ethanol_3d):
+        """Default theme should be 'auto' in payload."""
         from cnotebook.c3d import C3D
 
         viewer = C3D()
         viewer.add_molecule(ethanol_3d)
         payload = viewer._build_init_payload()
 
-        assert payload["theme"] == "light"
+        assert payload["theme"] == "auto"
 
     def test_theme_dark_in_payload(self, ethanol_3d):
         """set_theme('dark') should appear in payload."""
@@ -647,6 +676,17 @@ class TestC3DPayload:
         payload = viewer._build_init_payload()
 
         assert payload["theme"] == "dark"
+
+    def test_theme_auto_in_payload(self, ethanol_3d):
+        """set_theme('auto') should appear in payload."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecule(ethanol_3d)
+        viewer.set_theme("auto")
+        payload = viewer._build_init_payload()
+
+        assert payload["theme"] == "auto"
 
     def test_zoom_to_default_is_none(self, ethanol_3d):
         """Default zoomTo should be None in payload."""
