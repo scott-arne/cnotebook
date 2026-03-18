@@ -21,9 +21,9 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 ## Getting Started
 
 1. **Fork the repository** on GitHub
-2. **Clone your fork** locally:
+2. **Clone your fork** locally (include `--recurse-submodules` to initialize vendor dependencies):
    ```bash
-   git clone https://github.com/your-username/cnotebook.git
+   git clone --recurse-submodules https://github.com/your-username/cnotebook.git
    cd cnotebook
    ```
 3. **Add the upstream repository**:
@@ -38,6 +38,7 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 - Python 3.10 or higher
 - OpenEye Toolkits (requires license)
 - Git
+- Node.js and npm (only needed for updating 3dmol-js-gui assets)
 
 ### Installing Dependencies
 
@@ -47,12 +48,17 @@ This project adheres to a Code of Conduct that all contributors are expected to 
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. **Install the package in development mode**:
+2. **Initialize git submodules** (required for 3dmol-js-gui):
+   ```bash
+   git submodule update --init
+   ```
+
+3. **Install the package in development mode**:
    ```bash
    pip install -e .
    ```
 
-3. **Install development dependencies**:
+4. **Install development dependencies**:
    ```bash
    pip install -e ".[dev,test]"
    ```
@@ -329,6 +335,20 @@ python -m build
 # Install in editable mode
 pip install -e .
 ```
+
+### Updating 3dmol-js-gui Assets
+
+The C3D viewer's JavaScript and CSS assets come from the [3dmol-js-gui](https://github.com/scott-arne/3dmol-js-gui) repository, included as a git submodule at `vendor/3dmol-js-gui`. An invoke task automates building and copying the minified assets:
+
+```bash
+# Build and copy the latest assets from master
+invoke update-gui
+
+# Build from a specific tag or commit
+invoke update-gui --ref v0.3.0
+```
+
+This requires Node.js and npm to be installed. The task fetches the specified version, runs the Vite build, and copies the output to `cnotebook/c3d/static/`.
 
 ### IDE Setup
 
