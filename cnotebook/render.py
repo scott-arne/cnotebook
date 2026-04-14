@@ -62,14 +62,27 @@ def oedisp_to_html(
     :param disp: OpenEye 2D molecule display object
     :return: HTML image tag
     """
-    # Convert the display object to an <img> tag
+    # Render at intrinsic resolution for image quality
     image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
     oedepict.OERenderMolecule(image, disp)
     image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
 
+    # Resolve display dimensions: prefer ctx when set, else intrinsic
+    intrinsic_w, intrinsic_h = disp.GetWidth(), disp.GetHeight()
+    if ctx.width > 0 and ctx.height > 0:
+        display_width, display_height = ctx.width, ctx.height
+    elif ctx.width > 0:
+        display_width = ctx.width
+        display_height = intrinsic_h * (ctx.width / intrinsic_w) if intrinsic_w > 0 else ctx.width
+    elif ctx.height > 0:
+        display_height = ctx.height
+        display_width = intrinsic_w * (ctx.height / intrinsic_h) if intrinsic_h > 0 else ctx.height
+    else:
+        display_width, display_height = intrinsic_w, intrinsic_h
+
     return create_img_tag(
-        disp.GetWidth(),
-        disp.GetHeight(),
+        display_width,
+        display_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=image_bytes,
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
@@ -416,9 +429,23 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext) -> str:
     """
     # Convert the image to an <img> tag
     image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
+
+    # Resolve display dimensions: prefer ctx when set, else intrinsic
+    intrinsic_w, intrinsic_h = image.GetWidth(), image.GetHeight()
+    if ctx.width > 0 and ctx.height > 0:
+        display_width, display_height = ctx.width, ctx.height
+    elif ctx.width > 0:
+        display_width = ctx.width
+        display_height = intrinsic_h * (ctx.width / intrinsic_w) if intrinsic_w > 0 else ctx.width
+    elif ctx.height > 0:
+        display_height = ctx.height
+        display_width = intrinsic_w * (ctx.height / intrinsic_h) if intrinsic_h > 0 else ctx.height
+    else:
+        display_width, display_height = intrinsic_w, intrinsic_h
+
     return create_img_tag(
-        image.GetWidth(),
-        image.GetHeight(),
+        display_width,
+        display_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=image_bytes,
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale

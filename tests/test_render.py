@@ -122,6 +122,102 @@ class TestOedispToHtml:
         mock_create_img.assert_called_once()
         assert result == '<img>test</img>'
 
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('openeye.oedepict.OERenderMolecule')
+    @patch('openeye.oedepict.OEImage')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oedisp_to_html_uses_ctx_dimensions(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
+        """When both ctx.width and ctx.height are non-zero, they are used for display sizing."""
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        mock_disp.GetWidth.return_value = 612
+        mock_disp.GetHeight.return_value = 337
+
+        mock_image = MagicMock()
+        mock_oeimage.return_value = mock_image
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=150, height=150,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oedisp_to_html(mock_disp, ctx=ctx)
+
+        # Render image should still use intrinsic dimensions
+        mock_oeimage.assert_called_once_with(612, 337)
+        # But create_img_tag should use ctx dimensions
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 150  # display width
+        assert call_args[0][1] == 150  # display height
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('openeye.oedepict.OERenderMolecule')
+    @patch('openeye.oedepict.OEImage')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oedisp_to_html_width_only_scales_height(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
+        """When only ctx.width is set, height is scaled proportionally."""
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        mock_disp.GetWidth.return_value = 600
+        mock_disp.GetHeight.return_value = 300
+
+        mock_oeimage.return_value = MagicMock()
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=150, height=0,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oedisp_to_html(mock_disp, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 150   # display width = ctx.width
+        assert call_args[0][1] == 75.0  # display height = 300 * (150/600)
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('openeye.oedepict.OERenderMolecule')
+    @patch('openeye.oedepict.OEImage')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oedisp_to_html_height_only_scales_width(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
+        """When only ctx.height is set, width is scaled proportionally."""
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        mock_disp.GetWidth.return_value = 600
+        mock_disp.GetHeight.return_value = 300
+
+        mock_oeimage.return_value = MagicMock()
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=0, height=150,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oedisp_to_html(mock_disp, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 300.0  # display width = 600 * (150/300)
+        assert call_args[0][1] == 150    # display height = ctx.height
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('openeye.oedepict.OERenderMolecule')
+    @patch('openeye.oedepict.OEImage')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oedisp_to_html_default_uses_intrinsic(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
+        """When both ctx dimensions are 0 (default), intrinsic dimensions are used."""
+        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
+        mock_disp.GetWidth.return_value = 612
+        mock_disp.GetHeight.return_value = 337
+
+        mock_oeimage.return_value = MagicMock()
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=0, height=0,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oedisp_to_html(mock_disp, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 612  # intrinsic width
+        assert call_args[0][1] == 337  # intrinsic height
+
 
 class TestRenderEmptyMessage:
     """Test render_empty_molecule and render_invalid_molecule functions"""
@@ -618,6 +714,86 @@ class TestOeimageToHtml:
         assert call_args[0][0] == 400  # width
         assert call_args[0][1] == 300  # height
         assert result == '<img>image</img>'
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oeimage_to_html_uses_ctx_dimensions(self, mock_create_img, mock_write_image):
+        """When both ctx.width and ctx.height are non-zero, they are used for display sizing."""
+        mock_image = MagicMock(spec=oedepict.OEImage)
+        mock_image.GetWidth.return_value = 500
+        mock_image.GetHeight.return_value = 400
+
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=200, height=200,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oeimage_to_html(mock_image, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 200  # display width
+        assert call_args[0][1] == 200  # display height
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oeimage_to_html_width_only_scales_height(self, mock_create_img, mock_write_image):
+        """When only ctx.width is set, height is scaled proportionally."""
+        mock_image = MagicMock(spec=oedepict.OEImage)
+        mock_image.GetWidth.return_value = 400
+        mock_image.GetHeight.return_value = 200
+
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=200, height=0,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oeimage_to_html(mock_image, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 200    # display width = ctx.width
+        assert call_args[0][1] == 100.0  # display height = 200 * (200/400)
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oeimage_to_html_height_only_scales_width(self, mock_create_img, mock_write_image):
+        """When only ctx.height is set, width is scaled proportionally."""
+        mock_image = MagicMock(spec=oedepict.OEImage)
+        mock_image.GetWidth.return_value = 400
+        mock_image.GetHeight.return_value = 200
+
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=0, height=100,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oeimage_to_html(mock_image, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 200.0  # display width = 400 * (100/200)
+        assert call_args[0][1] == 100    # display height = ctx.height
+
+    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('cnotebook.render.create_img_tag')
+    def test_oeimage_to_html_default_uses_intrinsic(self, mock_create_img, mock_write_image):
+        """When both ctx dimensions are 0 (default), intrinsic dimensions are used."""
+        mock_image = MagicMock(spec=oedepict.OEImage)
+        mock_image.GetWidth.return_value = 500
+        mock_image.GetHeight.return_value = 400
+
+        mock_write_image.return_value = b'fake_image_bytes'
+        mock_create_img.return_value = '<img />'
+
+        ctx = CNotebookContext(image_format="png", width=0, height=0,
+                               structure_scale=oedepict.OEScale_Default)
+
+        oeimage_to_html(mock_image, ctx=ctx)
+
+        call_args = mock_create_img.call_args
+        assert call_args[0][0] == 500  # intrinsic width
+        assert call_args[0][1] == 400  # intrinsic height
 
 
 class TestIntegrationWithContext:
