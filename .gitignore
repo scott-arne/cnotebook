@@ -3,6 +3,7 @@
 .idea
 .ipynb_checkpoints
 __marimo__/
+.worktrees/
 docs/plans
 docs/superpowers
 *DEBUG*
@@ -11,7 +12,6 @@ docs/superpowers
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-.idea
 *.sublime-*
 
 # C extensions
