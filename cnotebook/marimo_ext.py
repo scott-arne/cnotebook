@@ -79,6 +79,33 @@ oedepict.OEImage._mime_ = _display_image
 
 
 ########################################################################################################################
+# Context-bound image wrapper
+#
+# Marimo DataFrame formatters capture per-column CNotebookContext in a closure and rasterize an
+# OEImage from it. When marimo serializes the cell, it invokes the image's ``_mime_`` method.
+# The globally-registered ``OEImage._mime_`` hook reads ``cnotebook_context.get()`` — losing the
+# per-column ctx. Wrapping the OEImage in _CtxBoundImage preserves the captured ctx across that
+# boundary so ``oeimage_to_html`` sees per-column ``width``/``height``/``image_format``.
+########################################################################################################################
+
+class _CtxBoundImage:
+    """Pair an ``OEImage`` with the ``CNotebookContext`` that should drive its HTML serialization.
+
+    :param image: The rendered image.
+    :param ctx: The per-column context captured from series/array metadata.
+    """
+
+    __slots__ = ("_image", "_ctx")
+
+    def __init__(self, image: oedepict.OEImage, ctx):
+        self._image = image
+        self._ctx = ctx
+
+    def _mime_(self):
+        return "text/html", oeimage_to_html(self._image, ctx=self._ctx)
+
+
+########################################################################################################################
 # Formatter factories for mo.ui.table format_mapping
 ########################################################################################################################
 
@@ -100,7 +127,7 @@ def _create_molecule_formatter(ctx):
         if (mol.IsValid()
                 and ctx.max_heavy_atoms is not None
                 and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
-            return oemol_to_image(mol, ctx=ctx)
+            return _CtxBoundImage(oemol_to_image(mol, ctx=ctx), ctx)
 
         # Valid molecules with callbacks need the intermediate display step
         if mol.IsValid() and mol.NumAtoms() > 0 and ctx.callbacks:
@@ -109,10 +136,10 @@ def _create_molecule_formatter(ctx):
                 callback(disp)
             image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
             oedepict.OERenderMolecule(image, disp)
-            return image
+            return _CtxBoundImage(image, ctx)
 
         # All other cases (valid without callbacks, empty, invalid)
-        return oemol_to_image(mol, ctx=ctx)
+        return _CtxBoundImage(oemol_to_image(mol, ctx=ctx), ctx)
 
     return formatter
 
@@ -145,7 +172,7 @@ def _create_display_formatter(ctx):
         # Render to OEImage for consistent return type
         image = oedepict.OEImage(disp_copy.GetWidth(), disp_copy.GetHeight())
         oedepict.OERenderMolecule(image, disp_copy)
-        return image
+        return _CtxBoundImage(image, ctx)
 
     return formatter
 
@@ -164,7 +191,7 @@ def _create_du_formatter(ctx):
         if not isinstance(du, oechem.OEDesignUnit):
             return str(du)
 
-        return oedu_to_image(du, ctx=ctx)
+        return _CtxBoundImage(oedu_to_image(du, ctx=ctx), ctx)
 
     return formatter
 

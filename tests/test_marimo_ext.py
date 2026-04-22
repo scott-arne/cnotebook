@@ -483,7 +483,7 @@ class TestCreateMoleculeFormatter:
 
     def test_valid_molecule_with_callbacks(self):
         """Test that valid molecule with callbacks uses oemol_to_disp and applies callbacks"""
-        from cnotebook.marimo_ext import _create_molecule_formatter
+        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
 
         callback_called = []
@@ -501,11 +501,12 @@ class TestCreateMoleculeFormatter:
 
         assert len(callback_called) == 1
         assert isinstance(callback_called[0], oedepict.OE2DMolDisplay)
-        assert isinstance(result, oedepict.OEImage)
+        assert isinstance(result, _CtxBoundImage)
+        assert isinstance(result._image, oedepict.OEImage)
 
     def test_valid_molecule_without_callbacks(self):
         """Test that valid molecule without callbacks falls back to oemol_to_image"""
-        from cnotebook.marimo_ext import _create_molecule_formatter
+        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
 
         ctx = CNotebookContext(callbacks=[])
@@ -516,7 +517,8 @@ class TestCreateMoleculeFormatter:
 
         result = formatter(mol)
 
-        assert isinstance(result, oedepict.OEImage)
+        assert isinstance(result, _CtxBoundImage)
+        assert isinstance(result._image, oedepict.OEImage)
 
 
 class TestCreateDisplayFormatter:
@@ -564,7 +566,7 @@ class TestCreateDisplayFormatter:
 
     def test_valid_display_with_callbacks(self):
         """Test that valid display with callbacks copies and applies callbacks"""
-        from cnotebook.marimo_ext import _create_display_formatter
+        from cnotebook.marimo_ext import _create_display_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
 
         callback = MagicMock()
@@ -581,8 +583,9 @@ class TestCreateDisplayFormatter:
 
         # Verify callback was applied
         callback.assert_called_once()
-        # Result should be an OEImage
-        assert isinstance(result, oedepict.OEImage)
+        # Result should be a _CtxBoundImage wrapping an OEImage
+        assert isinstance(result, _CtxBoundImage)
+        assert isinstance(result._image, oedepict.OEImage)
 
 
 class TestCreateDuFormatter:
@@ -607,18 +610,19 @@ class TestCreateDuFormatter:
         assert formatter("hello") == "hello"
 
     def test_valid_du(self):
-        """Test that valid OEDesignUnit is rendered to an OEImage"""
-        from cnotebook.marimo_ext import _create_du_formatter
+        """Test that valid OEDesignUnit is rendered to a _CtxBoundImage wrapping an OEImage"""
+        from cnotebook.marimo_ext import _create_du_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
 
         ctx = CNotebookContext()
         formatter = _create_du_formatter(ctx)
 
-        # Empty DesignUnit (apo, no ligand) still produces an OEImage
+        # Empty DesignUnit (apo, no ligand) still produces a _CtxBoundImage
         du = oechem.OEDesignUnit()
 
         result = formatter(du)
-        assert isinstance(result, oedepict.OEImage)
+        assert isinstance(result, _CtxBoundImage)
+        assert isinstance(result._image, oedepict.OEImage)
 
 
 class TestDisplayDataframe:
@@ -635,3 +639,115 @@ class TestDisplayDataframe:
         assert mime_type == "text/html"
         assert isinstance(content, str)
         assert len(content) > 0
+
+
+class TestCtxBoundImage:
+    """Test that marimo DataFrame formatters carry per-column ctx through to HTML serialization."""
+
+    def test_ctx_bound_image_mime_uses_bound_ctx(self):
+        """_CtxBoundImage._mime_ must call oeimage_to_html with the bound ctx, not the global ContextVar."""
+        from cnotebook.marimo_ext import _CtxBoundImage
+        from cnotebook.context import CNotebookContext
+
+        # Bound ctx with an explicit width that should survive through _mime_
+        bound_ctx = CNotebookContext(width=123, height=77, image_format="png")
+
+        mock_image = MagicMock(spec=oedepict.OEImage)
+        mock_image.GetWidth.return_value = 400
+        mock_image.GetHeight.return_value = 300
+
+        wrapper = _CtxBoundImage(mock_image, bound_ctx)
+
+        with patch('cnotebook.marimo_ext.oeimage_to_html') as mock_html:
+            mock_html.return_value = '<img>bound</img>'
+            mime_type, content = wrapper._mime_()
+
+        assert mime_type == "text/html"
+        assert content == '<img>bound</img>'
+        # The critical assertion: the bound ctx — not cnotebook_context.get() — was passed through.
+        mock_html.assert_called_once_with(mock_image, ctx=bound_ctx)
+
+    def test_molecule_formatter_returns_ctx_bound_image(self):
+        """_create_molecule_formatter wraps the OEImage in a _CtxBoundImage bound to the column ctx."""
+        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
+        from cnotebook.context import CNotebookContext
+
+        col_ctx = CNotebookContext(width=150, height=150, image_format="png")
+        formatter = _create_molecule_formatter(col_ctx)
+
+        mock_mol = MagicMock(spec=oechem.OEMolBase)
+        mock_mol.IsValid.return_value = True
+        mock_mol.NumAtoms.return_value = 5
+
+        with patch('cnotebook.marimo_ext.oemol_to_image') as mock_to_image, \
+             patch('cnotebook.marimo_ext.oechem.OECount', return_value=5):
+            mock_image = MagicMock(spec=oedepict.OEImage)
+            mock_to_image.return_value = mock_image
+            # No callbacks path
+            col_ctx._callbacks.set([])
+
+            result = formatter(mock_mol)
+
+        assert isinstance(result, _CtxBoundImage)
+        assert result._image is mock_image
+        assert result._ctx is col_ctx
+
+    def test_display_formatter_returns_ctx_bound_image(self):
+        """_create_display_formatter wraps its rendered OEImage in a _CtxBoundImage."""
+        from cnotebook.marimo_ext import _create_display_formatter, _CtxBoundImage
+        from cnotebook.context import CNotebookContext
+
+        col_ctx = CNotebookContext(width=250, height=250, image_format="png")
+        formatter = _create_display_formatter(col_ctx)
+
+        # Create a real empty molecule and display
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        oedepict.OEPrepareDepiction(mol)
+        disp = oedepict.OE2DMolDisplay(mol, col_ctx.display_options)
+        col_ctx._callbacks.set([])
+
+        result = formatter(disp)
+
+        assert isinstance(result, _CtxBoundImage)
+        assert isinstance(result._image, oedepict.OEImage)
+        assert result._ctx is col_ctx
+
+    def test_du_formatter_returns_ctx_bound_image(self):
+        """_create_du_formatter wraps its rendered OEImage in a _CtxBoundImage."""
+        from cnotebook.marimo_ext import _create_du_formatter, _CtxBoundImage
+        from cnotebook.context import CNotebookContext
+
+        col_ctx = CNotebookContext(width=200, height=200, image_format="png")
+        formatter = _create_du_formatter(col_ctx)
+
+        mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        with patch('cnotebook.marimo_ext.oedu_to_image') as mock_to_image:
+            mock_image = MagicMock(spec=oedepict.OEImage)
+            mock_to_image.return_value = mock_image
+
+            result = formatter(mock_du)
+
+        assert isinstance(result, _CtxBoundImage)
+        assert result._image is mock_image
+        assert result._ctx is col_ctx
+
+    def test_per_column_width_survives_through_mime(self):
+        """End-to-end: a per-column ctx.width propagates into the HTML <img> width attribute."""
+        from cnotebook.marimo_ext import _CtxBoundImage
+        from cnotebook.context import CNotebookContext
+
+        # Build a real small image and a real ctx with explicit width/height.
+        image = oedepict.OEImage(400, 400)
+        col_ctx = CNotebookContext(width=150, height=150, image_format="png")
+
+        wrapper = _CtxBoundImage(image, col_ctx)
+        mime_type, content = wrapper._mime_()
+
+        assert mime_type == "text/html"
+        # ctx.width=150 should be reflected in the CSS preferred width.
+        assert "width:150px" in content
+        # Responsive CSS from Task 1 should also be present.
+        assert "max-width:100%" in content
+        assert "height:auto" in content
