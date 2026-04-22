@@ -30,23 +30,17 @@ def create_img_tag(
     """
     if image_mime_type == "image/svg+xml":
         if wrap_svg:
-            return '<div style=\'width:{}px;max-width:{}px;height:{}px;max-height:{}px\'>\n\t{}\n</div>'.format(
+            return '<div style=\'width:{}px;max-width:100%;height:auto\'>\n\t{}\n</div>'.format(
                 int(width),
-                int(width),
-                int(height),
-                int(height),
                 image_bytes.decode("utf-8")
             )
         else:
             return image_bytes.decode("utf-8")
 
-    return '<img src=\'data:{};base64,{}\' style=\'width:{}px;max-width:{}px;height:{}px;max-height:{}px\' />'.format(
+    return '<img src=\'data:{};base64,{}\' style=\'width:{}px;max-width:100%;height:auto\' />'.format(
         image_mime_type,
         base64.b64encode(image_bytes).decode("utf-8"),
-        int(width),
-        int(width),
-        int(height),
-        int(height)
+        int(width)
     )
 
 
