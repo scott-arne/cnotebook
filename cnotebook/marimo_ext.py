@@ -35,6 +35,7 @@ from .render import (
     oeimage_to_html,
     oemol_to_disp,
     oemol_to_image,
+    oedu_to_disp,
     oedu_to_image,
 )
 from .pandas_ext import render_dataframe
@@ -103,6 +104,88 @@ class _CtxBoundImage:
 
     def _mime_(self):
         return "text/html", oeimage_to_html(self._image, ctx=self._ctx)
+
+
+########################################################################################################################
+# Column-width pre-pass
+#
+# Marimo sizes each column from cell CSS. With fixed-scale rendering, different molecules produce
+# different intrinsic canvas widths, so without a uniform wrapper each cell would report its own
+# natural width to the column sizer and narrower cells would clip wider ones. Running a cheap
+# pre-pass over the column (display objects only — no rasterization) lets us emit a uniform
+# fixed-width wrapper around every cell so the column sizes to the widest intrinsic canvas.
+########################################################################################################################
+
+def _compute_molecule_column_width(mols, ctx) -> int:
+    """Return the maximum intrinsic canvas width across a molecule column.
+
+    Mirrors the branching in :func:`_create_molecule_formatter` so the computed
+    width matches what each cell will actually render at.
+
+    :param mols: Iterable of ``OEMolBase`` (or ``None``) for one column.
+    :param ctx: The column's rendering context.
+    :returns: Maximum intrinsic width in pixels.
+    """
+    max_width = 0
+    for mol in mols:
+        if mol is None or not isinstance(mol, oechem.OEMolBase):
+            continue
+
+        if not mol.IsValid() or mol.NumAtoms() == 0:
+            candidate = int(ctx.min_width)
+        elif (ctx.max_heavy_atoms is not None
+              and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
+            candidate = int(ctx.min_width)
+        else:
+            disp = oemol_to_disp(mol, ctx=ctx)
+            candidate = int(disp.GetWidth())
+
+        if candidate > max_width:
+            max_width = candidate
+    return max_width
+
+
+def _compute_display_column_width(displays) -> int:
+    """Return the maximum intrinsic canvas width across a display column.
+
+    :param displays: Iterable of ``OE2DMolDisplay`` (or ``None``) for one column.
+    :returns: Maximum intrinsic width in pixels.
+    """
+    max_width = 0
+    for disp in displays:
+        if isinstance(disp, oedepict.OE2DMolDisplay) and disp.IsValid():
+            w = int(disp.GetWidth())
+            if w > max_width:
+                max_width = w
+    return max_width
+
+
+def _compute_du_column_width(dus, ctx) -> int:
+    """Return the maximum intrinsic canvas width across a design-unit column.
+
+    Mirrors :func:`_create_du_formatter`: apo design units render at
+    ``ctx.min_width`` × ``ctx.min_height``; design units with ligands render
+    at the ligand's intrinsic canvas size.
+
+    :param dus: Iterable of ``OEDesignUnit`` (or ``None``) for one column.
+    :param ctx: The column's rendering context.
+    :returns: Maximum intrinsic width in pixels.
+    """
+    max_width = 0
+    for du in dus:
+        if du is None or not isinstance(du, oechem.OEDesignUnit):
+            continue
+
+        result = oedu_to_disp(du, ctx=ctx)
+        if result is None:
+            candidate = int(ctx.min_width)
+        else:
+            disp, _lig = result
+            candidate = int(disp.GetWidth())
+
+        if candidate > max_width:
+            max_width = candidate
+    return max_width
 
 
 ########################################################################################################################
@@ -197,6 +280,36 @@ def _create_du_formatter(ctx):
 
 
 ########################################################################################################################
+# style_cell factory for molecule columns
+#
+# Marimo's DataTable hardcodes ``truncate max-w-[300px]`` on every ``<td>``, which caps the cell
+# width and clips overflow. Inline styles emitted through ``table(style_cell=...)`` beat those
+# class rules on specificity, so we use the public ``style_cell`` API to override ``maxWidth``,
+# ``minWidth``, and ``overflow`` on molecule/display/design-unit columns — letting the td expand
+# to the widest intrinsic canvas in each column.
+########################################################################################################################
+
+def _make_style_cell(column_widths: dict[str, int]):
+    """Return a ``style_cell`` callback that lifts the 300px cap on molecule columns.
+
+    :param column_widths: Mapping of column name to uniform cell width (px).
+    :returns: Callable ``(row_id, column_name, value) -> dict`` for
+        ``mo.ui.table(style_cell=...)``.
+    """
+    def style_cell(_row_id, column_name, _value):
+        width = column_widths.get(column_name)
+        if width is None:
+            return {}
+        return {
+            "maxWidth": "none",
+            "minWidth": f"{int(width)}px",
+            "width": f"{int(width)}px",
+            "overflow": "visible",
+        }
+    return style_cell
+
+
+########################################################################################################################
 # Marimo DataFrame formatter registration
 #
 # This registers a custom formatter with Marimo's OPINIONATED_FORMATTERS registry
@@ -220,6 +333,7 @@ try:
         Monkey patch the Marimo DataFrame formatter
         """
         format_mapping = {}
+        column_widths: dict[str, int] = {}
 
         # Check for MoleculeDtype / DisplayDtype (OEPandas specific)
         if oepandas_available:
@@ -230,11 +344,17 @@ try:
                     arr = df[col].array
                     ctx = get_series_context(arr.metadata).copy()
                     format_mapping[col] = _create_molecule_formatter(ctx)
+                    width = _compute_molecule_column_width(arr, ctx)
+                    if width:
+                        column_widths[col] = width
 
                 elif isinstance(dtype, oepd.DisplayDtype):
                     arr = df[col].array
                     ctx = get_series_context(arr.metadata).copy()
                     format_mapping[col] = _create_display_formatter(ctx)
+                    width = _compute_display_column_width(arr)
+                    if width:
+                        column_widths[col] = width
 
         # Check for DesignUnitDtype (OEPandas specific)
         if oepandas_available:
@@ -245,10 +365,21 @@ try:
                         arr = df[col].array
                         ctx = get_series_context(arr.metadata).copy()
                         format_mapping[col] = _create_du_formatter(ctx)
+                        width = _compute_du_column_width(arr, ctx)
+                        if width:
+                            column_widths[col] = width
+
+        style_cell = _make_style_cell(column_widths) if column_widths else None
 
         # Return a Marimo table with our custom mapping
         # noinspection PyProtectedMember,PyTypeChecker
-        return table(df, selection=None, format_mapping=format_mapping, pagination=True)._mime_()
+        return table(
+            df,
+            selection=None,
+            format_mapping=format_mapping,
+            pagination=True,
+            style_cell=style_cell,
+        )._mime_()
 
     # 2. Inject into the Registry
     def install_marimo_pandas_formatter():
@@ -267,6 +398,7 @@ try:
         Marimo DataFrame formatter for Polars DataFrames with molecule columns.
         """
         format_mapping = {}
+        column_widths: dict[str, int] = {}
 
         # Check for MoleculeType / DisplayType (OEPolars specific)
         if oepolars_available:
@@ -278,12 +410,18 @@ try:
                     metadata = series.chem.metadata if hasattr(series, 'chem') else {}
                     ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_molecule_formatter(ctx)
+                    width = _compute_molecule_column_width(series, ctx)
+                    if width:
+                        column_widths[col] = width
 
                 elif isinstance(dtype, oeplr.DisplayType):
                     series = df.get_column(col)
                     metadata = series.chem.metadata if hasattr(series, 'chem') else {}
                     ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_display_formatter(ctx)
+                    width = _compute_display_column_width(series)
+                    if width:
+                        column_widths[col] = width
 
         # Check for DesignUnitType (OEPolars specific)
         if oepolars_available:
@@ -295,10 +433,21 @@ try:
                         metadata = series.chem.metadata if hasattr(series, 'chem') else {}
                         ctx = get_series_context(metadata).copy()
                         format_mapping[col] = _create_du_formatter(ctx)
+                        width = _compute_du_column_width(series, ctx)
+                        if width:
+                            column_widths[col] = width
+
+        style_cell = _make_style_cell(column_widths) if column_widths else None
 
         # Return a Marimo table with our custom mapping
         # noinspection PyProtectedMember,PyTypeChecker
-        return table(df, selection=None, format_mapping=format_mapping, pagination=True)._mime_()
+        return table(
+            df,
+            selection=None,
+            format_mapping=format_mapping,
+            pagination=True,
+            style_cell=style_cell,
+        )._mime_()
 
     def install_marimo_polars_formatter():
         """Install the Polars DataFrame formatter if polars is available."""

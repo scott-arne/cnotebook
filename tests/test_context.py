@@ -435,8 +435,8 @@ class TestCNotebookContextEdgeCases:
         assert ctx.title is False
 
     def test_create_molecule_display_size_enforcement(self):
-        """Test that create_molecule_display respects max_width constraint."""
-        ctx = CNotebookContext(max_width=200)
+        """Test that create_molecule_display respects max_width under AutoScale."""
+        ctx = CNotebookContext(max_width=200, structure_scale=oedepict.OEScale_AutoScale)
 
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")  # large molecule
@@ -445,3 +445,44 @@ class TestCNotebookContextEdgeCases:
         disp = ctx.create_molecule_display(mol)
         assert isinstance(disp, oedepict.OE2DMolDisplay)
         assert disp.GetWidth() <= 200
+
+    def test_create_molecule_display_fixed_scale_skips_min_enforcement(self):
+        """Fixed-scale mode must not pad a small structure up to min_width/min_height."""
+        ctx = CNotebookContext(min_width=200, min_height=200)
+        assert ctx.structure_scale != oedepict.OEScale_AutoScale
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")  # intrinsic canvas is far smaller than 200
+        oedepict.OEPrepareDepiction(mol)
+
+        disp = ctx.create_molecule_display(mol)
+        assert disp.GetWidth() < 200
+        assert disp.GetHeight() < 200
+
+    def test_create_molecule_display_fixed_scale_skips_max_enforcement(self):
+        """Fixed-scale mode must not clamp a large structure down to max_width/max_height."""
+        ctx = CNotebookContext(max_width=150, max_height=150)
+        assert ctx.structure_scale != oedepict.OEScale_AutoScale
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
+        oedepict.OEPrepareDepiction(mol)
+
+        disp = ctx.create_molecule_display(mol)
+        assert disp.GetWidth() > 150 or disp.GetHeight() > 150
+
+    def test_create_molecule_display_autoscale_enforces_min(self):
+        """AutoScale mode pads small structures up to the min canvas."""
+        ctx = CNotebookContext(
+            min_width=200,
+            min_height=200,
+            structure_scale=oedepict.OEScale_AutoScale,
+        )
+
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        oedepict.OEPrepareDepiction(mol)
+
+        disp = ctx.create_molecule_display(mol)
+        assert disp.GetWidth() >= 200
+        assert disp.GetHeight() >= 200

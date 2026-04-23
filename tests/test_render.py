@@ -36,7 +36,7 @@ class TestCreateImgTag:
             wrap_svg=True
         )
         
-        expected = ('<div style=\'width:300px;max-width:100%;height:auto\'>\n'
+        expected = ('<div style=\'width:300px;height:auto;max-width:none\'>\n'
                    '\t<svg>test</svg>\n'
                    '</div>')
         assert result == expected
@@ -69,7 +69,7 @@ class TestCreateImgTag:
         
         expected_b64 = base64.b64encode(png_bytes).decode("utf-8")
         expected = (f'<img src=\'data:image/png;base64,{expected_b64}\' '
-                   'style=\'width:300px;max-width:100%;height:auto\' />')
+                   'style=\'width:300px;height:auto;max-width:none\' />')
         assert result == expected
     
     def test_create_img_tag_jpeg(self):
@@ -85,7 +85,7 @@ class TestCreateImgTag:
         
         expected_b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
         expected = (f'<img src=\'data:image/jpeg;base64,{expected_b64}\' '
-                   'style=\'width:400px;max-width:100%;height:auto\' />')
+                   'style=\'width:400px;height:auto;max-width:none\' />')
         assert result == expected
 
 

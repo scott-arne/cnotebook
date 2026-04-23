@@ -748,6 +748,137 @@ class TestCtxBoundImage:
         assert mime_type == "text/html"
         # ctx.width=150 should be reflected in the CSS preferred width.
         assert "width:150px" in content
-        # Responsive CSS from Task 1 should also be present.
-        assert "max-width:100%" in content
         assert "height:auto" in content
+        # Marimo's bundled Tailwind reset applies `img,video{max-width:100%}`
+        # globally, which would clamp wide molecules to their container's
+        # width and shrink bond strokes. Our img must explicitly declare
+        # `max-width:none` so the intrinsic pixel width is honored regardless
+        # of the host page's CSS.
+        assert "max-width:none" in content
+        assert "max-width:100%" not in content
+
+
+class TestColumnStyleCell:
+    """Ensure molecule columns get a ``style_cell`` that lifts marimo's 300px td cap."""
+
+    def test_make_style_cell_returns_overrides_for_known_column(self):
+        """Known columns get inline td style overrides with the computed width."""
+        from cnotebook.marimo_ext import _make_style_cell
+
+        style_cell = _make_style_cell({"Mol": 344})
+        style = style_cell("0", "Mol", None)
+
+        assert style["maxWidth"] == "none"
+        assert style["overflow"] == "visible"
+        assert style["minWidth"] == "344px"
+        assert style["width"] == "344px"
+
+    def test_make_style_cell_returns_empty_for_unknown_column(self):
+        """Non-molecule columns get no overrides so marimo's defaults apply."""
+        from cnotebook.marimo_ext import _make_style_cell
+
+        style_cell = _make_style_cell({"Mol": 344})
+        assert style_cell("0", "OtherColumn", "some value") == {}
+
+    def test_make_style_cell_handles_multiple_columns(self):
+        """Each molecule column gets its own width in the emitted style."""
+        from cnotebook.marimo_ext import _make_style_cell
+
+        style_cell = _make_style_cell({"Mol": 344, "Du": 210})
+        assert style_cell("0", "Mol", None)["minWidth"] == "344px"
+        assert style_cell("0", "Du", None)["minWidth"] == "210px"
+
+    def test_compute_molecule_column_width_uses_widest_structure(self):
+        """_compute_molecule_column_width returns the max intrinsic width across a mixed column."""
+        from cnotebook.marimo_ext import _compute_molecule_column_width
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(image_format="png")
+
+        small = oechem.OEGraphMol()
+        oechem.OESmilesToMol(small, "CCO")
+        oedepict.OEPrepareDepiction(small)
+
+        large = oechem.OEGraphMol()
+        oechem.OESmilesToMol(large, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
+        oedepict.OEPrepareDepiction(large)
+
+        width = _compute_molecule_column_width([small, large, None], ctx)
+
+        # The large molecule must set the column width.
+        small_disp = oedepict.OE2DMolDisplay(small, ctx.display_options)
+        large_disp = oedepict.OE2DMolDisplay(large, ctx.display_options)
+        assert width == max(int(small_disp.GetWidth()), int(large_disp.GetWidth()))
+        assert width >= int(large_disp.GetWidth())
+
+    def test_compute_molecule_column_width_honors_heavy_atom_limit(self):
+        """Molecules exceeding max_heavy_atoms use ctx.min_width, not their structure width."""
+        from cnotebook.marimo_ext import _compute_molecule_column_width
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(image_format="png", max_heavy_atoms=1, min_width=250.0)
+
+        big = oechem.OEGraphMol()
+        oechem.OESmilesToMol(big, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
+        oedepict.OEPrepareDepiction(big)
+
+        width = _compute_molecule_column_width([big], ctx)
+
+        assert width == int(ctx.min_width)
+
+    def test_compute_molecule_column_width_handles_empty_and_invalid(self):
+        """Empty or invalid molecules contribute ctx.min_width (placeholder size)."""
+        from cnotebook.marimo_ext import _compute_molecule_column_width
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(image_format="png", min_width=225.0)
+
+        empty = oechem.OEGraphMol()
+
+        width = _compute_molecule_column_width([empty, None], ctx)
+
+        assert width == int(ctx.min_width)
+
+    def test_compute_molecule_column_width_empty_column(self):
+        """An empty column returns 0 so the caller can skip the wrapper."""
+        from cnotebook.marimo_ext import _compute_molecule_column_width
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(image_format="png")
+
+        assert _compute_molecule_column_width([], ctx) == 0
+        assert _compute_molecule_column_width([None, None], ctx) == 0
+
+    def test_compute_display_column_width_uses_max(self):
+        """_compute_display_column_width picks the widest display in the column."""
+        from cnotebook.marimo_ext import _compute_display_column_width
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(image_format="png")
+
+        m1 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(m1, "CCO")
+        oedepict.OEPrepareDepiction(m1)
+        d1 = oedepict.OE2DMolDisplay(m1, ctx.display_options)
+
+        m2 = oechem.OEGraphMol()
+        oechem.OESmilesToMol(m2, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
+        oedepict.OEPrepareDepiction(m2)
+        d2 = oedepict.OE2DMolDisplay(m2, ctx.display_options)
+
+        width = _compute_display_column_width([d1, d2, None])
+
+        assert width == max(int(d1.GetWidth()), int(d2.GetWidth()))
+
+    def test_compute_du_column_width_apo_uses_min_width(self):
+        """Apo design units (no ligand) contribute ctx.min_width."""
+        from cnotebook.marimo_ext import _compute_du_column_width
+        from cnotebook.context import CNotebookContext
+
+        ctx = CNotebookContext(image_format="png", min_width=240.0)
+
+        apo = oechem.OEDesignUnit()
+
+        width = _compute_du_column_width([apo, None], ctx)
+
+        assert width == int(ctx.min_width)
