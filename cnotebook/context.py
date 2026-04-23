@@ -342,13 +342,26 @@ class CNotebookContext:
             min_width: int | None = None
     ) -> oedepict.OE2DMolDisplay:
         """
-        Create a molecule display that enforces minimum image height and width
+        Create a molecule display.
+
+        Min/max width/height are only enforced when ``structure_scale`` is
+        ``OEScale_AutoScale``. In that mode, the canvas determines the scale,
+        so clamping the canvas to min/max bounds is meaningful. In fixed-scale
+        mode, the structure determines the canvas, so clamping would add
+        whitespace padding (for min) or crop (for max) without changing the
+        drawn structure — users who want bounded sizes should use AutoScale.
+
         :param mol: Molecule
-        :param min_height: Minimum image height
-        :param min_width: Minimum image width
+        :param min_height: Minimum image height (only applied under AutoScale)
+        :param min_width: Minimum image width (only applied under AutoScale)
         :return: Molecule display
         """
         disp = oedepict.OE2DMolDisplay(mol, self.display_options)
+
+        # Min/max enforcement only applies in AutoScale mode; in fixed-scale
+        # mode the intrinsic canvas matches the drawn structure.
+        if self.structure_scale != oedepict.OEScale_AutoScale:
+            return disp
 
         # If the image was too small, and we're not enforcing a specific image size
         if ((self.width == 0.0 and self.min_width is not None and disp.GetWidth() < self.min_width) or
@@ -386,8 +399,6 @@ class CNotebookContext:
             elif self.max_height is not None and disp.GetHeight() > self.max_height:
                 new_ctx.width = 0
                 new_ctx.height = self.max_height
-
-            new_ctx.structure_scale = oedepict.OEScale_AutoScale
 
             # Create the display object
             disp = oedepict.OE2DMolDisplay(mol, new_ctx.display_options)
