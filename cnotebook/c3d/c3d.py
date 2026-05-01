@@ -9,7 +9,7 @@ from pathlib import Path
 from collections.abc import Iterable, Sequence
 from typing import Any, Dict, List, Optional, Union
 
-from cnotebook.c3d.convert import MoleculeData, convert_design_unit, convert_molecule
+from cnotebook.c3d.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
 
 # ---------------------------------------------------------------------------
 # Load static assets at module level
@@ -34,6 +34,9 @@ _STYLE_PRESETS = {
 }
 
 _VIEW_PRESETS = {"simple", "sites", "ball-and-stick"}
+_SURFACE_TYPES = {"molecular", "sasa"}
+_SURFACE_MODES = {"surface", "wireframe"}
+_ISOSURFACE_REPRESENTATIONS = {"mesh", "surface"}
 
 
 def _is_marimo() -> bool:
@@ -99,6 +102,7 @@ class C3D:
         self._height = height
         self._molecules: List[MoleculeData] = []
         self._operations: List[Dict[str, Any]] = []
+        self._active_maps: set[str] = set()
         self._ui: Dict[str, bool] = {
             "sidebar": True,
             "menubar": True,
@@ -396,6 +400,177 @@ class C3D:
             "everything" if rep is None else rep,
             "nonpolar_hydrogen",
         )
+
+    def add_surface(
+        self,
+        selection: Union[str, Dict[str, Any]],
+        name: str | None = None,
+        type: str = "molecular",
+        color: str = "#FFFFFF",
+        opacity: float = 0.75,
+        mode: str = "surface",
+    ) -> C3D:
+        """Add a named surface operation to the scene.
+
+        :param selection: Atoms used to generate the surface.
+        :param name: Optional surface name for later removal.
+        :param type: Surface type. Accepted values are ``"molecular"`` and
+            ``"sasa"``.
+        :param color: CSS color string.
+        :param opacity: Surface opacity.
+        :param mode: Surface display mode. Accepted values are ``"surface"``
+            and ``"wireframe"``.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *type* or *mode* is not recognized.
+        """
+        surface_type = type.lower()
+        if surface_type not in _SURFACE_TYPES:
+            raise ValueError(
+                f"Unknown surface type '{type}'. "
+                f"Choose from: {', '.join(sorted(_SURFACE_TYPES))}"
+            )
+
+        surface_mode = mode.lower()
+        if surface_mode not in _SURFACE_MODES:
+            raise ValueError(
+                f"Unknown surface mode '{mode}'. "
+                f"Choose from: {', '.join(sorted(_SURFACE_MODES))}"
+            )
+
+        self._operations.append(
+            {
+                "op": "add_surface",
+                "selection": selection,
+                "name": name,
+                "type": surface_type,
+                "color": color,
+                "opacity": opacity,
+                "mode": surface_mode,
+            }
+        )
+        return self
+
+    def remove_surface(self, name: str) -> C3D:
+        """Remove a previously added surface by name.
+
+        :param name: Surface name to remove.
+        :returns: Self, for method chaining.
+        """
+        self._operations.append({"op": "remove_surface", "name": name})
+        return self
+
+    def add_map(
+        self,
+        path_or_grid: Union[str, Path, Any],
+        name: str | None = None,
+        format: str | None = None,
+        color: str = "#38BDF8",
+        opacity: float = 1.0,
+        show_box: bool = False,
+    ) -> C3D:
+        """Add a volumetric map operation to the scene.
+
+        :param path_or_grid: Map file path or OpenEye scalar grid.
+        :param name: Optional map name. Path inputs default to the file stem;
+            grid inputs default to the grid title when available.
+        :param format: Optional map format override for path inputs.
+        :param color: CSS color string.
+        :param opacity: Map opacity.
+        :param show_box: If True, show the map bounding box.
+        :returns: Self, for method chaining.
+        :raises ValueError: If a map with the resolved name is already active.
+        """
+        map_data = convert_map(path_or_grid, name=name, format=format)
+        if map_data.name in self._active_maps:
+            raise ValueError(f'Map "{map_data.name}" has already been added')
+
+        self._active_maps.add(map_data.name)
+        self._operations.append(
+            {
+                "op": "add_map",
+                "name": map_data.name,
+                "format": map_data.format,
+                "encoding": map_data.encoding,
+                "data": map_data.data,
+                "color": color,
+                "opacity": opacity,
+                "showBoundingBox": show_box,
+            }
+        )
+        return self
+
+    def remove_map(self, name: str) -> C3D:
+        """Remove a previously added map by name.
+
+        :param name: Map name to remove.
+        :returns: Self, for method chaining.
+        """
+        self._active_maps.discard(name)
+        self._operations.append({"op": "remove_map", "name": name})
+        return self
+
+    def add_isosurface(
+        self,
+        map_name: str,
+        name: str | None = None,
+        level: float | None = None,
+        selection: Union[str, Dict[str, Any], None] = None,
+        buffer: float | None = None,
+        carve: float | None = None,
+        representation: str = "mesh",
+        color: str = "#0000FF",
+        opacity: float = 0.75,
+    ) -> C3D:
+        """Add an isosurface operation for an active map.
+
+        :param map_name: Name of a map added by :meth:`add_map`.
+        :param name: Optional isosurface name for later removal.
+        :param level: Contour level. ``None`` lets the GUI choose a default.
+        :param selection: Optional atom selection used for clipping.
+        :param buffer: Optional selection buffer distance.
+        :param carve: Optional carve distance.
+        :param representation: Isosurface representation. Accepted values are
+            ``"mesh"`` and ``"surface"``.
+        :param color: CSS color string.
+        :param opacity: Isosurface opacity.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *map_name* is not active or *representation* is
+            not recognized.
+        """
+        if map_name not in self._active_maps:
+            raise ValueError(f'Map "{map_name}" has not been added')
+
+        surface_representation = representation.lower()
+        if surface_representation not in _ISOSURFACE_REPRESENTATIONS:
+            raise ValueError(
+                f"Unknown isosurface representation '{representation}'. "
+                f"Choose from: {', '.join(sorted(_ISOSURFACE_REPRESENTATIONS))}"
+            )
+
+        self._operations.append(
+            {
+                "op": "add_isosurface",
+                "mapName": map_name,
+                "name": name,
+                "level": level,
+                "selection": selection,
+                "buffer": buffer,
+                "carve": carve,
+                "representation": surface_representation,
+                "color": color,
+                "opacity": opacity,
+            }
+        )
+        return self
+
+    def remove_isosurface(self, name: str) -> C3D:
+        """Remove a previously added isosurface by name.
+
+        :param name: Isosurface name to remove.
+        :returns: Self, for method chaining.
+        """
+        self._operations.append({"op": "remove_isosurface", "name": name})
+        return self
 
     @staticmethod
     def _normalize_style(

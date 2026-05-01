@@ -400,6 +400,156 @@ class TestC3DBuilder:
             }
         ]
 
+    def test_add_surface_appends_ordered_operation(self):
+        """add_surface should append a scene operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.add_surface(
+            "complex",
+            name="complex_surface",
+            type="sasa",
+            color="#111111",
+            opacity=0.4,
+            mode="wireframe",
+        )
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "add_surface",
+                "selection": "complex",
+                "name": "complex_surface",
+                "type": "sasa",
+                "color": "#111111",
+                "opacity": 0.4,
+                "mode": "wireframe",
+            }
+        ]
+
+    def test_remove_surface_appends_ordered_operation(self):
+        """remove_surface should append a delete operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_surface("complex_surface")
+
+        assert result is viewer
+        assert viewer._operations == [
+            {"op": "remove_surface", "name": "complex_surface"}
+        ]
+
+    def test_add_map_path_appends_ordered_operation(self, tmp_path):
+        """add_map should convert path inputs into operation payloads."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = C3D()
+        result = viewer.add_map(path, name="density", color="#ABCDEF", opacity=0.5, show_box=True)
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "add_map",
+                "name": "density",
+                "format": "ccp4",
+                "encoding": "base64",
+                "data": "AQID",
+                "color": "#ABCDEF",
+                "opacity": 0.5,
+                "showBoundingBox": True,
+            }
+        ]
+
+    def test_remove_map_appends_ordered_operation(self):
+        """remove_map should append a delete operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_map("density")
+
+        assert result is viewer
+        assert viewer._operations == [{"op": "remove_map", "name": "density"}]
+
+    def test_add_isosurface_appends_ordered_operation(self, tmp_path):
+        """add_isosurface should target a previously added map."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = C3D()
+        viewer.add_map(path, name="density")
+        result = viewer.add_isosurface(
+            "density",
+            name="mesh",
+            level=None,
+            selection="ligand",
+            buffer=2.0,
+            carve=1.0,
+            representation="surface",
+            color="#123456",
+            opacity=0.25,
+        )
+
+        assert result is viewer
+        assert viewer._operations[-1] == {
+            "op": "add_isosurface",
+            "mapName": "density",
+            "name": "mesh",
+            "level": None,
+            "selection": "ligand",
+            "buffer": 2.0,
+            "carve": 1.0,
+            "representation": "surface",
+            "color": "#123456",
+            "opacity": 0.25,
+        }
+
+    def test_remove_isosurface_appends_ordered_operation(self):
+        """remove_isosurface should append a delete operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_isosurface("mesh")
+
+        assert result is viewer
+        assert viewer._operations == [{"op": "remove_isosurface", "name": "mesh"}]
+
+    def test_add_surface_rejects_unknown_type(self):
+        """add_surface should validate surface type."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match="Unknown surface type"):
+            C3D().add_surface("complex", type="mesh")
+
+    def test_add_surface_rejects_unknown_mode(self):
+        """add_surface should validate surface mode."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match="Unknown surface mode"):
+            C3D().add_surface("complex", mode="solid")
+
+    def test_add_isosurface_rejects_unknown_map(self):
+        """add_isosurface should validate active map names."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match='Map "missing" has not been added'):
+            C3D().add_isosurface("missing", name="mesh")
+
+    def test_add_isosurface_rejects_unknown_representation(self, tmp_path):
+        """add_isosurface should validate representation names."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = C3D().add_map(path, name="density")
+        with pytest.raises(ValueError, match="Unknown isosurface representation"):
+            viewer.add_isosurface("density", name="mesh", representation="volume")
+
     def test_set_ui_returns_self(self):
         """set_ui should return the C3D instance for chaining."""
         from cnotebook.c3d import C3D
@@ -705,6 +855,61 @@ class TestC3DPayload:
         viewer.add_molecule(ethanol_3d)
         payload = viewer._build_init_payload()
         assert payload["operations"] == []
+
+    def test_scene_operations_are_json_serializable(self, ethanol_3d, tmp_path):
+        """Surface, map, and isosurface operations should serialize cleanly."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = (
+            C3D()
+            .add_molecule(ethanol_3d, name="ligand")
+            .add_surface("ligand", name="ligand_surface")
+            .add_map(path, name="density")
+            .add_isosurface("density", name="mesh", level=None)
+            .remove_surface("ligand_surface")
+        )
+
+        payload = viewer._build_init_payload()
+        serialized = json.dumps(payload)
+        deserialized = json.loads(serialized)
+
+        assert deserialized["operations"][-4:] == [
+            {
+                "op": "add_surface",
+                "selection": "ligand",
+                "name": "ligand_surface",
+                "type": "molecular",
+                "color": "#FFFFFF",
+                "opacity": 0.75,
+                "mode": "surface",
+            },
+            {
+                "op": "add_map",
+                "name": "density",
+                "format": "ccp4",
+                "encoding": "base64",
+                "data": "AQID",
+                "color": "#38BDF8",
+                "opacity": 1.0,
+                "showBoundingBox": False,
+            },
+            {
+                "op": "add_isosurface",
+                "mapName": "density",
+                "name": "mesh",
+                "level": None,
+                "selection": None,
+                "buffer": None,
+                "carve": None,
+                "representation": "mesh",
+                "color": "#0000FF",
+                "opacity": 0.75,
+            },
+            {"op": "remove_surface", "name": "ligand_surface"},
+        ]
 
     def test_ui_defaults_single_molecule(self, ethanol_3d):
         """Single molecule should default to no GUI panels."""
