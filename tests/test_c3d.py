@@ -588,6 +588,82 @@ class TestC3DBuilder:
 
 
 # ---------------------------------------------------------------------------
+# TestC3DMapConversion
+# ---------------------------------------------------------------------------
+
+
+class TestC3DMapConversion:
+    """Verify map conversion helpers used by C3D."""
+
+    def test_convert_map_path_binary_ccp4(self, tmp_path):
+        """Binary map paths should be base64 encoded."""
+        from cnotebook.c3d.convert import convert_map
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03\x04")
+
+        data = convert_map(path, name="2Fo-Fc")
+
+        assert data.name == "2Fo-Fc"
+        assert data.format == "ccp4"
+        assert data.encoding == "base64"
+        assert data.data == "AQIDBA=="
+
+    def test_convert_map_path_text_cube(self, tmp_path):
+        """Cube files should be embedded as text."""
+        from cnotebook.c3d.convert import convert_map
+
+        path = tmp_path / "density.cube"
+        path.write_text("cube text\n", encoding="utf-8")
+
+        data = convert_map(path)
+
+        assert data.name == "density"
+        assert data.format == "cube"
+        assert data.encoding == "text"
+        assert data.data == "cube text\n"
+
+    def test_convert_map_missing_path_raises_file_not_found(self, tmp_path):
+        """Missing map paths should fail before HTML generation."""
+        from cnotebook.c3d.convert import convert_map
+
+        with pytest.raises(FileNotFoundError):
+            convert_map(tmp_path / "missing.ccp4")
+
+    def test_convert_map_unsupported_extension_raises_value_error(self, tmp_path):
+        """Unsupported map extensions should raise ValueError."""
+        from cnotebook.c3d.convert import convert_map
+
+        path = tmp_path / "density.dx"
+        path.write_text("not supported", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Unsupported map format"):
+            convert_map(path)
+
+    def test_convert_map_oescalar_grid_uses_title(self):
+        """OEScalarGrid inputs should be written as embedded CCP4 data."""
+        from cnotebook.c3d.convert import convert_map
+        from openeye import oegrid
+
+        grid = oegrid.OEScalarGrid()
+        assert grid.SetDim(2, 2, 2)
+        assert grid.SetMid(0.0, 0.0, 0.0)
+        assert grid.SetSpacing(1.0)
+        assert grid.SetTitle("grid-title")
+        for ix in range(2):
+            for iy in range(2):
+                for iz in range(2):
+                    grid.SetValue(ix, iy, iz, float(ix + iy + iz))
+
+        data = convert_map(grid)
+
+        assert data.name == "grid-title"
+        assert data.format == "ccp4"
+        assert data.encoding == "base64"
+        assert len(data.data) > 0
+
+
+# ---------------------------------------------------------------------------
 # TestC3DPayload
 # ---------------------------------------------------------------------------
 
