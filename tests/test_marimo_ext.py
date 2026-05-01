@@ -140,15 +140,7 @@ class TestDisplayMol:
 
 class TestMarimoIntegration:
     """Test Marimo integration and monkey patching"""
-    
-    def test_oemolbase_has_mime_method(self):
-        """Test that OEMolBase has the _mime_ method after import"""
-        # After importing marimo_ext, OEMolBase should have _mime_ method
-        import cnotebook.marimo_ext  # This triggers the monkey patch
-        
-        assert hasattr(oechem.OEMolBase, '_mime_')
-        assert callable(oechem.OEMolBase._mime_)
-    
+
     def test_mime_method_is_display_mol(self):
         """Test that the _mime_ method is our display function"""
         import cnotebook.marimo_ext
@@ -156,69 +148,6 @@ class TestMarimoIntegration:
         # The _mime_ method should be the _display_mol function
         assert oechem.OEMolBase._mime_ == _display_mol
     
-    @patch('cnotebook.marimo_ext.oemol_to_html')
-    @patch('cnotebook.marimo_ext.cnotebook_context')
-    def test_mime_method_on_molecule_instance(self, mock_context_var, mock_oemol_to_html):
-        """Test calling _mime_ method on a molecule instance"""
-        import cnotebook.marimo_ext
-        
-        # Setup mocks
-        mock_ctx = MagicMock()
-        mock_context_var.get.return_value = mock_ctx
-        mock_ctx.copy.return_value = mock_ctx
-        mock_oemol_to_html.return_value = '<img>instance_mol</img>'
-        
-        # Create a mock molecule instance and manually set the _mime_ method
-        mock_mol = MagicMock(spec=oechem.OEMolBase)
-        mock_mol._mime_.return_value = ("text/html", '<img>instance_mol</img>')
-        
-        # Call the _mime_ method on the instance
-        result = mock_mol._mime_()
-        
-        # Should return the expected format
-        mime_type, content = result
-        assert mime_type == "text/html"
-        assert content == '<img>instance_mol</img>'
-    
-    def test_monkey_patch_does_not_affect_other_methods(self):
-        """Test that monkey patching doesn't affect other OEMolBase methods"""
-        import cnotebook.marimo_ext
-        
-        # OEMolBase should still have its original methods
-        mock_mol = MagicMock(spec=oechem.OEMolBase)
-        
-        # These methods should still be available (they're mocked, but the point is they exist)
-        assert hasattr(mock_mol, 'IsValid')
-        assert hasattr(mock_mol, 'NumAtoms')
-        assert hasattr(mock_mol, 'GetTitle')
-        
-        # And our new method
-        assert hasattr(mock_mol, '_mime_')
-
-
-class TestModuleImports:
-    """Test module imports and dependencies"""
-    
-    def test_imports_from_context(self):
-        """Test imports from context module"""
-        from cnotebook.marimo_ext import cnotebook_context
-        
-        assert cnotebook_context is not None
-        # Should be a ContextVar
-        assert hasattr(cnotebook_context, 'get')
-    
-    def test_imports_from_render(self):
-        """Test imports from render module"""
-        from cnotebook.marimo_ext import oemol_to_html
-        
-        assert callable(oemol_to_html)
-    
-    def test_imports_from_openeye(self):
-        """Test imports from OpenEye"""
-        from cnotebook.marimo_ext import oechem
-        
-        assert hasattr(oechem, 'OEMolBase')
-
 
 class TestMarimoBehavior:
     """Test Marimo-specific behavior and integration"""
@@ -386,13 +315,6 @@ class TestDisplayDu:
         mock_ctx.copy.assert_called_once()
         mock_oedu_to_html.assert_called_once_with(mock_du, ctx=mock_ctx)
 
-    def test_oedesignunit_has_mime_method(self):
-        """Test that OEDesignUnit has the _mime_ method after import"""
-        import cnotebook.marimo_ext
-
-        assert hasattr(oechem.OEDesignUnit, '_mime_')
-        assert callable(oechem.OEDesignUnit._mime_)
-
     def test_mime_method_is_display_du(self):
         """Test that the _mime_ method is our display function"""
         import cnotebook.marimo_ext
@@ -439,25 +361,17 @@ class TestPolarsSupport:
             assert cnotebook.marimo_ext.oepolars_available is False
 
     def test_polars_dataframe_has_mime_method(self):
-        """Test that Polars DataFrame has _mime_ method when oepolars is available"""
+        """Polars DataFrame MIME hook should render fallback HTML when oepolars is available."""
         import cnotebook.marimo_ext
 
         if cnotebook.marimo_ext.oepolars_available:
             import polars as pl
-            assert hasattr(pl.DataFrame, '_mime_')
-            assert callable(pl.DataFrame._mime_)
+            df = pl.DataFrame({"a": [1]})
 
-    def test_marimo_polars_formatter_exists(self):
-        """Test that marimo_polars_formatter function exists when marimo is available"""
-        try:
-            import marimo
-            import cnotebook.marimo_ext
+            mime_type, content = df._mime_()
 
-            if cnotebook.marimo_ext.oepolars_available:
-                assert hasattr(cnotebook.marimo_ext, 'marimo_polars_formatter')
-                assert callable(cnotebook.marimo_ext.marimo_polars_formatter)
-        except ImportError:
-            pytest.skip("Marimo not installed")
+            assert mime_type == "text/html"
+            assert "<table" in content
 
 
 class TestCreateMoleculeFormatter:

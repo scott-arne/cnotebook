@@ -30,7 +30,7 @@ def mol_with_sd_data():
 
 
 @pytest.fixture
-def test_molecules():
+def sample_molecules():
     """Create a set of test molecules."""
     smiles_list = [
         ("CCO", "Ethanol"),
@@ -55,34 +55,33 @@ def invalid_mol():
     return oechem.OEGraphMol()
 
 
-# ============================================================================
-# Import Tests
-# ============================================================================
-
-def test_molgrid_import():
-    """Test that MolGrid can be imported."""
-    from cnotebook import MolGrid
-    assert MolGrid is not None
-
-
-def test_molgrid_function_import():
-    """Test that molgrid function can be imported."""
-    from cnotebook import molgrid
-    assert molgrid is not None
-
-
 def test_cnotebook_molgrid_function():
-    """Test that cnotebook.grid.molgrid() function works."""
-    from cnotebook import molgrid
-    from openeye import oechem
+    """The top-level factory should build a configured MolGrid."""
+    from cnotebook import MolGrid, molgrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
 
-    grid = molgrid([mol])
+    grid = molgrid(
+        [mol],
+        title=False,
+        width=160,
+        height=120,
+        n_items_per_page=5,
+        select=False,
+        information=False,
+        name="factory-test",
+    )
 
-    assert grid is not None
-    assert hasattr(grid, 'display')
+    assert isinstance(grid, MolGrid)
+    assert grid._molecules == [mol]
+    assert grid.title is None
+    assert grid.width == 160
+    assert grid.height == 120
+    assert grid.n_items_per_page == 5
+    assert grid.selection_enabled is False
+    assert grid.information_enabled is False
+    assert grid.name == "factory-test"
 
 
 # ============================================================================
@@ -292,11 +291,11 @@ def test_molgrid_prepare_export_data_basic(simple_mol):
     assert export_data[0]["smiles"] == "CCO"
 
 
-def test_molgrid_prepare_export_data_multiple_mols(test_molecules):
+def test_molgrid_prepare_export_data_multiple_mols(sample_molecules):
     """Test _prepare_export_data with multiple molecules."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules)
+    grid = MolGrid(sample_molecules)
     export_data = grid._prepare_export_data()
 
     assert len(export_data) == 5
@@ -412,11 +411,11 @@ def test_molgrid_html_no_checkbox_when_disabled(simple_mol):
     assert 'class="molgrid-checkbox"' not in html
 
 
-def test_molgrid_html_pagination_info(test_molecules):
+def test_molgrid_html_pagination_info(sample_molecules):
     """Test HTML contains pagination info."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, n_items_per_page=3)
+    grid = MolGrid(sample_molecules, n_items_per_page=3)
     html = grid.to_html()
 
     assert "showing-start" in html
@@ -450,11 +449,11 @@ def test_molgrid_html_contains_listjs(simple_mol):
 # SMARTS Search Tests
 # ============================================================================
 
-def test_molgrid_search_smarts_match(test_molecules):
+def test_molgrid_search_smarts_match(sample_molecules):
     """Test _search_smarts finds matching molecules."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules)
+    grid = MolGrid(sample_molecules)
     matches = grid._search_smarts("[OH]")
 
     # Ethanol, Acetaminophen have OH
@@ -462,11 +461,11 @@ def test_molgrid_search_smarts_match(test_molecules):
     assert 0 in matches  # Ethanol
 
 
-def test_molgrid_search_smarts_aromatic(test_molecules):
+def test_molgrid_search_smarts_aromatic(sample_molecules):
     """Test _search_smarts for aromatic ring."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules)
+    grid = MolGrid(sample_molecules)
     matches = grid._search_smarts("c1ccccc1")
 
     # Benzene, Acetaminophen, Ibuprofen have aromatic rings
@@ -494,32 +493,32 @@ def test_molgrid_search_smarts_invalid_pattern(simple_mol):
     assert matches == []
 
 
-def test_molgrid_search_smarts_empty_pattern(test_molecules):
+def test_molgrid_search_smarts_empty_pattern(sample_molecules):
     """Test _search_smarts with empty pattern."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules)
+    grid = MolGrid(sample_molecules)
     matches = grid._search_smarts("")
 
     assert matches == []
 
 
-def test_molgrid_on_smarts_query_empty(test_molecules):
+def test_molgrid_on_smarts_query_empty(sample_molecules):
     """Test _on_smarts_query with empty query returns all indices."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules)
+    grid = MolGrid(sample_molecules)
     grid._on_smarts_query({"new": ""})
 
     matches = json.loads(grid.widget.smarts_matches)
     assert len(matches) == 5  # All molecules
 
 
-def test_molgrid_on_smarts_query_with_pattern(test_molecules):
+def test_molgrid_on_smarts_query_with_pattern(sample_molecules):
     """Test _on_smarts_query with valid pattern."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules)
+    grid = MolGrid(sample_molecules)
     grid._on_smarts_query({"new": "[OH]"})
 
     matches = json.loads(grid.widget.smarts_matches)
@@ -530,11 +529,11 @@ def test_molgrid_on_smarts_query_with_pattern(test_molecules):
 # Selection Tests
 # ============================================================================
 
-def test_molgrid_selection_via_widget(test_molecules):
+def test_molgrid_selection_via_widget(sample_molecules):
     """Test selection state via widget update."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, name="selection-test")
+    grid = MolGrid(sample_molecules, name="selection-test")
 
     # Simulate selection via widget
     grid.widget.selection = '{"0": "CCO", "2": "c1ccccc1"}'
@@ -543,11 +542,11 @@ def test_molgrid_selection_via_widget(test_molecules):
     assert indices == [0, 2]
 
 
-def test_molgrid_get_selection_molecules(test_molecules):
+def test_molgrid_get_selection_molecules(sample_molecules):
     """Test get_selection returns actual molecules."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, name="selection-mol-test")
+    grid = MolGrid(sample_molecules, name="selection-mol-test")
     grid.widget.selection = '{"0": "CCO"}'
 
     selected = grid.get_selection()
@@ -555,31 +554,31 @@ def test_molgrid_get_selection_molecules(test_molecules):
     assert selected[0].GetTitle() == "Ethanol"
 
 
-def test_molgrid_get_selection_indices_empty(test_molecules):
+def test_molgrid_get_selection_indices_empty(sample_molecules):
     """Test get_selection_indices with no selection."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, name="empty-selection-test")
+    grid = MolGrid(sample_molecules, name="empty-selection-test")
 
     indices = grid.get_selection_indices()
     assert indices == []
 
 
-def test_molgrid_get_selection_empty(test_molecules):
+def test_molgrid_get_selection_empty(sample_molecules):
     """Test get_selection with no selection."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, name="empty-selection-mols-test")
+    grid = MolGrid(sample_molecules, name="empty-selection-mols-test")
 
     selected = grid.get_selection()
     assert selected == []
 
 
-def test_molgrid_selection_change_handler(test_molecules):
+def test_molgrid_selection_change_handler(sample_molecules):
     """Test _on_selection_change updates internal state."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, name="change-handler-test")
+    grid = MolGrid(sample_molecules, name="change-handler-test")
 
     # Directly call change handler
     grid._on_selection_change({"new": '{"1": "CC(=O)O", "3": "acetaminophen"}'})
@@ -588,11 +587,11 @@ def test_molgrid_selection_change_handler(test_molecules):
     assert indices == [1, 3]
 
 
-def test_molgrid_selection_change_invalid_json(test_molecules):
+def test_molgrid_selection_change_invalid_json(sample_molecules):
     """Test _on_selection_change handles invalid JSON gracefully."""
     from cnotebook import MolGrid
 
-    grid = MolGrid(test_molecules, name="invalid-json-test")
+    grid = MolGrid(sample_molecules, name="invalid-json-test")
 
     # Should not raise exception
     grid._on_selection_change({"new": "not valid json{"})
@@ -602,12 +601,12 @@ def test_molgrid_selection_change_invalid_json(test_molecules):
     assert indices == []
 
 
-def test_molgrid_selection_isolated_between_grids(test_molecules):
+def test_molgrid_selection_isolated_between_grids(sample_molecules):
     """Test that selections are isolated between grid instances."""
     from cnotebook import MolGrid
 
-    grid1 = MolGrid(test_molecules, name="grid1-isolated")
-    grid2 = MolGrid(test_molecules, name="grid2-isolated")
+    grid1 = MolGrid(sample_molecules, name="grid1-isolated")
+    grid2 = MolGrid(sample_molecules, name="grid2-isolated")
 
     grid1.widget.selection = '{"0": "CCO"}'
     grid2.widget.selection = '{"1": "CC(=O)O", "2": "benzene"}'
@@ -621,24 +620,17 @@ def test_molgrid_selection_isolated_between_grids(test_molecules):
 # ============================================================================
 
 def test_molgrid_display_returns_html(simple_mol):
-    """Test that display() returns displayable output."""
+    """display() should return iframe HTML containing the rendered grid."""
     from cnotebook import MolGrid
+    from IPython.display import HTML
 
-    grid = MolGrid([simple_mol])
+    grid = MolGrid([simple_mol], name="display-test")
     result = grid.display()
 
-    assert result is not None
-
-
-def test_molgrid_display_contains_iframe(simple_mol):
-    """Test that display output contains iframe."""
-    from cnotebook import MolGrid
-
-    grid = MolGrid([simple_mol])
-    result = grid.display()
-
-    # The result should contain iframe HTML
-    assert hasattr(result, 'data') or hasattr(result, '_repr_html_')
+    assert isinstance(result, HTML)
+    assert 'class="molgrid-iframe"' in result.data
+    assert 'id="molgrid-iframe-display-test"' in result.data
+    assert "Ethanol" in result.data
 
 
 # ============================================================================

@@ -36,23 +36,13 @@ def ethanol_3d() -> oechem.OEMol:
 class TestC3DImport:
     """Verify that C3D can be imported from the submodule."""
 
-    def test_import_from_submodule(self):
-        """C3D should be importable from cnotebook.c3d."""
-        from cnotebook.c3d import C3D
-
-        assert C3D is not None
-
-    def test_import_c3d_class(self):
-        """C3D should be the class itself, not a module."""
-        from cnotebook.c3d import C3D
-
-        assert callable(C3D)
-
     def test_all_exports(self):
-        """__all__ should list C3D."""
+        """The submodule export should point at the viewer class."""
         import cnotebook.c3d
+        from cnotebook.c3d.c3d import C3D as C3DClass
 
         assert "C3D" in cnotebook.c3d.__all__
+        assert cnotebook.c3d.C3D is C3DClass
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,25 @@ from cnotebook.align import (
 )
 
 
+class _RecordingMCS:
+    """Small fake used to verify MCS constructor wiring without calling OpenEye search."""
+
+    def __init__(self, *args):
+        self.args = args
+        self.init_args = None
+        self.func = None
+        self.min_atoms = None
+
+    def Init(self, *args):
+        self.init_args = args
+
+    def SetMCSFunc(self, func):
+        self.func = func
+
+    def SetMinAtoms(self, min_atoms):
+        self.min_atoms = min_atoms
+
+
 class TestFingerprintTypeMaps:
     """Test the dynamically created type maps"""
     
@@ -129,20 +148,23 @@ class TestGetBondMask:
 class TestFingerprintMaker:
     """Test the fingerprint_maker function - logic only"""
     
-    def test_fingerprint_maker_returns_callable(self):
-        """Test that fingerprint_maker returns a callable function"""
-        with patch.dict(atom_fp_typemap, {'default': 1}):
-            with patch.dict(bond_fp_typemap, {'default': 2}):
-                maker = fingerprint_maker(
-                    fptype="path",
-                    num_bits=1024,
-                    min_distance=0,
-                    max_distance=5,
-                    atom_type="default",
-                    bond_type="default"
-                )
-        
-        assert callable(maker)
+    def test_fingerprint_maker_accepts_string_masks(self):
+        """String atom and bond mask names should be resolved before fingerprinting."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        maker = fingerprint_maker(
+            fptype="path",
+            num_bits=1024,
+            min_distance=0,
+            max_distance=5,
+            atom_type="defaultpathatom",
+            bond_type="defaultpathbond"
+        )
+
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.GetSize() == 1024
     
     def test_fingerprint_maker_unknown_type(self):
         """Test error for unknown fingerprint type"""
@@ -504,24 +526,35 @@ class TestOESubSearchAlignerInit:
     """Test the OESubSearchAligner initialization and validate method."""
 
     def test_init_with_smarts_string(self):
-        """Test initialization with a SMARTS string sets ss and refmol is None."""
+        """A SMARTS string reference should validate matching molecules."""
         aligner = OESubSearchAligner("c1ccccc1")
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
+
         assert aligner.refmol is None
-        assert hasattr(aligner, 'ss')
+        assert aligner.validate(mol) is True
 
     def test_init_with_oesubsearch(self):
-        """Test initialization with an OESubSearch object."""
+        """An OESubSearch reference should validate matching molecules."""
         ss = oechem.OESubSearch("c1ccccc1")
         aligner = OESubSearchAligner(ss)
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
+
         assert aligner.refmol is None
-        assert hasattr(aligner, 'ss')
+        assert aligner.validate(mol) is True
 
     def test_init_with_molecule(self):
-        """Test initialization with a real molecule sets refmol."""
+        """A molecule reference should be copied and used as the substructure."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         aligner = OESubSearchAligner(mol)
+        target = oechem.OEGraphMol()
+        oechem.OESmilesToMol(target, "c1ccc(O)cc1")
+
         assert aligner.refmol is not None
+        assert aligner.refmol is not mol
+        assert aligner.validate(target) is True
 
     def test_validate_with_match(self):
         """Test validate returns True for a matching molecule (phenol contains benzene)."""
@@ -542,19 +575,30 @@ class TestOEMCSSearchAlignerInit:
     """Test the OEMCSSearchAligner initialization and validate method."""
 
     def test_init_with_molecule_default_func(self):
-        """Test initialization with a molecule and default func (bonds_and_cycles)."""
+        """The default MCS function should be wired during initialization."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol)
+        func = object()
+
+        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.align.oechem.OEMCSMaxBondsCompleteCycles', return_value=func):
+            aligner = OEMCSSearchAligner(mol)
+
         assert aligner.refmol is not None
-        assert hasattr(aligner, 'mcss')
+        assert aligner.mcss.func is func
+        assert aligner.mcss.min_atoms == 1
 
     def test_init_with_molecule_atoms_func(self):
-        """Test initialization with func='atoms'."""
+        """The atoms MCS function should be wired during initialization."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol, func="atoms")
-        assert hasattr(aligner, 'mcss')
+        func = object()
+
+        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.align.oechem.OEMCSMaxAtoms', return_value=func):
+            aligner = OEMCSSearchAligner(mol, func="atoms")
+
+        assert aligner.mcss.func is func
 
     def test_init_with_molecule_invalid_func_raises(self):
         """Test initialization with an invalid func raises ValueError."""
@@ -563,13 +607,15 @@ class TestOEMCSSearchAlignerInit:
         with pytest.raises(ValueError, match="Unknown MCS evaluation function name"):
             OEMCSSearchAligner(mol, func="invalid")
 
-    def test_validate_returns_bool(self):
-        """Test validate returns a boolean value."""
+    def test_init_sets_min_atoms(self):
+        """The configured minimum atom count should be passed to the MCS search."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol)
-        assert hasattr(aligner, 'validate')
-        assert callable(aligner.validate)
+
+        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS):
+            aligner = OEMCSSearchAligner(mol, min_atoms=6)
+
+        assert aligner.mcss.min_atoms == 6
 
 
 class TestOEFingerprintAlignerExtended:
@@ -637,6 +683,9 @@ class TestFingerprintMakerAdditionalTypes:
 
     def test_fingerprint_maker_maccs_case_insensitive(self):
         """Test MACCS fingerprint type is case insensitive."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
         maker = fingerprint_maker(
             fptype="MACCS",
             num_bits=1024,
@@ -645,10 +694,15 @@ class TestFingerprintMakerAdditionalTypes:
             atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
             bond_type=oegraphsim.OEFPBondType_DefaultBond
         )
-        assert callable(maker)
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.IsValid()
 
     def test_fingerprint_maker_lingo_case_insensitive(self):
         """Test Lingo fingerprint type is case insensitive."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
         maker = fingerprint_maker(
             fptype="Lingo",
             num_bits=1024,
@@ -657,7 +711,9 @@ class TestFingerprintMakerAdditionalTypes:
             atom_type=oegraphsim.OEFPAtomType_DefaultAtom,
             bond_type=oegraphsim.OEFPBondType_DefaultBond
         )
-        assert callable(maker)
+        fp = maker(mol)
+        assert isinstance(fp, oegraphsim.OEFingerPrint)
+        assert fp.IsValid()
 
 
 class TestOESubSearchAlignerAlign:
@@ -696,21 +752,31 @@ class TestOEMCSSearchAlignerFuncVariants:
     """Test OEMCSSearchAligner initialization with different func values."""
 
     def test_init_with_bonds_func(self):
-        """Test initialization with func='bonds'."""
+        """The bonds MCS function should be wired during initialization."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol, func="bonds")
-        assert hasattr(aligner, 'mcss')
+        func = object()
+
+        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.align.oechem.OEMCSMaxBonds', return_value=func):
+            aligner = OEMCSSearchAligner(mol, func="bonds")
+
+        assert aligner.mcss.func is func
 
     def test_init_with_atoms_and_cycles_func(self):
-        """Test initialization with func='atoms_and_cycles'."""
+        """The atoms-and-cycles MCS function should be wired during initialization."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol, func="atoms_and_cycles")
-        assert hasattr(aligner, 'mcss')
+        func = object()
+
+        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.align.oechem.OEMCSMaxAtomsCompleteCycles', return_value=func):
+            aligner = OEMCSSearchAligner(mol, func="atoms_and_cycles")
+
+        assert aligner.mcss.func is func
 
     def test_init_with_oemcssearch(self):
-        """Test initialization with an OEMCSSearch object."""
+        """An OEMCSSearch reference should be copied instead of reused."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -718,22 +784,10 @@ class TestOEMCSSearchAlignerFuncVariants:
         mcss.Init(mol, oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
 
         aligner = OEMCSSearchAligner(mcss)
+
         assert aligner.refmol is None
-        assert hasattr(aligner, 'mcss')
+        assert aligner.mcss is not mcss
 
-    def test_validate_method_callable(self):
-        """Test validate method exists and is callable."""
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol)
-        assert callable(aligner.validate)
-
-    def test_align_method_callable(self):
-        """Test align method exists and is callable."""
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, "c1ccccc1")
-        aligner = OEMCSSearchAligner(mol)
-        assert callable(aligner.align)
 
 
 class TestCreateAlignerMethodAliases:

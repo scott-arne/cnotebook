@@ -336,40 +336,16 @@ class TestLogging:
 class TestModuleImports:
     """Test module imports and exports"""
 
-    def test_render_dataframe_import(self):
-        """Test that render_dataframe is imported"""
-        assert hasattr(cnotebook, 'render_dataframe')
-        assert callable(render_dataframe)
-
-    def test_cnotebook_context_import(self):
-        """Test that cnotebook_context is imported"""
-        assert hasattr(cnotebook, 'cnotebook_context')
-        assert cnotebook_context is not None
-
-    def test_get_env_import(self):
-        """Test that get_env is imported"""
-        assert hasattr(cnotebook, 'get_env')
-        assert callable(get_env)
-
-    def test_env_info_class_import(self):
-        """Test that CNotebookEnvInfo is importable"""
-        assert hasattr(cnotebook, 'CNotebookEnvInfo')
-
     def test_all_expected_exports(self):
-        """Test that all expected items are exported"""
-        expected_exports = [
-            '__version__',
-            'LevelSpecificFormatter',
-            'enable_debugging',
-            'log',
-            'render_dataframe',
-            'cnotebook_context',
-            'get_env',
-            'CNotebookEnvInfo',
-        ]
-
-        for export in expected_exports:
-            assert hasattr(cnotebook, export), f"Missing export: {export}"
+        """Public package exports should point at the imported implementations."""
+        assert cnotebook.__version__ == __version__
+        assert cnotebook.LevelSpecificFormatter is LevelSpecificFormatter
+        assert cnotebook.enable_debugging is enable_debugging
+        assert cnotebook.log is log
+        assert cnotebook.render_dataframe is render_dataframe
+        assert cnotebook.cnotebook_context is cnotebook_context
+        assert cnotebook.get_env is get_env
+        assert cnotebook.CNotebookEnvInfo is CNotebookEnvInfo
 
 
 class TestIntegration:
@@ -410,35 +386,8 @@ class TestIntegration:
         finally:
             log.removeHandler(test_handler)
 
-    def test_conditional_imports_jupyter(self):
-        """Test conditional imports work for Jupyter"""
-        # Test that when in Jupyter, we can access the expected functionality
-        assert callable(render_dataframe)
-
-    def test_conditional_imports_marimo(self):
-        """Test conditional imports work for Marimo"""
-        # In Marimo environment, marimo_ext should be imported
-        # This is tested indirectly by checking the module loads without error
-        import cnotebook  # Should not raise ImportError
-
-
 class TestErrorHandling:
     """Test error handling in module initialization"""
-
-    def test_handles_missing_dependencies_gracefully(self):
-        """Test that module handles missing optional dependencies"""
-        # The module should handle cases where dependencies are missing
-        # This is already tested indirectly by the CNotebookEnvInfo tests
-        pass
-
-    def test_logging_configuration_robust(self):
-        """Test that logging configuration is robust"""
-        # Test that logging works even if there are issues with handler setup
-        assert log is not None
-        assert isinstance(log, logging.Logger)
-
-        # Should be able to call logging functions without error
-        log.info("Test message")
 
     def test_formatter_handles_edge_cases(self):
         """Test that formatter handles edge cases"""
@@ -458,36 +407,6 @@ class TestErrorHandling:
         record.msg = ""
         result = formatter.format(record)
         assert result == ""
-
-
-class TestDocstring:
-    """Test that functions have proper docstrings"""
-
-    def test_functions_exist(self):
-        """Test that all functions exist and are callable"""
-        assert callable(enable_debugging)
-        assert callable(LevelSpecificFormatter)
-        assert callable(get_env)
-
-    def test_enable_debugging_docstring(self):
-        """Test enable_debugging has docstring"""
-        assert enable_debugging.__doc__ is not None
-        assert len(enable_debugging.__doc__.strip()) > 0
-
-    def test_level_specific_formatter_docstring(self):
-        """Test LevelSpecificFormatter has docstring"""
-        assert LevelSpecificFormatter.__doc__ is not None
-        assert len(LevelSpecificFormatter.__doc__.strip()) > 0
-
-    def test_get_env_docstring(self):
-        """Test get_env has docstring"""
-        assert get_env.__doc__ is not None
-        assert len(get_env.__doc__.strip()) > 0
-
-    def test_env_info_docstring(self):
-        """Test CNotebookEnvInfo has docstring"""
-        assert CNotebookEnvInfo.__doc__ is not None
-        assert len(CNotebookEnvInfo.__doc__.strip()) > 0
 
 
 class TestDisplayFunction:

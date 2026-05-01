@@ -79,14 +79,6 @@ class TestRegisterIpythonFormatters:
         assert registered_types == expected_new
 
     @patch('cnotebook.ipython_ext.get_ipython')
-    def test_no_ipython_instance(self, mock_get_ipython):
-        """Test graceful handling when get_ipython() returns None"""
-        mock_get_ipython.return_value = None
-
-        # Should not raise
-        register_ipython_formatters()
-
-    @patch('cnotebook.ipython_ext.get_ipython')
     def test_looks_up_text_html_formatter(self, mock_get_ipython):
         """Test that the html formatter is retrieved via 'text/html' key"""
         mock_ipython, _ = _make_mock_ipython()

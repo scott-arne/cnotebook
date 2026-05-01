@@ -798,26 +798,11 @@ class TestOeimageToHtml:
 
 class TestIntegrationWithContext:
     """Integration tests with CNotebookContext"""
-    
+
     def test_context_image_formats(self):
         """Test different image formats with context"""
         png_ctx = CNotebookContext(image_format="png")
         assert png_ctx.image_mime_type == "image/png"
-        
+
         svg_ctx = CNotebookContext(image_format="svg")
         assert svg_ctx.image_mime_type == "image/svg+xml"
-    
-    def test_render_functions_exist(self):
-        """Test that all render functions exist and are callable"""
-        assert callable(create_img_tag)
-        assert callable(oedisp_to_html)
-        assert callable(render_empty_molecule)
-        assert callable(render_invalid_molecule)
-        assert callable(render_exceeds_max_heavy_atoms)
-        assert callable(oemol_to_disp)
-        assert callable(oemol_to_image)
-        assert callable(oemol_to_html)
-        assert callable(oedu_to_disp)
-        assert callable(oedu_to_image)
-        assert callable(oedu_to_html)
-        assert callable(oeimage_to_html)

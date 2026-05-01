@@ -115,15 +115,51 @@ class TestRemoveOmegaConformerId:
 class TestCreateStructureHighlighter:
     """Test the create_structure_highlighter function"""
 
-    def test_create_highlighter_exists(self):
-        """Test that create_structure_highlighter function exists"""
-        assert callable(create_structure_highlighter)
+    def _make_benzene_display(self):
+        """Create a real OE2DMolDisplay for benzene."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+        self._benzene_mol = mol
+        opts = oedepict.OE2DMolDisplayOptions()
+        return oedepict.OE2DMolDisplay(mol, opts)
 
-    def test_create_highlighter_basic(self):
-        """Test basic functionality without calling OpenEye functions"""
-        # Just test that we can create a highlighter and it's callable
-        highlighter = create_structure_highlighter("CCO")
-        assert callable(highlighter)
+    @patch("cnotebook.helpers.oedepict.OEAddHighlighting")
+    def test_string_query_traditional_highlighter_adds_matches(self, mock_add_highlighting):
+        """A string SMARTS query should highlight real substructure matches."""
+        color = oechem.OEColor(oechem.OELightBlue)
+        highlighter = create_structure_highlighter(
+            "c1ccccc1",
+            color=color,
+            style=oedepict.OEHighlightStyle_BallAndStick,
+        )
+
+        highlighter(self._make_benzene_display())
+
+        assert mock_add_highlighting.call_count >= 1
+
+    @patch("cnotebook.helpers.oedepict.OEAddHighlightOverlay")
+    def test_subsearch_overlay_highlighter_adds_overlay(self, mock_add_overlay):
+        """An OESubSearch query should drive overlay highlighting."""
+        ss = oechem.OESubSearch("c1ccccc1")
+        highlighter = create_structure_highlighter(ss, color=oechem.OEGetLightColors())
+
+        highlighter(self._make_benzene_display())
+
+        mock_add_overlay.assert_called_once()
+
+    @patch("cnotebook.helpers.oedepict.OEAddHighlighting")
+    def test_traditional_highlighter_uses_first_color_from_iterator(self, mock_add_highlighting):
+        """Traditional highlighting should work when color is an OEColorIter."""
+        highlighter = create_structure_highlighter(
+            "c1ccccc1",
+            color=oechem.OEGetLightColors(),
+            style=oedepict.OEHighlightStyle_BallAndStick,
+        )
+
+        highlighter(self._make_benzene_display())
+
+        assert mock_add_highlighting.call_count >= 1
 
     def test_create_highlighter_invalid_type(self):
         """Test that invalid query type raises TypeError"""
@@ -162,11 +198,7 @@ class TestIntegration:
         assert cleaned_names[2] == "simple_name"
     
     def test_function_availability(self):
-        """Test that all helper functions are available"""
-        assert callable(escape_html)
-        assert callable(escape_brackets)
-        assert callable(remove_omega_conformer_id)
-        assert callable(create_structure_highlighter)
+        """Helper regex should remain a compiled conformer-id matcher."""
         assert isinstance(CONFORMER_ID_REGEX, re.Pattern)
 
 
@@ -178,65 +210,23 @@ class TestCreateStructureHighlighterAdvanced:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol)
+        self._benzene_mol = mol
         opts = oedepict.OE2DMolDisplayOptions()
         return oedepict.OE2DMolDisplay(mol, opts)
 
-    def test_highlighter_with_oesubsearch(self):
-        """Test creating a highlighter with an OESubSearch object."""
-        ss = oechem.OESubSearch("c1ccccc1")
-        highlighter = create_structure_highlighter(ss)
-        assert callable(highlighter)
-
-    def test_highlighter_with_smarts_string(self):
-        """Test creating a highlighter with a SMARTS string returns callable."""
-        highlighter = create_structure_highlighter("c1ccccc1")
-        assert callable(highlighter)
-
     @patch('cnotebook.helpers.log')
-    def test_highlighter_overlay_single_color_fallback(self, mock_log):
+    @patch("cnotebook.helpers.oedepict.OEAddHighlighting")
+    def test_highlighter_overlay_single_color_fallback(self, mock_add_highlighting, mock_log):
         """Test that overlay with single OEColor triggers warning and fallback."""
         color = oechem.OEColor(oechem.OELightBlue)
         highlighter = create_structure_highlighter("c1ccccc1", color=color, style="overlay_default")
-        assert callable(highlighter)
+
+        highlighter(self._make_benzene_display())
+
         mock_log.warning.assert_called_once()
         warning_msg = mock_log.warning.call_args[0][0]
         assert "Overlay coloring is not compatible" in warning_msg
-
-    def test_highlighter_traditional_with_color_iterator(self):
-        """Test creating a traditional highlighter with OEColorIter."""
-        colors = oechem.OEGetLightColors()
-        highlighter = create_structure_highlighter(
-            "c1ccccc1",
-            color=colors,
-            style=oedepict.OEHighlightStyle_BallAndStick
-        )
-        assert callable(highlighter)
-
-    def test_highlighter_traditional_with_single_color(self):
-        """Test creating a traditional highlighter with a single OEColor."""
-        color = oechem.OEColor(oechem.OELightBlue)
-        highlighter = create_structure_highlighter(
-            "c1ccccc1",
-            color=color,
-            style=oedepict.OEHighlightStyle_BallAndStick
-        )
-        assert callable(highlighter)
-
-    def test_overlay_callback_is_callable(self):
-        """Test that an overlay callback with color iterator returns callable."""
-        colors = oechem.OEGetLightColors()
-        highlighter = create_structure_highlighter("c1ccccc1", color=colors, style="overlay_default")
-        assert callable(highlighter)
-
-    def test_traditional_callback_is_callable(self):
-        """Test that a traditional callback returns callable."""
-        color = oechem.OEColor(oechem.OELightBlue)
-        highlighter = create_structure_highlighter(
-            "c1ccccc1",
-            color=color,
-            style=oedepict.OEHighlightStyle_BallAndStick
-        )
-        assert callable(highlighter)
+        assert mock_add_highlighting.call_count >= 1
 
 
 class TestHighlightSmarts:

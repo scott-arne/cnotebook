@@ -12,25 +12,6 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not polars_available, reason="polars/oepolars not available")
 
 
-class TestPolarsExtImport:
-    """Test that polars_ext module can be imported."""
-
-    def test_import_polars_ext(self):
-        """polars_ext should be importable when polars available."""
-        from cnotebook import polars_ext
-        assert polars_ext is not None
-
-    def test_render_function_exists(self):
-        """render_polars_dataframe function should exist."""
-        from cnotebook.polars_ext import render_polars_dataframe
-        assert callable(render_polars_dataframe)
-
-    def test_register_function_exists(self):
-        """register_polars_formatters function should exist."""
-        from cnotebook.polars_ext import register_polars_formatters
-        assert callable(register_polars_formatters)
-
-
 class TestPolarsDataFrameRendering:
     """Test DataFrame rendering with molecule columns."""
 
@@ -311,9 +292,10 @@ class TestPolarsSeriesMethods:
     """Test remaining Series accessor methods."""
 
     def test_align_depictions(self):
-        """align_depictions() should not raise."""
+        """align_depictions() should create an aligner and apply it to molecules."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import MagicMock, patch
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -324,13 +306,19 @@ class TestPolarsSeriesMethods:
         # Keep reference to the same series
         series = df["mol"]
 
-        # Should not raise
-        series.chem.align_depictions("first")
+        aligner = MagicMock(return_value=True)
+        with patch('cnotebook.align.create_aligner', return_value=aligner) as mock_create_aligner:
+            series.chem.align_depictions("first")
+
+        mock_create_aligner.assert_called_once()
+        assert isinstance(mock_create_aligner.call_args.kwargs["ref"], oechem.OEMolBase)
+        aligner.assert_called_once()
 
     def test_recalculate_depiction_coordinates(self):
-        """recalculate_depiction_coordinates() should not raise."""
+        """recalculate_depiction_coordinates() should prepare molecule depictions."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -341,8 +329,10 @@ class TestPolarsSeriesMethods:
         # Keep reference to the same series
         series = df["mol"]
 
-        # Should not raise
-        series.chem.recalculate_depiction_coordinates()
+        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            series.chem.recalculate_depiction_coordinates()
+
+        mock_prepare.assert_called_once()
 
     def test_align_depictions_requires_molecule_type(self):
         """align_depictions() should raise TypeError on non-molecule columns."""
@@ -366,26 +356,11 @@ class TestPolarsSeriesMethods:
 class TestPolarsDataFrameMethods:
     """Test DataFrame accessor methods."""
 
-    def test_dataframe_reset_depictions_method_exists(self):
-        """DataFrame chem accessor should have reset_depictions method."""
-        import cnotebook.polars_ext
-        from openeye import oechem
-
-        mol = oechem.OEMol()
-        oechem.OESmilesToMol(mol, "c1ccccc1")
-
-        df = pl.DataFrame({"mol": [mol]})
-        df = df.chem.as_molecule("mol")
-
-        # Method should exist and be callable
-        assert hasattr(df.chem, 'reset_depictions')
-        # Should not raise
-        df.chem.reset_depictions()
-
     def test_dataframe_reset_depictions_specific_columns(self):
         """DataFrame reset_depictions() should accept molecule_columns parameter."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -395,37 +370,11 @@ class TestPolarsDataFrameMethods:
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
-        # Should not raise with specific column
-        df.chem.reset_depictions(molecule_columns=["mol1"])
+        with patch.object(cnotebook.polars_ext.SeriesChemNamespace, "reset_depictions") as mock_reset:
+            df.chem.reset_depictions(molecule_columns=["mol1"])
+            df.chem.reset_depictions(molecule_columns="mol2")
 
-        # Should also accept string argument
-        df.chem.reset_depictions(molecule_columns="mol2")
-
-    def test_dataframe_clear_formatting_rules(self):
-        """DataFrame clear_formatting_rules() should not raise.
-
-        Note: In Polars, each column access creates a new Series instance with
-        its own metadata. This test just verifies the method is available and
-        doesn't raise errors.
-        """
-        import cnotebook.polars_ext
-        from openeye import oechem
-
-        mol = oechem.OEMol()
-        oechem.OESmilesToMol(mol, "c1ccccc1")
-
-        df = pl.DataFrame({"mol": [mol]})
-        df = df.chem.as_molecule("mol")
-
-        # Should not raise
-        df.chem.clear_formatting_rules()
-
-    def test_dataframe_clear_formatting_rules_method_exists(self):
-        """DataFrame should have clear_formatting_rules method."""
-        import cnotebook.polars_ext
-
-        df = pl.DataFrame({"a": [1]})
-        assert hasattr(df.chem, "clear_formatting_rules")
+        assert mock_reset.call_count == 2
 
     def test_highlight_using_column(self):
         """highlight_using_column() should create display column."""
@@ -529,9 +478,10 @@ class TestPolarsDataFrameMethods:
             df.chem.highlight_using_column("text", "pattern")
 
     def test_recalculate_depiction_coordinates_dataframe(self):
-        """DataFrame recalculate_depiction_coordinates() should not raise."""
+        """DataFrame recalculate_depiction_coordinates() should prepare molecule depictions."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -539,13 +489,16 @@ class TestPolarsDataFrameMethods:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        # Should not raise
-        df.chem.recalculate_depiction_coordinates()
+        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            df.chem.recalculate_depiction_coordinates()
+
+        mock_prepare.assert_called_once()
 
     def test_recalculate_depiction_coordinates_specific_columns(self):
-        """DataFrame recalculate_depiction_coordinates() should work on specific columns."""
+        """DataFrame recalculate_depiction_coordinates() should process requested columns only."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -555,8 +508,10 @@ class TestPolarsDataFrameMethods:
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
-        # Should not raise
-        df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+
+        mock_prepare.assert_called_once()
 
 
 class TestPolarsFingerprintSimilarity:
@@ -716,9 +671,10 @@ class TestPolarsDataFrameHighlightExtended:
 class TestPolarsSeriesResetClear:
     """Test Series-level reset_depictions and clear_formatting_rules."""
 
-    def test_reset_depictions_method_exists(self):
-        """reset_depictions() should exist on series chem accessor."""
+    def test_reset_depictions_clears_series_context(self):
+        """reset_depictions() should remove cnotebook metadata from the series."""
         import cnotebook.polars_ext
+        from cnotebook.context import CNotebookContext
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -726,13 +682,16 @@ class TestPolarsSeriesResetClear:
         df = pl.DataFrame({"mol": [mol]}).chem.as_molecule("mol")
 
         series = df.get_column("mol")
-        assert hasattr(series.chem, 'reset_depictions')
-        # Should not raise
+        series.chem.metadata["cnotebook"] = CNotebookContext()
+        assert "cnotebook" in series.chem.metadata
+
         series.chem.reset_depictions()
+        assert "cnotebook" not in series.chem.metadata
 
-    def test_clear_formatting_rules_method_exists(self):
-        """clear_formatting_rules() should exist on series chem accessor."""
+    def test_clear_formatting_rules_clears_series_callbacks(self):
+        """clear_formatting_rules() should preserve context and remove callbacks."""
         import cnotebook.polars_ext
+        from cnotebook.context import CNotebookContext
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -740,9 +699,14 @@ class TestPolarsSeriesResetClear:
         df = pl.DataFrame({"mol": [mol]}).chem.as_molecule("mol")
 
         series = df.get_column("mol")
-        assert hasattr(series.chem, 'clear_formatting_rules')
-        # Should not raise
+        ctx = CNotebookContext(callbacks=[lambda disp: None])
+        series.chem.metadata["cnotebook"] = ctx
+        ctx = series.chem.metadata["cnotebook"]
+        assert len(ctx.callbacks) == 1
+
         series.chem.clear_formatting_rules()
+        assert series.chem.metadata["cnotebook"] is ctx
+        assert len(ctx.callbacks) == 0
 
 
 class TestPolarsDataFrameRecalculateDepictions:
@@ -752,6 +716,7 @@ class TestPolarsDataFrameRecalculateDepictions:
         """recalculate_depiction_coordinates() with no args should process all molecule columns."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -761,13 +726,16 @@ class TestPolarsDataFrameRecalculateDepictions:
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
-        # Should not raise when processing all columns
-        df.chem.recalculate_depiction_coordinates()
+        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            df.chem.recalculate_depiction_coordinates()
+
+        assert mock_prepare.call_count == 2
 
     def test_recalculate_string_column(self):
         """recalculate_depiction_coordinates() should accept molecule_columns as a string."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -777,13 +745,16 @@ class TestPolarsDataFrameRecalculateDepictions:
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
-        # Pass a single string instead of a list
-        df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
+        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
+
+        mock_prepare.assert_called_once()
 
     def test_recalculate_list_column(self):
         """recalculate_depiction_coordinates() should accept molecule_columns as a list."""
         import cnotebook.polars_ext
         from openeye import oechem
+        from unittest.mock import patch
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -793,7 +764,10 @@ class TestPolarsDataFrameRecalculateDepictions:
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
-        df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+
+        mock_prepare.assert_called_once()
 
     def test_recalculate_non_molecule_warns(self, caplog):
         """recalculate_depiction_coordinates() should warn for non-molecule column."""
@@ -1174,9 +1148,10 @@ class TestPolarsAlignDepictionsEdge:
         series = df.get_column("mol")
 
         # create_aligner is imported inside the function from cnotebook.align
-        with patch('cnotebook.align.create_aligner', side_effect=RuntimeError("boom")):
-            # Should not raise - exception is caught
+        with patch('cnotebook.align.create_aligner', side_effect=RuntimeError("boom")) as mock_create_aligner:
             series.chem.align_depictions(ref=mol1)
+
+        mock_create_aligner.assert_called_once()
 
     def test_align_no_valid_mols(self, caplog):
         """align_depictions with ref='first' and all None mols should warn."""

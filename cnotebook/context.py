@@ -286,7 +286,7 @@ class CNotebookContext:
         return tuple(self._callbacks.get())
 
     def reset_callbacks(self) -> None:
-        self._callbacks.reset()
+        self._callbacks.set([])
 
     @property
     def title(self) -> bool:
@@ -333,7 +333,9 @@ class CNotebookContext:
         """
         if self._callbacks.is_deferred:
             self._callbacks.set([])
-        self._callbacks.get().append(callback)
+        callbacks = list(self._callbacks.get())
+        callbacks.append(callback)
+        self._callbacks.set(callbacks)
 
     def create_molecule_display(
             self,
@@ -419,6 +421,7 @@ class CNotebookContext:
         self._max_width.reset()
         self._max_height.reset()
         self._structure_scale.reset()
+        self._atom_label_font_scale.reset()
         self._title_font_scale.reset()
         self._image_format.reset()
         self._bond_width_scaling.reset()
@@ -439,6 +442,7 @@ class CNotebookContext:
             max_width=self.max_width,
             max_height=self.max_height,
             structure_scale=self.structure_scale,
+            atom_label_font_scale=self.atom_label_font_scale,
             title_font_scale=self.title_font_scale,
             title=self.title,
             image_format=self.image_format,

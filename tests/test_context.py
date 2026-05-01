@@ -167,6 +167,7 @@ class TestCNotebookContext:
             width=300,
             height=400,
             structure_scale=0.8,
+            atom_label_font_scale=1.4,
             title_font_scale=1.2,
             bond_width_scaling=True,
             title=False
@@ -177,6 +178,7 @@ class TestCNotebookContext:
         assert opts.GetWidth() == 300
         assert opts.GetHeight() == 400
         assert opts.GetScale() == pytest.approx(0.8)
+        assert opts.GetAtomLabelFontScale() == pytest.approx(1.4)
         assert opts.GetTitleFontScale() == pytest.approx(1.2)
         assert opts.GetBondWidthScaling() is True
     
@@ -204,7 +206,7 @@ class TestCNotebookContext:
         assert dummy_callback in ctx.callbacks
     
     def test_reset_callbacks(self):
-        """Test resetting callbacks"""
+        """reset_callbacks should clear callbacks added to the context."""
         ctx = CNotebookContext()
         
         def dummy_callback(disp):
@@ -212,19 +214,34 @@ class TestCNotebookContext:
         
         ctx.add_callback(dummy_callback)
         ctx.reset_callbacks()
-        # After reset, should revert to initial state
+
         assert isinstance(ctx.callbacks, tuple)
+        assert ctx.callbacks == ()
+
+    def test_reset_clears_added_callbacks(self):
+        """reset should restore default empty callbacks after add_callback."""
+        ctx = CNotebookContext()
+
+        def dummy_callback(disp):
+            pass
+
+        ctx.add_callback(dummy_callback)
+        ctx.reset()
+
+        assert ctx.callbacks == ()
     
     def test_create_molecule_display(self):
         """Test creating molecule display"""
         ctx = CNotebookContext(width=300, height=400)
-        mock_mol = MagicMock(spec=oechem.OEMolBase)
-        mock_mol.GetDimension.return_value = 2
-        
-        # Test that the method exists and can be called
-        # The actual implementation involves OpenEye functions we don't mock
-        assert hasattr(ctx, 'create_molecule_display')
-        assert callable(ctx.create_molecule_display)
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        oedepict.OEPrepareDepiction(mol)
+
+        disp = ctx.create_molecule_display(mol)
+
+        assert isinstance(disp, oedepict.OE2DMolDisplay)
+        assert disp.GetWidth() == 300
+        assert disp.GetHeight() == 400
     
     def test_max_heavy_atoms_setter(self):
         """Test max_heavy_atoms property setter"""
@@ -261,12 +278,21 @@ class TestCNotebookContext:
         ctx_none_copy = ctx_none.copy()
         assert ctx_none_copy.max_heavy_atoms is None
 
+    def test_copy_preserves_atom_label_font_scale(self):
+        """copy should preserve atom_label_font_scale."""
+        ctx = CNotebookContext(atom_label_font_scale=1.7)
+
+        ctx_copy = ctx.copy()
+
+        assert ctx_copy.atom_label_font_scale == pytest.approx(1.7)
+
     def test_reset(self):
         """Test resetting context to defaults"""
         ctx = CNotebookContext()
         ctx.width = 300
         ctx.height = 400
         ctx.image_format = "svg"
+        ctx.atom_label_font_scale = 1.7
         ctx.max_heavy_atoms = 50
 
         ctx.reset()
@@ -275,6 +301,7 @@ class TestCNotebookContext:
         assert ctx.width == 0
         assert ctx.height == 0
         assert ctx.image_format == "png"
+        assert ctx.atom_label_font_scale == 1.0
         assert ctx.max_heavy_atoms == 100
 
 
@@ -284,41 +311,41 @@ class TestPassCNotebookContextDecorator:
     def test_decorator_with_default_context(self):
         """Test decorator passes default context"""
         @pass_cnotebook_context
-        def test_func(*, ctx):
+        def wrapped(*, ctx):
             return ctx
         
-        result = test_func()
+        result = wrapped()
         assert result is not None
         assert isinstance(result, CNotebookContext)
     
     def test_decorator_with_provided_context(self):
         """Test decorator with provided context"""
         @pass_cnotebook_context
-        def test_func(*, ctx):
+        def wrapped(*, ctx):
             return ctx
         
         custom_ctx = CNotebookContext()
-        result = test_func(ctx=custom_ctx)
+        result = wrapped(ctx=custom_ctx)
         assert result == custom_ctx
     
     def test_decorator_with_none_context(self):
         """Test decorator with None context"""
         @pass_cnotebook_context
-        def test_func(*, ctx):
+        def wrapped(*, ctx):
             return ctx
         
-        result = test_func(ctx=None)
+        result = wrapped(ctx=None)
         assert result is not None
         assert isinstance(result, CNotebookContext)
     
     def test_decorator_with_invalid_context(self):
         """Test decorator with invalid context type"""
         @pass_cnotebook_context
-        def test_func(*, ctx):
+        def wrapped(*, ctx):
             return ctx
         
         with pytest.raises(TypeError, match="Received object of type.*for OERenderContext"):
-            test_func(ctx="invalid")
+            wrapped(ctx="invalid")
 
 
 class TestCreateLocalContext:
@@ -461,15 +488,19 @@ class TestCNotebookContextEdgeCases:
 
     def test_create_molecule_display_fixed_scale_skips_max_enforcement(self):
         """Fixed-scale mode must not clamp a large structure down to max_width/max_height."""
+        reference_ctx = CNotebookContext()
         ctx = CNotebookContext(max_width=150, max_height=150)
         assert ctx.structure_scale != oedepict.OEScale_AutoScale
 
         mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
+        oechem.OESmilesToMol(mol, "CCCCCCCCCCCCCCCCCCCC")
         oedepict.OEPrepareDepiction(mol)
 
+        reference_disp = reference_ctx.create_molecule_display(mol)
         disp = ctx.create_molecule_display(mol)
-        assert disp.GetWidth() > 150 or disp.GetHeight() > 150
+        assert reference_disp.GetWidth() > 150 or reference_disp.GetHeight() > 150
+        assert disp.GetWidth() == reference_disp.GetWidth()
+        assert disp.GetHeight() == reference_disp.GetHeight()
 
     def test_create_molecule_display_autoscale_enforces_min(self):
         """AutoScale mode pads small structures up to the min canvas."""

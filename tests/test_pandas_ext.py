@@ -204,9 +204,6 @@ class TestCreateDispFormatter:
         
         formatter = create_disp_formatter(ctx=ctx)
         
-        # Test that the formatter exists and is callable
-        assert callable(formatter)
-        
         # Test with a simple mock that won't trigger isinstance checks
         result = formatter("not_a_display_object")
         assert result == "not_a_display_object"  # Should return unchanged
@@ -467,75 +464,6 @@ class TestRegisterPandasFormatters:
             assert result is None
 
 
-class TestDataFrameAccessors:
-    """Test DataFrame accessor classes via OEPandas .chem accessor"""
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_dataframe_recalculate_depictions_accessor(self):
-        """Test DataFrame recalculate_depiction_coordinates accessor via .chem"""
-        # Test that the method is available via OEPandas .chem accessor
-        df = pd.DataFrame({'A': [1, 2]})
-        assert hasattr(df.chem, 'recalculate_depiction_coordinates')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_dataframe_reset_depictions_accessor(self):
-        """Test DataFrame reset_depictions accessor via .chem"""
-        df = pd.DataFrame({'A': [1, 2]})
-        assert hasattr(df.chem, 'reset_depictions')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_dataframe_clear_formatting_rules_accessor(self):
-        """Test DataFrame clear_formatting_rules accessor via .chem"""
-        df = pd.DataFrame({'A': [1, 2]})
-        assert hasattr(df.chem, 'clear_formatting_rules')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_dataframe_highlight_using_column_accessor(self):
-        """Test DataFrame highlight_using_column accessor via .chem"""
-        df = pd.DataFrame({'A': [1, 2]})
-        assert hasattr(df.chem, 'highlight_using_column')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_dataframe_fingerprint_similarity_accessor(self):
-        """Test DataFrame fingerprint_similarity accessor via .chem"""
-        df = pd.DataFrame({'A': [1, 2]})
-        assert hasattr(df.chem, 'fingerprint_similarity')
-
-
-class TestSeriesAccessors:
-    """Test Series accessor classes via OEPandas .chem accessor"""
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_series_highlight_accessor(self):
-        """Test Series highlight accessor via .chem"""
-        series = pd.Series([1, 2, 3])
-        assert hasattr(series.chem, 'highlight')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_series_recalculate_depiction_coordinates_accessor(self):
-        """Test Series recalculate_depiction_coordinates accessor via .chem"""
-        series = pd.Series([1, 2, 3])
-        assert hasattr(series.chem, 'recalculate_depiction_coordinates')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_series_reset_depictions_accessor(self):
-        """Test Series reset_depictions accessor via .chem"""
-        series = pd.Series([1, 2, 3])
-        assert hasattr(series.chem, 'reset_depictions')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_series_clear_formatting_rules_accessor(self):
-        """Test Series clear_formatting_rules accessor via .chem"""
-        series = pd.Series([1, 2, 3])
-        assert hasattr(series.chem, 'clear_formatting_rules')
-
-    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_series_align_depictions_accessor(self):
-        """Test Series align_depictions accessor via .chem"""
-        series = pd.Series([1, 2, 3])
-        assert hasattr(series.chem, 'align_depictions')
-
-
 class TestIntegration:
     """Integration tests combining multiple components"""
     
@@ -565,26 +493,6 @@ class TestIntegration:
         result = escape_formatter("<test>")
         assert result == "&lt;test&gt;"
     
-    def test_module_imports_and_exports(self):
-        """Test that all expected functions and classes are available"""
-        expected_items = [
-            'render_dataframe',
-            'create_mol_formatter', 
-            'create_disp_formatter',
-            'escape_formatter',
-            'register_pandas_formatters',
-            'SMARTS_DELIMITER_RE'
-        ]
-        
-        for item in expected_items:
-            assert hasattr(cnotebook.pandas_ext, item)
-    
-    def test_logging_configuration(self):
-        """Test that logging is properly configured"""
-        from cnotebook.pandas_ext import log
-        assert log is not None
-
-
 class TestPandasDataFrameHighlight:
     """Test DataFrame highlight method."""
 
@@ -946,7 +854,7 @@ class TestSeriesHighlight:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_highlight_with_ref_runs_alignment(self):
-        """Passing ref= should trigger alignment code path without error."""
+        """Passing ref= should add a highlight and invoke the alignment path."""
         mol1 = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol1)
@@ -956,8 +864,16 @@ class TestSeriesHighlight:
 
         series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
 
-        # Should not raise - exercises the ref="first" alignment path
-        series.chem.highlight("c1ccccc1", ref="first")
+        aligner = MagicMock(return_value=True)
+        with patch('cnotebook.pandas_ext.create_aligner', return_value=aligner) as mock_create_aligner:
+            series.chem.highlight("c1ccccc1", ref="first")
+
+        mock_create_aligner.assert_called_once()
+        assert isinstance(mock_create_aligner.call_args.kwargs["ref"], oechem.OEMolBase)
+        assert aligner.call_count == 2
+        ctx = series.array.metadata.get("cnotebook")
+        assert ctx is not None
+        assert len(ctx.callbacks) == 1
 
 
 class TestSeriesAlignDepictions:
@@ -965,7 +881,7 @@ class TestSeriesAlignDepictions:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_ref_first(self):
-        """Align with ref='first' should use first valid molecule."""
+        """Align with ref='first' should build an aligner from the first valid molecule."""
         mol1 = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol1)
@@ -975,8 +891,13 @@ class TestSeriesAlignDepictions:
 
         series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
 
-        # Should not raise
-        series.chem.align_depictions(ref="first")
+        aligner = MagicMock(return_value=True)
+        with patch('cnotebook.pandas_ext.create_aligner', return_value=aligner) as mock_create_aligner:
+            series.chem.align_depictions(ref="first")
+
+        mock_create_aligner.assert_called_once()
+        assert isinstance(mock_create_aligner.call_args.kwargs["ref"], oechem.OEMolBase)
+        assert aligner.call_count == 2
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_ref_first_no_valid_mols(self):
@@ -989,7 +910,7 @@ class TestSeriesAlignDepictions:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_ref_molecule(self):
-        """Align with a real OEMolBase reference should succeed."""
+        """Align with a real OEMolBase reference should pass that molecule to create_aligner."""
         ref_mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(ref_mol, "c1ccccc1")
         oedepict.OEPrepareDepiction(ref_mol)
@@ -1000,8 +921,13 @@ class TestSeriesAlignDepictions:
 
         series = pd.Series([mol1], dtype=oepd.MoleculeDtype())
 
-        # Should not raise
-        series.chem.align_depictions(ref=ref_mol)
+        aligner = MagicMock(return_value=True)
+        with patch('cnotebook.pandas_ext.create_aligner', return_value=aligner) as mock_create_aligner:
+            series.chem.align_depictions(ref=ref_mol)
+
+        mock_create_aligner.assert_called_once_with(ref=ref_mol, method=None)
+        aligner.assert_called_once()
+        assert isinstance(aligner.call_args.args[0], oechem.OEMolBase)
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_non_molecule_raises(self):
@@ -1013,16 +939,19 @@ class TestSeriesAlignDepictions:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_exception_handled(self):
-        """If create_aligner raises, align_depictions should catch and not propagate."""
+        """If create_aligner raises, align_depictions should catch and log the exception."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol)
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
 
-        with patch('cnotebook.pandas_ext.create_aligner', side_effect=RuntimeError("boom")):
-            # Should not raise - exception is caught internally
+        with patch('cnotebook.pandas_ext.create_aligner', side_effect=RuntimeError("boom")), \
+             patch('cnotebook.pandas_ext.log.debug') as mock_log_debug:
             series.chem.align_depictions(ref=mol)
+
+        mock_log_debug.assert_called_once()
+        assert "Error aligning molecules" in mock_log_debug.call_args.args[0]
 
 
 class TestSeriesRecalculateDepictions:
@@ -1030,14 +959,17 @@ class TestSeriesRecalculateDepictions:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_recalculate_basic(self):
-        """Recalculate depictions on a real molecule series should not error."""
+        """Recalculate depictions should call OpenEye depiction preparation for molecules."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
 
-        # Should not raise
-        series.chem.recalculate_depiction_coordinates()
+        with patch('cnotebook.pandas_ext.oedepict.OEPrepareDepiction') as mock_prepare:
+            series.chem.recalculate_depiction_coordinates()
+
+        mock_prepare.assert_called_once()
+        assert isinstance(mock_prepare.call_args.args[0], oechem.OEMolBase)
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_recalculate_non_molecule_raises(self):
