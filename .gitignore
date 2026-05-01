@@ -1,6 +1,10 @@
 # Created by .gitignore support plugin (hsz.mobi)
 
 .idea
+.vite
+.pytest_cache
+.ruff_cache
+.claude
 .ipynb_checkpoints
 __marimo__/
 .worktrees/

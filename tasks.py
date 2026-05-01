@@ -42,7 +42,7 @@ def docs(c):
     c.run(f"cd {docs_dir} && {sys.executable} -m sphinx -b html . {build_dir}/html")
 
 
-@task(pre=[docs])
+@task
 def serve_docs(c, port=8000, watch=False):
     """Serve Sphinx documentation locally.
 
@@ -53,15 +53,18 @@ def serve_docs(c, port=8000, watch=False):
     html_dir = docs_dir / "_build" / "html"
 
     if watch:
-        # Use sphinx-autobuild for watching/auto-rebuild
+        # sphinx-autobuild performs its own initial build, so skip the pre-build.
         print(f"Watching for changes and serving docs at http://localhost:{port}")
-        c.run(f"{sys.executable} -m sphinx_autobuild {docs_dir} {html_dir} --port {port}")
+        c.run(
+            f"{sys.executable} -u -m sphinx_autobuild {docs_dir} {html_dir} --port {port}",
+            pty=True,
+        )
     else:
         if not html_dir.exists():
             print("Documentation not built. Building first...")
             docs(c)
         print(f"Serving docs at http://localhost:{port}")
-        c.run(f"cd {html_dir} && {sys.executable} -m http.server {port}")
+        c.run(f"cd {html_dir} && {sys.executable} -u -m http.server {port}", pty=True)
 
 
 @task
