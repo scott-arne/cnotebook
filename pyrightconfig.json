@@ -1,0 +1,20 @@
+{
+  "include": [
+    "cnotebook"
+  ],
+  "ignore": [
+    "examples"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "build",
+    "dist",
+    "examples",
+    "htmlcov",
+    "cnotebook.egg-info",
+    "tests",
+    "vendor/3dmol-js-gui/dist"
+  ]
+}

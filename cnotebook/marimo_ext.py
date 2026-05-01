@@ -6,6 +6,7 @@ internal table implementation to support molecule rendering with callbacks
 (highlighting, alignment, etc.) in Marimo's built-in DataFrame table component.
 """
 import logging
+
 import pandas as pd
 from openeye import oechem, oedepict
 
@@ -15,6 +16,7 @@ try:
     import oepandas as oepd
     oepandas_available = True
 except ImportError:
+    oepd = None
     oepandas_available = False
 
 # Import oepolars for dtype checking
@@ -22,9 +24,11 @@ try:
     # noinspection PyUnusedImports
     import polars as pl
     # noinspection PyUnusedImports
-    import oepolars as oeplr
+    import oepolars as oeplr  # pyright: ignore
     oepolars_available = True
 except ImportError:
+    pl = None
+    oeplr = None
     oepolars_available = False
 
 from .context import cnotebook_context, get_series_context
@@ -52,7 +56,7 @@ def _display_mol(self: oechem.OEMolBase):
     # Allow user's image_format preference (SVG or PNG)
     return "text/html", oemol_to_html(self, ctx=ctx)
 
-oechem.OEMolBase._mime_ = _display_mol
+oechem.OEMolBase._mime_ = _display_mol  # pyright: ignore
 
 
 def _display_display(self: oedepict.OE2DMolDisplay):
@@ -60,7 +64,7 @@ def _display_display(self: oedepict.OE2DMolDisplay):
     # Allow user's image_format preference (SVG or PNG)
     return "text/html", oedisp_to_html(self, ctx=ctx)
 
-oedepict.OE2DMolDisplay._mime_ = _display_display
+oedepict.OE2DMolDisplay._mime_ = _display_display  # pyright: ignore
 
 
 def _display_du(self: oechem.OEDesignUnit):
@@ -68,7 +72,7 @@ def _display_du(self: oechem.OEDesignUnit):
     # Allow user's image_format preference (SVG or PNG)
     return "text/html", oedu_to_html(self, ctx=ctx)
 
-oechem.OEDesignUnit._mime_ = _display_du
+oechem.OEDesignUnit._mime_ = _display_du  # pyright: ignore
 
 
 def _display_image(self: oedepict.OEImage):
@@ -76,7 +80,7 @@ def _display_image(self: oedepict.OEImage):
     # Allow user's image_format preference (SVG or PNG)
     return "text/html", oeimage_to_html(self, ctx=ctx)
 
-oedepict.OEImage._mime_ = _display_image
+oedepict.OEImage._mime_ = _display_image  # pyright: ignore
 
 
 ########################################################################################################################
@@ -320,11 +324,12 @@ def _make_style_cell(column_widths: dict[str, int]):
 ########################################################################################################################
 
 try:
-    import marimo as mo
     # noinspection PyProtectedMember,PyUnusedImports
-    from marimo._output.formatting import OPINIONATED_FORMATTERS
+    from marimo._output.formatting import (  # pyright: ignore
+        OPINIONATED_FORMATTERS,
+    )
     # noinspection PyProtectedMember,PyUnusedImports
-    from marimo._plugins.ui._impl.table import table
+    from marimo._plugins.ui._impl.table import table  # pyright: ignore
 
 
     # 1. Define the custom formatting logic
@@ -336,13 +341,14 @@ try:
         column_widths: dict[str, int] = {}
 
         # Check for MoleculeDtype / DisplayDtype (OEPandas specific)
-        if oepandas_available:
+        if oepd is not None:
             for col in df.columns:
                 dtype = df[col].dtype
 
                 if isinstance(dtype, oepd.MoleculeDtype):
                     arr = df[col].array
-                    ctx = get_series_context(arr.metadata).copy()
+                    metadata = arr.metadata  # pyright: ignore
+                    ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_molecule_formatter(ctx)
                     width = _compute_molecule_column_width(arr, ctx)
                     if width:
@@ -350,20 +356,22 @@ try:
 
                 elif isinstance(dtype, oepd.DisplayDtype):
                     arr = df[col].array
-                    ctx = get_series_context(arr.metadata).copy()
+                    metadata = arr.metadata  # pyright: ignore
+                    ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_display_formatter(ctx)
                     width = _compute_display_column_width(arr)
                     if width:
                         column_widths[col] = width
 
         # Check for DesignUnitDtype (OEPandas specific)
-        if oepandas_available:
+        if oepd is not None:
             for col in df.columns:
                 if col not in format_mapping:
                     dtype = df[col].dtype
                     if isinstance(dtype, oepd.DesignUnitDtype):
                         arr = df[col].array
-                        ctx = get_series_context(arr.metadata).copy()
+                        metadata = arr.metadata  # pyright: ignore
+                        ctx = get_series_context(metadata).copy()
                         format_mapping[col] = _create_du_formatter(ctx)
                         width = _compute_du_column_width(arr, ctx)
                         if width:
@@ -393,75 +401,89 @@ try:
     # Do the installation
     install_marimo_pandas_formatter()
 
-    def marimo_polars_formatter(df: pl.DataFrame):
-        """
-        Marimo DataFrame formatter for Polars DataFrames with molecule columns.
-        """
-        format_mapping = {}
-        column_widths: dict[str, int] = {}
+    if pl is not None and oeplr is not None:
+        polars_dataframe = pl.DataFrame  # pyright: ignore
+        molecule_type = oeplr.MoleculeType  # pyright: ignore
+        display_type = oeplr.DisplayType  # pyright: ignore
+        design_unit_type = oeplr.DesignUnitType  # pyright: ignore
 
-        # Check for MoleculeType / DisplayType (OEPolars specific)
-        if oepolars_available:
+        def marimo_polars_formatter(df):
+            """
+            Marimo DataFrame formatter for Polars DataFrames with molecule columns.
+            """
+            format_mapping = {}
+            column_widths: dict[str, int] = {}
+
+            # Check for MoleculeType / DisplayType (OEPolars specific)
             for col in df.columns:
                 dtype = df.schema[col]
 
-                if isinstance(dtype, oeplr.MoleculeType):
+                if isinstance(dtype, molecule_type):
                     series = df.get_column(col)
-                    metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                    if hasattr(series, "chem"):
+                        metadata = series.chem.metadata  # pyright: ignore
+                    else:
+                        metadata = {}
                     ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_molecule_formatter(ctx)
                     width = _compute_molecule_column_width(series, ctx)
                     if width:
                         column_widths[col] = width
 
-                elif isinstance(dtype, oeplr.DisplayType):
+                elif isinstance(dtype, display_type):
                     series = df.get_column(col)
-                    metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                    if hasattr(series, "chem"):
+                        metadata = series.chem.metadata  # pyright: ignore
+                    else:
+                        metadata = {}
                     ctx = get_series_context(metadata).copy()
                     format_mapping[col] = _create_display_formatter(ctx)
                     width = _compute_display_column_width(series)
                     if width:
                         column_widths[col] = width
 
-        # Check for DesignUnitType (OEPolars specific)
-        if oepolars_available:
+            # Check for DesignUnitType (OEPolars specific)
             for col in df.columns:
                 if col not in format_mapping:
                     dtype = df.schema[col]
-                    if isinstance(dtype, oeplr.DesignUnitType):
+                    if isinstance(dtype, design_unit_type):
                         series = df.get_column(col)
-                        metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                        if hasattr(series, "chem"):
+                            metadata = series.chem.metadata  # pyright: ignore
+                        else:
+                            metadata = {}
                         ctx = get_series_context(metadata).copy()
                         format_mapping[col] = _create_du_formatter(ctx)
                         width = _compute_du_column_width(series, ctx)
                         if width:
                             column_widths[col] = width
 
-        style_cell = _make_style_cell(column_widths) if column_widths else None
+            style_cell = _make_style_cell(column_widths) if column_widths else None
 
-        # Return a Marimo table with our custom mapping
-        # noinspection PyProtectedMember,PyTypeChecker
-        return table(
-            df,
-            selection=None,
-            format_mapping=format_mapping,
-            pagination=True,
-            style_cell=style_cell,
-        )._mime_()
+            # Return a Marimo table with our custom mapping
+            # noinspection PyProtectedMember,PyTypeChecker
+            return table(
+                df,
+                selection=None,
+                format_mapping=format_mapping,
+                pagination=True,
+                style_cell=style_cell,
+            )._mime_()
 
-    def install_marimo_polars_formatter():
-        """Install the Polars DataFrame formatter if polars is available."""
-        if not oepolars_available:
-            return
+        def install_marimo_polars_formatter():
+            """Install the Polars DataFrame formatter if polars is available."""
+            # Check if we've already installed it to avoid duplicates
+            for typ, func in OPINIONATED_FORMATTERS.formatters.items():
+                if (
+                    typ is polars_dataframe
+                    and func.__name__ == "marimo_polars_formatter"
+                ):
+                    return  # Already installed
 
-        # Check if we've already installed it to avoid duplicates
-        for typ, func in OPINIONATED_FORMATTERS.formatters.items():
-            if typ is pl.DataFrame and func.__name__ == "marimo_polars_formatter":
-                return  # Already installed
+            OPINIONATED_FORMATTERS.formatters[polars_dataframe] = (
+                marimo_polars_formatter
+            )
 
-        OPINIONATED_FORMATTERS.formatters[pl.DataFrame] = marimo_polars_formatter
-
-    if oepolars_available:
         install_marimo_polars_formatter()
 
 except (ImportError, AttributeError) as ex:
@@ -482,12 +504,14 @@ def _display_dataframe(self: pd.DataFrame):
     """
     return "text/html", render_dataframe(df=self, formatters=None, col_space=None)
 
-pd.DataFrame._mime_ = _display_dataframe
+pd.DataFrame._mime_ = _display_dataframe  # pyright: ignore
 
-if oepolars_available:
+if pl is not None and oeplr is not None:
+    polars_dataframe = pl.DataFrame  # pyright: ignore
+
     from .polars_ext import render_polars_dataframe
 
-    def _display_polars_dataframe(self: pl.DataFrame):
+    def _display_polars_dataframe(self):
         """
         Fallback MIME hook for Polars DataFrames in non-Marimo contexts.
 
@@ -496,4 +520,4 @@ if oepolars_available:
         """
         return "text/html", render_polars_dataframe(df=self, formatters=None, col_space=None)
 
-    pl.DataFrame._mime_ = _display_polars_dataframe
+    polars_dataframe._mime_ = _display_polars_dataframe  # pyright: ignore

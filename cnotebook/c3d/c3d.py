@@ -47,7 +47,7 @@ def _is_marimo() -> bool:
     if "marimo" not in sys.modules:
         return False
     try:
-        import marimo as mo
+        import marimo as mo  # pyright: ignore[reportMissingImports]
 
         return mo.running_in_notebook()
     except (ImportError, AttributeError):
@@ -71,7 +71,7 @@ class C3D:
         viewer = (
             C3D(width=800, height=600)
             .add_molecule(mol, name="benzene")
-            .add_style({"chain": "A"}, "cartoon")
+            .add_style("cartoon", {"chain": "A"})
             .set_background("#ffffff")
         )
         viewer.display()
@@ -108,7 +108,7 @@ class C3D:
         self._background: Optional[str] = None
         self._background_explicit = False
         self._theme: str = theme
-        self._zoom_to: Optional[Dict[str, Any]] = None
+        self._zoom_to: Optional[Union[str, Dict[str, Any]]] = None
         self._orient: Optional[Union[bool, str, Dict[str, Any]]] = None
 
     # ------------------------------------------------------------------
@@ -307,7 +307,114 @@ class C3D:
             # Style with a 3Dmol.js dict
             viewer.add_style("stick", {"chain": "A"}, color="green")
         """
+        style_dict = self._normalize_style(style, color=color)
+        self._operations.append(
+            {"op": "style", "selection": selection, "style": style_dict}
+        )
+        return self
+
+    def remove_style(
+        self,
+        style: Union[str, Dict[str, Any]],
+        selection: Union[str, Dict[str, Any], None] = None,
+    ) -> C3D:
+        """Remove a visual style from selected atoms.
+
+        :param style: Either a preset name accepted by :meth:`add_style`,
+            ``"everything"`` to clear all styles from the selection, or a raw
+            3Dmol.js style dict. For dicts, the top-level style keys are
+            removed from the matching atoms.
+        :param selection: Atoms to modify. Uses the same selection forms as
+            :meth:`add_style`.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *style* is a string that is not a recognized
+            preset name.
+
+        Example::
+
+            viewer = C3D()
+            viewer.add_molecule(mol, name="complex")
+            viewer.add_style("cartoon")
+            viewer.add_style("stick", "resn LIG")
+
+            # Hide the ligand sticks while leaving cartoon visible
+            viewer.remove_style("stick", "resn LIG")
+        """
+        style_dict = self._normalize_style(style, allow_everything=True)
+        self._operations.append(
+            {"op": "remove_style", "selection": selection, "style": style_dict}
+        )
+        return self
+
+    def show_style(
+        self,
+        style: Union[str, Dict[str, Any]],
+        selection: Union[str, Dict[str, Any], None] = None,
+        color: str | None = None,
+    ) -> C3D:
+        """Synonym for :meth:`add_style`.
+
+        :param style: Style preset or raw 3Dmol.js style dict.
+        :param selection: Atoms to style.
+        :param color: Optional color for preset styles.
+        :returns: Self, for method chaining.
+        """
+        return self.add_style(style, selection=selection, color=color)
+
+    def hide_style(
+        self,
+        style: Union[str, Dict[str, Any]],
+        selection: Union[str, Dict[str, Any], None] = None,
+    ) -> C3D:
+        """Synonym for :meth:`remove_style`.
+
+        :param style: Style preset or raw 3Dmol.js style dict.
+        :param selection: Atoms to modify.
+        :returns: Self, for method chaining.
+        """
+        return self.remove_style(style, selection=selection)
+
+    def show_polar_hydrogens(self, rep: Union[str, Dict[str, Any]]) -> C3D:
+        """Show a representation for polar hydrogens.
+
+        :param rep: Style preset or raw 3Dmol.js style dict to add.
+        :returns: Self, for method chaining.
+        """
+        return self.add_style(rep, "polar_hydrogen")
+
+    def hide_nonpolar_hydrogens(
+        self,
+        rep: Union[str, Dict[str, Any], None] = None,
+    ) -> C3D:
+        """Hide a representation for nonpolar hydrogens.
+
+        :param rep: Style preset or raw 3Dmol.js style dict to remove. When
+            ``None``, all styles are removed from nonpolar hydrogens.
+        :returns: Self, for method chaining.
+        """
+        return self.remove_style(
+            "everything" if rep is None else rep,
+            "nonpolar_hydrogen",
+        )
+
+    @staticmethod
+    def _normalize_style(
+        style: Union[str, Dict[str, Any]],
+        color: str | None = None,
+        allow_everything: bool = False,
+    ) -> Dict[str, Any]:
+        """Convert a C3D style preset or raw style dict to a style dict.
+
+        :param style: Style preset or raw 3Dmol.js style dict.
+        :param color: Optional color for preset styles.
+        :param allow_everything: Allow the removal-only ``"everything"``
+            sentinel.
+        :returns: Normalized style dictionary.
+        :raises ValueError: If *style* is an unknown preset string.
+        """
         if isinstance(style, str):
+            if allow_everything and style == "everything":
+                return {"everything": {}}
             if style not in _STYLE_PRESETS:
                 raise ValueError(
                     f"Unknown style preset '{style}'. "
@@ -319,9 +426,7 @@ class C3D:
             style_dict = {_STYLE_PRESETS[style]: style_spec}
         else:
             style_dict = dict(style)
-
-        self._operations.append({"op": "style", "selection": selection, "style": style_dict})
-        return self
+        return style_dict
 
     def set_color(
         self,
@@ -609,7 +714,7 @@ class C3D:
         )
 
         if _is_marimo():
-            import marimo as mo
+            import marimo as mo  # pyright: ignore[reportMissingImports]
 
             return mo.Html(iframe_html)
         else:

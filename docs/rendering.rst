@@ -94,6 +94,7 @@ when displayed in a notebook cell. The design unit title and a structure overvie
 are rendered using the standard CNotebook rendering pipeline.
 
 .. code-block:: python
+
     from openeye import oechem
     from cnotebook.c3d import C3D
 

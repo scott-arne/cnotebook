@@ -399,7 +399,7 @@ _ALIGNERS = {
 
 def create_aligner(
         ref: oechem.OEMolBase | oechem.OESubSearch | oechem.OEMCSSearch | str,
-        method: Literal["substructure", "ss", "mcss", "fp", "fingerprint"] = None,
+        method: Literal["substructure", "ss", "mcss", "fp", "fingerprint"] | None = None,
         **kwargs
 ) -> Aligner:
     """

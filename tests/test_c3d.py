@@ -290,6 +290,116 @@ class TestC3DBuilder:
         entry = viewer._operations[0]
         assert entry["selection"] == "benzene"
 
+    def test_remove_style_preset_mapping(self):
+        """remove_style should store a removal operation for a preset."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_style("cartoon", {"chain": "A"})
+
+        assert result is viewer
+        assert len(viewer._operations) == 1
+        entry = viewer._operations[0]
+        assert entry["op"] == "remove_style"
+        assert entry["selection"] == {"chain": "A"}
+        assert entry["style"] == {"cartoon": {}}
+
+    def test_remove_style_dict_passthrough(self):
+        """remove_style should accept raw 3Dmol.js style dictionaries."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.remove_style({"stick": {}, "sphere": {}}, "ligand")
+
+        entry = viewer._operations[0]
+        assert entry["op"] == "remove_style"
+        assert entry["selection"] == "ligand"
+        assert entry["style"] == {"stick": {}, "sphere": {}}
+
+    def test_remove_style_invalid_preset_raises_value_error(self):
+        """remove_style should validate presets the same way add_style does."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        with pytest.raises(ValueError, match="Unknown style preset"):
+            viewer.remove_style("ribbon")
+
+    def test_show_style_is_add_style_alias(self):
+        """show_style should behave like add_style."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.show_style("stick", "chain A", color="red")
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "style",
+                "selection": "chain A",
+                "style": {"stick": {"color": "red"}},
+            }
+        ]
+
+    def test_hide_style_is_remove_style_alias(self):
+        """hide_style should behave like remove_style."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.hide_style("stick", "chain A")
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "remove_style",
+                "selection": "chain A",
+                "style": {"stick": {}},
+            }
+        ]
+
+    def test_show_polar_hydrogens_adds_style_to_polar_hydrogen_selection(self):
+        """show_polar_hydrogens should style the polar_hydrogen selection."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.show_polar_hydrogens("stick")
+
+        assert result is viewer
+        assert viewer._operations == [
+            {"op": "style", "selection": "polar_hydrogen", "style": {"stick": {}}}
+        ]
+
+    def test_hide_nonpolar_hydrogens_removes_everything_by_default(self):
+        """hide_nonpolar_hydrogens should clear all styles by default."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.hide_nonpolar_hydrogens()
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "remove_style",
+                "selection": "nonpolar_hydrogen",
+                "style": {"everything": {}},
+            }
+        ]
+
+    def test_hide_nonpolar_hydrogens_removes_specific_style(self):
+        """hide_nonpolar_hydrogens should remove a specific style when given."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.hide_nonpolar_hydrogens("stick")
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "remove_style",
+                "selection": "nonpolar_hydrogen",
+                "style": {"stick": {}},
+            }
+        ]
+
     def test_set_ui_returns_self(self):
         """set_ui should return the C3D instance for chaining."""
         from cnotebook.c3d import C3D

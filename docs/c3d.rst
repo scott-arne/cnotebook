@@ -151,18 +151,27 @@ For finer control, add individual 3Dmol.js styles with ``add_style``:
     viewer = (
         C3D()
         .add_molecule(mol)
-        .add_style({"chain": "A"}, "cartoon", color="blue")
-        .add_style({}, "stick")
+        .add_style("cartoon", {"chain": "A"}, color="blue")
+        .add_style("stick")
+        .remove_style("stick", "not ligand")
     )
     viewer.display()
 
 Style presets: ``cartoon``, ``stick``, ``sphere``, ``line``, ``cross``, ``surface``.
 
+``show_style`` is a synonym for ``add_style``. ``hide_style`` is a synonym for
+``remove_style``.
+
+For hydrogen display cleanup, ``show_polar_hydrogens(rep)`` applies *rep* to
+``polar_hydrogen`` and ``hide_nonpolar_hydrogens()`` removes all styles from
+``nonpolar_hydrogen``. Pass a representation name to
+``hide_nonpolar_hydrogens(rep)`` to remove only that representation.
+
 You can also pass a raw 3Dmol.js style dict for full control:
 
 .. code-block:: python
 
-    viewer.add_style({"resi": 42}, {"cartoon": {"color": "spectrum"}})
+    viewer.add_style({"cartoon": {"color": "spectrum"}}, {"resi": 42})
 
 Zoom Targets
 ------------

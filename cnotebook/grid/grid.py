@@ -9,7 +9,7 @@ from typing import Dict, Iterable, List, Optional, Union
 
 import anywidget
 import pandas as pd
-import traitlets
+from traitlets.traitlets import Unicode
 from openeye import oechem
 
 from cnotebook.context import CNotebookContext
@@ -22,7 +22,8 @@ _LIST_JS = (_STATIC_DIR / "list.min.js").read_text()
 try:
     from IPython.display import HTML, display
 except ModuleNotFoundError:
-    pass
+    HTML = None
+    display = None
 
 
 def _is_marimo() -> bool:
@@ -33,7 +34,7 @@ def _is_marimo() -> bool:
     if "marimo" not in sys.modules:
         return False
     try:
-        import marimo as mo
+        import marimo as mo  # pyright: ignore[reportMissingImports]
         # Check if we're actually in a marimo runtime
         return mo.running_in_notebook()
     except (ImportError, AttributeError):
@@ -107,10 +108,10 @@ class MolGridWidget(anywidget.AnyWidget):
     export default { render };
     """
 
-    grid_id = traitlets.Unicode("").tag(sync=True)
-    selection = traitlets.Unicode("{}").tag(sync=True)
-    smarts_query = traitlets.Unicode("").tag(sync=True)
-    smarts_matches = traitlets.Unicode("[]").tag(sync=True)
+    grid_id = Unicode("").tag(sync=True)
+    selection = Unicode("{}").tag(sync=True)
+    smarts_query = Unicode("").tag(sync=True)
+    smarts_matches = Unicode("[]").tag(sync=True)
 
 
 # CSS matching backup styling
@@ -832,7 +833,10 @@ class MolGrid:
         self.n_items_per_page = n_items_per_page
         self.selection_enabled = select
         self.information_enabled = information
-        self.name = name
+        if name is None:
+            self.name = f"molgrid-{uuid.uuid4().hex[:8]}"
+        else:
+            self.name = name
 
         # Cluster filtering
         if cluster is not None:
@@ -870,10 +874,6 @@ class MolGrid:
         self.image_format = image_format
         self.atom_label_font_scale = atom_label_font_scale
 
-        # Generate grid name
-        if self.name is None:
-            self.name = f"molgrid-{uuid.uuid4().hex[:8]}"
-
         # Initialize selection storage
         MolGrid._selections[self.name] = {}
 
@@ -889,7 +889,7 @@ class MolGrid:
         # Display widget immediately (critical for model availability)
         # In Jupyter: display widget here so model is available when iframe loads
         # In Marimo: widget is returned from display() method instead
-        if not _is_marimo():
+        if not _is_marimo() and display is not None:
             display(self.widget)
 
     def _auto_detect_search_fields(self, dataframe, mol_col: Optional[str]) -> List[str]:
@@ -1091,6 +1091,7 @@ class MolGrid:
             if self.cluster is not None:
                 if isinstance(self.cluster, str):
                     # Column name - get value from DataFrame
+                    assert self._dataframe is not None
                     raw_value = self._dataframe.iloc[idx][self.cluster]
                     if pd.isna(raw_value):
                         item["cluster"] = "Uncategorized"
@@ -1160,10 +1161,10 @@ class MolGrid:
         cluster_data_js = "null"
         cluster_counts_js = "null"
         cluster_enabled = self.cluster is not None
+        cluster_map = {}
 
         if cluster_enabled:
             # Build cluster metadata: {label: [indices], ...}
-            cluster_map = {}
             for item in items:
                 label = item.get("cluster", "Uncategorized")
                 if label not in cluster_map:
@@ -2117,9 +2118,11 @@ class MolGrid:
         ></iframe>'''
 
         if _is_marimo():
-            import marimo as mo
+            import marimo as mo  # pyright: ignore[reportMissingImports]
             return mo.vstack([self.widget, mo.Html(iframe_html)])
         else:
+            if HTML is None:
+                return iframe_html
             return HTML(iframe_html)
 
     def get_marimo_selection(self):

@@ -24,7 +24,7 @@ extensions = [
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "plans"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "plans", "superpowers"]
 
 # Napoleon settings for Google/NumPy style docstrings
 napoleon_google_docstring = False

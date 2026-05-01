@@ -219,7 +219,7 @@ def _detect_environment() -> CNotebookEnvInfo:
     try:
         # noinspection PyUnusedImports
         import polars as pl
-        import oepolars as oeplr
+        import oepolars as oeplr  # pyright: ignore[reportMissingImports]
         polars_version = pl.__version__
     except ImportError:
         pass
@@ -227,8 +227,7 @@ def _detect_environment() -> CNotebookEnvInfo:
     # Detect iPython
     try:
         import IPython
-        # noinspection PyProtectedMember
-        from IPython import get_ipython
+        from IPython.core.getipython import get_ipython
         ipy = get_ipython()
         if ipy is not None:
             ipython_version = IPython.__version__
@@ -239,7 +238,7 @@ def _detect_environment() -> CNotebookEnvInfo:
 
     # Detect Marimo
     try:
-        import marimo as mo
+        import marimo as mo  # pyright: ignore[reportMissingImports]
         if mo.running_in_notebook():
             marimo_version = mo.__version__
             is_marimo = True
@@ -389,15 +388,17 @@ def display(obj, ctx: CNotebookContext | None = None):
     if env.pandas_available:
         import pandas as pd
         if isinstance(obj, pd.DataFrame):
+            from .pandas_ext import render_dataframe as _render_dataframe
             # noinspection PyTypeChecker
-            html = render_dataframe(obj, ctx=render_ctx)
+            html = _render_dataframe(obj, ctx=render_ctx)
             return _display_html(html, env)
 
     # Handle Polars DataFrame (if available)
     if env.polars_available:
         import polars as pl
         if isinstance(obj, pl.DataFrame):
-            html = render_polars_dataframe(obj, ctx=render_ctx)
+            from .polars_ext import render_polars_dataframe as _render_polars_dataframe
+            html = _render_polars_dataframe(obj, ctx=render_ctx)
             return _display_html(html, env)
 
     raise TypeError(f"Cannot display object of type {type(obj).__name__}")
@@ -412,7 +413,7 @@ def _display_html(html: str, env: CNotebookEnvInfo):
     """
     # Marimo environment
     if env.is_marimo_notebook:
-        import marimo as mo
+        import marimo as mo  # pyright: ignore[reportMissingImports]
         return mo.Html(html)
 
     # Jupyter/IPython environment

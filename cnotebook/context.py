@@ -16,10 +16,10 @@ class _Deferred(Enum):
     This uses the approach suggested by Guido van Rossum
     https://github.com/python/typing/issues/236#issuecomment-227180301
     """
-    value = 0
+    DEFERRED = 0
 
 
-DEFERRED = _Deferred.value
+DEFERRED = _Deferred.DEFERRED
 
 
 ########################################################################################################################
@@ -65,12 +65,13 @@ class DeferredValue(Generic[T]):
         If the value is DEFERRED then we defer to the local context
         :return: Value
         """
-        if self.is_deferred:
+        value = self._value
+        if isinstance(value, _Deferred):
             ctx = cnotebook_context.get()
             if not hasattr(ctx, self.name):
                 raise AttributeError(f"Global context missing attribute '{self.name}'")
             return getattr(ctx, self.name)
-        return self._value
+        return value
 
     def set(self, value: T | _Deferred) -> None:
         """
@@ -149,13 +150,13 @@ class CNotebookContext:
         self._max_width = DeferredValue[float | None]("max_width", max_width)
         self._max_height = DeferredValue[float | None]("max_height", max_height)
         self._structure_scale = DeferredValue[float]("structure_scale", structure_scale)
-        self._atom_label_font_scale = DeferredValue[float | None]("atom_label_font_scale", atom_label_font_scale)
+        self._atom_label_font_scale = DeferredValue[float]("atom_label_font_scale", atom_label_font_scale)
         self._title_font_scale = DeferredValue[float]("title_font_scale", title_font_scale)
         self._image_format = DeferredValue[str]("image_format", image_format)
         self._bond_width_scaling = DeferredValue[bool]("bond_width_scaling", bond_width_scaling)
         self._title = DeferredValue[bool]("title", title)
         self._max_heavy_atoms = DeferredValue[int | None]("max_heavy_atoms", max_heavy_atoms)
-        self._scope = scope
+        self._scope: Literal["local", "global"] = scope
 
         # Set the callbacks (and do some type checking)
         if callbacks is None:
@@ -340,8 +341,8 @@ class CNotebookContext:
     def create_molecule_display(
             self,
             mol: oechem.OEMolBase,
-            min_height: int | None = None,
-            min_width: int | None = None
+            min_height: float | None = None,
+            min_width: float | None = None
     ) -> oedepict.OE2DMolDisplay:
         """
         Create a molecule display.
@@ -366,22 +367,33 @@ class CNotebookContext:
             return disp
 
         # If the image was too small, and we're not enforcing a specific image size
-        if ((self.width == 0.0 and self.min_width is not None and disp.GetWidth() < self.min_width) or
-                (self.height == 0.0 and self.min_height is not None and disp.GetHeight() < self.min_height)):
+        context_min_width = self.min_width
+        context_min_height = self.min_height
+        needs_min_width = (
+            self.width == 0.0
+            and context_min_width is not None
+            and disp.GetWidth() < context_min_width
+        )
+        needs_min_height = (
+            self.height == 0.0
+            and context_min_height is not None
+            and disp.GetHeight() < context_min_height
+        )
+        if needs_min_width or needs_min_height:
 
-            min_height = min_height or self.min_height
-            min_width = min_width or self.min_width
+            min_height = min_height or context_min_height
+            min_width = min_width or context_min_width
 
             # Create a new display context
             new_ctx = self.copy()
 
             # If width was not enforced already, then enforce the minimum width
-            if self.width == 0.0 and min_width is not None:
-                new_ctx.width = min_width if disp.GetWidth() < self.min_width else 0.0
+            if needs_min_width and min_width is not None:
+                new_ctx.width = min_width
 
             # If height was not enforced already, then enforce the minimum height
-            if self.height == 0.0 and min_height is not None:
-                new_ctx.height = min_height if disp.GetHeight() < self.min_height else 0.0
+            if needs_min_height and min_height is not None:
+                new_ctx.height = min_height
 
             # Create the display object
             disp = oedepict.OE2DMolDisplay(mol, new_ctx.display_options)
@@ -500,18 +512,18 @@ def pass_cnotebook_context(func):
 ########################################################################################################################
 
 def create_local_context(
-        width: float = DEFERRED,
-        height: float = DEFERRED,
-        min_width: float = DEFERRED,
-        min_height: float = DEFERRED,
-        max_width: float = DEFERRED,
-        max_height: float = DEFERRED,
-        structure_scale: int = DEFERRED,
-        title_font_scale: float = DEFERRED,
-        image_format: str = DEFERRED,
-        bond_width_scaling: bool = DEFERRED,
-        callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None = DEFERRED,
-        max_heavy_atoms: int | None = DEFERRED
+        width: float | _Deferred = DEFERRED,
+        height: float | _Deferred = DEFERRED,
+        min_width: float | None | _Deferred = DEFERRED,
+        min_height: float | None | _Deferred = DEFERRED,
+        max_width: float | None | _Deferred = DEFERRED,
+        max_height: float | None | _Deferred = DEFERRED,
+        structure_scale: float | _Deferred = DEFERRED,
+        title_font_scale: float | _Deferred = DEFERRED,
+        image_format: str | _Deferred = DEFERRED,
+        bond_width_scaling: bool | _Deferred = DEFERRED,
+        callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None | _Deferred = DEFERRED,
+        max_heavy_atoms: int | None | _Deferred = DEFERRED
 ) -> CNotebookContext:
     return CNotebookContext(
         width=width,

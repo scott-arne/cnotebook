@@ -89,9 +89,14 @@ def render_empty_molecule(*, ctx: CNotebookContext) -> str:
     :param ctx: Render context
     :return: Image tag
     """
-    image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+    min_width = ctx.min_width
+    min_height = ctx.min_height
+    assert min_width is not None
+    assert min_height is not None
+
+    image = oedepict.OEImage(min_width, min_height)
     image.DrawText(
-        oedepict.OE2DPoint(ctx.min_width / 2, ctx.min_height / 2),
+        oedepict.OE2DPoint(min_width / 2, min_height / 2),
         "Empty Molecule",
         oedepict.OEFont(
             oedepict.OEFontFamily_Arial,
@@ -103,8 +108,8 @@ def render_empty_molecule(*, ctx: CNotebookContext) -> str:
     )
 
     return create_img_tag(
-        ctx.min_width,
-        ctx.min_height,
+        min_width,
+        min_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
@@ -117,9 +122,14 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
     :param ctx: Render context
     :return: Image tag
     """
-    image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+    min_width = ctx.min_width
+    min_height = ctx.min_height
+    assert min_width is not None
+    assert min_height is not None
+
+    image = oedepict.OEImage(min_width, min_height)
     image.DrawText(
-        oedepict.OE2DPoint(ctx.min_width / 2, ctx.min_height / 2),
+        oedepict.OE2DPoint(min_width / 2, min_height / 2),
         "Invalid Molecule",
         oedepict.OEFont(
             oedepict.OEFontFamily_Arial,
@@ -131,8 +141,8 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
     )
 
     return create_img_tag(
-        ctx.min_width,
-        ctx.min_height,
+        min_width,
+        min_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
@@ -153,10 +163,15 @@ def _create_exceeds_heavy_atoms_image(
     :param ctx: Render context.
     :returns: Placeholder image.
     """
-    image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+    min_width = ctx.min_width
+    min_height = ctx.min_height
+    assert min_width is not None
+    assert min_height is not None
 
-    center_x = ctx.min_width / 2
-    center_y = ctx.min_height / 2
+    image = oedepict.OEImage(min_width, min_height)
+
+    center_x = min_width / 2
+    center_y = min_height / 2
 
     font = oedepict.OEFont(
         oedepict.OEFontFamily_Arial,
@@ -208,10 +223,14 @@ def render_exceeds_max_heavy_atoms(
     :returns: HTML image tag.
     """
     image = _create_exceeds_heavy_atoms_image(mol, ctx=ctx)
+    min_width = ctx.min_width
+    min_height = ctx.min_height
+    assert min_width is not None
+    assert min_height is not None
 
     return create_img_tag(
-        ctx.min_width,
-        ctx.min_height,
+        min_width,
+        min_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
@@ -265,9 +284,14 @@ def oemol_to_image(
         return image
 
     if mol.NumAtoms() == 0:
-        image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+        min_width = ctx.min_width
+        min_height = ctx.min_height
+        assert min_width is not None
+        assert min_height is not None
+
+        image = oedepict.OEImage(min_width, min_height)
         image.DrawText(
-            oedepict.OE2DPoint(ctx.min_width / 2, ctx.min_height / 2),
+            oedepict.OE2DPoint(min_width / 2, min_height / 2),
             "Empty Molecule",
             oedepict.OEFont(
                 oedepict.OEFontFamily_Arial,
@@ -280,9 +304,14 @@ def oemol_to_image(
         return image
 
     # Invalid molecule with atoms
-    image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+    min_width = ctx.min_width
+    min_height = ctx.min_height
+    assert min_width is not None
+    assert min_height is not None
+
+    image = oedepict.OEImage(min_width, min_height)
     image.DrawText(
-        oedepict.OE2DPoint(ctx.min_width / 2, ctx.min_height / 2),
+        oedepict.OE2DPoint(min_width / 2, min_height / 2),
         "Invalid Molecule",
         oedepict.OEFont(
             oedepict.OEFontFamily_Arial,
@@ -371,10 +400,15 @@ def oedu_to_image(
         return image
 
     # Apo case: no ligand
-    image = oedepict.OEImage(ctx.min_width, ctx.min_height)
+    min_width = ctx.min_width
+    min_height = ctx.min_height
+    assert min_width is not None
+    assert min_height is not None
+
+    image = oedepict.OEImage(min_width, min_height)
     _draw_du_label(image)
     image.DrawText(
-        oedepict.OE2DPoint(ctx.min_width / 2, ctx.min_height / 2),
+        oedepict.OE2DPoint(min_width / 2, min_height / 2),
         "Apo DesignUnit",
         oedepict.OEFont(
             oedepict.OEFontFamily_Arial,
@@ -444,5 +478,4 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext) -> str:
         image_bytes=image_bytes,
         wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
     )
-
 

@@ -411,7 +411,7 @@ class TestEnum:
     def test_deferred_enum(self):
         """Test the DEFERRED sentinel value"""
         assert isinstance(DEFERRED, _Deferred)
-        assert DEFERRED == _Deferred.value
+        assert DEFERRED == _Deferred.DEFERRED
         assert DEFERRED.value == 0
 
 

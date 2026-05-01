@@ -2,7 +2,7 @@ import logging
 import typing
 import weakref
 import polars as pl
-import oepolars as oeplr
+import oepolars as oeplr  # pyright: ignore
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from .context import pass_cnotebook_context, get_series_context, create_local_context
 from typing import Iterable, Literal
@@ -21,13 +21,15 @@ from .render import (
 # Only register iPython formatters if that is present
 try:
     # noinspection PyProtectedMember,PyPackageRequirements
-    from IPython import get_ipython
+    from IPython.core.getipython import get_ipython
     ipython_present = True
 except ModuleNotFoundError:
+    get_ipython = None
     ipython_present = False
 
 if typing.TYPE_CHECKING:
     from .context import CNotebookContext
+    from .grid import MolGrid
 
 log = logging.getLogger("cnotebook")
 
@@ -102,7 +104,7 @@ def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OE
                         callback(disp)
 
                 # Render into the string stream
-                return oedisp_to_html(disp)
+                return oedisp_to_html(disp, ctx=ctx)
 
             # Empty molecule
             elif mol.NumAtoms() == 0:
@@ -209,7 +211,7 @@ def render_polars_dataframe(
             else:
                 # Fall back to series metadata (might be empty due to Polars Series ephemeral nature)
                 series = df.get_column(col)
-                metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+                metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
                 series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
@@ -228,7 +230,7 @@ def render_polars_dataframe(
 
             # Get metadata from the original series via .chem.metadata
             series = df.get_column(col)
-            metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+            metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
 
             # Get the cnotebook options for this column (use passed ctx if provided)
             series_ctx = ctx if ctx is not None else get_series_context(metadata)
@@ -263,7 +265,7 @@ def render_polars_dataframe(
             designunit_columns.add(col)
 
             series = df.get_column(col)
-            metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+            metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
             series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
@@ -286,14 +288,14 @@ def render_polars_dataframe(
     copied_molecule_series: dict[str, pl.Series] = {}
     for col in molecule_columns:
         series = df.get_column(col)
-        if hasattr(series, 'chem') and hasattr(series.chem, 'deepcopy'):
+        if hasattr(series, 'chem') and hasattr(series.chem, 'deepcopy'):  # pyright: ignore
             # Use oepolars deepcopy to create copies of molecules
-            copied_series = series.chem.deepcopy()
+            copied_series = series.chem.deepcopy()  # pyright: ignore
             # Preserve metadata from original
-            if hasattr(series, 'chem') and hasattr(series.chem, 'metadata'):
-                original_metadata = series.chem.metadata
+            if hasattr(series, 'chem') and hasattr(series.chem, 'metadata'):  # pyright: ignore
+                original_metadata = series.chem.metadata  # pyright: ignore
                 if original_metadata and hasattr(copied_series, 'chem'):
-                    copied_series.chem.metadata.update(original_metadata)
+                    copied_series.chem.metadata.update(original_metadata)  # pyright: ignore
             copied_molecule_series[col] = copied_series
 
     # Build HTML table natively
@@ -545,11 +547,11 @@ def _series_align_depictions(
 # Monkey-patch onto oepolars SeriesChemNamespace
 # Note: Series-level highlight is not registered because Polars Series are ephemeral and
 # metadata doesn't persist across column accesses. Use df.chem.highlight() instead.
-from oepolars.namespaces.series import SeriesChemNamespace
-SeriesChemNamespace.reset_depictions = _series_reset_depictions
-SeriesChemNamespace.clear_formatting_rules = _series_clear_formatting_rules
-SeriesChemNamespace.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates
-SeriesChemNamespace.align_depictions = _series_align_depictions
+from oepolars.namespaces.series import SeriesChemNamespace  # pyright: ignore
+SeriesChemNamespace.reset_depictions = _series_reset_depictions  # pyright: ignore
+SeriesChemNamespace.clear_formatting_rules = _series_clear_formatting_rules  # pyright: ignore
+SeriesChemNamespace.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates  # pyright: ignore
+SeriesChemNamespace.align_depictions = _series_align_depictions  # pyright: ignore
 
 
 ########################################################################################################################
@@ -631,7 +633,7 @@ def _dataframe_reset_depictions(self, *, molecule_columns: str | Iterable[str] |
         lambda c: c in self._df.columns and isinstance(self._df.schema[c], oeplr.MoleculeType),
         columns
     ):
-        self._df.get_column(col).chem.reset_depictions()
+        self._df.get_column(col).chem.reset_depictions()  # pyright: ignore
 
 
 def _dataframe_clear_formatting_rules(self, molecule_columns: str | Iterable[str] | None = None) -> None:
@@ -720,7 +722,7 @@ def _dataframe_recalculate_depiction_coordinates(
 
         if col in self._df.columns:
             if isinstance(self._df.schema[col], oeplr.MoleculeType):
-                self._df.get_column(col).chem.recalculate_depiction_coordinates(
+                self._df.get_column(col).chem.recalculate_depiction_coordinates(  # pyright: ignore
                     clear_coords=clear_coords,
                     add_depiction_hydrogens=add_depiction_hydrogens,
                     perceive_bond_stereo=perceive_bond_stereo,
@@ -822,7 +824,7 @@ def _dataframe_copy_molecules(
         )
 
     # Use the series-level copy_molecules (or deepcopy) and add as a new column
-    copied_series = self._df.get_column(source_column).chem.copy_molecules()
+    copied_series = self._df.get_column(source_column).chem.copy_molecules()  # pyright: ignore
     return self._df.with_columns(copied_series.alias(dest_column))
 
 
@@ -889,12 +891,14 @@ def _dataframe_highlight_using_column(
         use_overlay = False
         style = oedepict.OEHighlightStyle_BallAndStick
 
+    assert color is not None
+
     # Create the display objects
     displays = []
 
     # Get the rendering context for creating the displays
     series = df.get_column(molecule_column)
-    metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+    metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
     ctx = get_series_context(metadata)
 
     for row_idx in range(len(df)):
@@ -1019,7 +1023,7 @@ def _dataframe_fingerprint_similarity(
 
     # Get the context for rendering
     series = df.get_column(molecule_column)
-    metadata = series.chem.metadata if hasattr(series, 'chem') else {}
+    metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
     ctx = get_series_context(metadata)
 
     # Get molecule list
@@ -1034,6 +1038,8 @@ def _dataframe_fingerprint_similarity(
         else:
             log.warning(f'No valid reference molecules to use for alignment in column {molecule_column}')
             return df
+
+    assert ref is not None
 
     # Check reference molecule
     if not ref.IsValid():
@@ -1083,8 +1089,8 @@ def _dataframe_fingerprint_similarity(
                 tanimotos.append(oegraphsim.OETanimoto(ref_fp, targ_fp))
 
                 # Calculate the similarity
-                targ_bonds = oechem.OEUIntArray(targ_mol.GetMaxBondIdx())
-                ref_bonds = oechem.OEUIntArray(ref_mol.GetMaxBondIdx())
+                targ_bonds = [0] * targ_mol.GetMaxBondIdx()
+                ref_bonds = [0] * ref_mol.GetMaxBondIdx()
 
                 # Overlaps
                 overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
@@ -1146,8 +1152,8 @@ def _dataframe_fingerprint_similarity(
     targ_series = pl.Series(target_similarity_column, targ_displays, dtype=oeplr.DisplayType())
 
     # Store molecule references in metadata to prevent GC (same as pandas version)
-    ref_series.chem.metadata["molecules"] = ref_molecules  # noqa
-    targ_series.chem.metadata["molecules"] = targ_molecules  # noqa
+    ref_series.chem.metadata["molecules"] = ref_molecules  # pyright: ignore  # noqa
+    targ_series.chem.metadata["molecules"] = targ_molecules  # pyright: ignore  # noqa
 
     # Add the columns to the DataFrame
     result = df.with_columns([tanimoto_series, ref_series, targ_series])
@@ -1156,14 +1162,16 @@ def _dataframe_fingerprint_similarity(
 
 
 # Monkey-patch onto oepolars DataFrameChemNamespace
-from oepolars.namespaces.dataframe import DataFrameChemNamespace
-DataFrameChemNamespace.reset_depictions = _dataframe_reset_depictions
-DataFrameChemNamespace.clear_formatting_rules = _dataframe_clear_formatting_rules
-DataFrameChemNamespace.recalculate_depiction_coordinates = _dataframe_recalculate_depiction_coordinates
-DataFrameChemNamespace.highlight = _dataframe_highlight
-DataFrameChemNamespace.highlight_using_column = _dataframe_highlight_using_column
-DataFrameChemNamespace.fingerprint_similarity = _dataframe_fingerprint_similarity
-DataFrameChemNamespace.copy_molecules = _dataframe_copy_molecules
+from oepolars.namespaces.dataframe import DataFrameChemNamespace  # pyright: ignore
+DataFrameChemNamespace.reset_depictions = _dataframe_reset_depictions  # pyright: ignore
+DataFrameChemNamespace.clear_formatting_rules = _dataframe_clear_formatting_rules  # pyright: ignore
+DataFrameChemNamespace.recalculate_depiction_coordinates = (  # pyright: ignore
+    _dataframe_recalculate_depiction_coordinates
+)
+DataFrameChemNamespace.highlight = _dataframe_highlight  # pyright: ignore
+DataFrameChemNamespace.highlight_using_column = _dataframe_highlight_using_column  # pyright: ignore
+DataFrameChemNamespace.fingerprint_similarity = _dataframe_fingerprint_similarity  # pyright: ignore
+DataFrameChemNamespace.copy_molecules = _dataframe_copy_molecules  # pyright: ignore
 
 
 ########################################################################################################################
@@ -1241,8 +1249,8 @@ def _polars_dataframe_molgrid(
 
 
 # Attach molgrid methods to accessors
-SeriesChemNamespace.molgrid = _polars_series_molgrid
-DataFrameChemNamespace.molgrid = _polars_dataframe_molgrid
+SeriesChemNamespace.molgrid = _polars_series_molgrid  # pyright: ignore
+DataFrameChemNamespace.molgrid = _polars_dataframe_molgrid  # pyright: ignore
 
 
 ########################################################################################################################
@@ -1260,10 +1268,13 @@ if ipython_present:
 
         Note: Calls to this function are idempotent.
         """
+        if get_ipython is None:
+            return
+
         ipython_instance = get_ipython()
 
         if ipython_instance is not None:
-            html_formatter = ipython_instance.display_formatter.formatters['text/html']
+            html_formatter = ipython_instance.display_formatter.formatters['text/html']  # pyright: ignore
             try:
                 formatter = html_formatter.lookup(pl.DataFrame)
                 if formatter is not render_polars_dataframe:

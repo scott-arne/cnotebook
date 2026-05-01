@@ -3,7 +3,7 @@ import logging
 import typing
 import pandas as pd
 import oepandas as oepd
-from typing import Iterable, Any, Literal, Hashable
+from typing import Iterable, Any, Literal
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from copy import copy as shallow_copy
 from .context import pass_cnotebook_context, get_series_context
@@ -22,9 +22,10 @@ from .render import (
 # Only register iPython formatters if that is present
 try:
     # noinspection PyProtectedMember,PyPackageRequirements
-    from IPython import get_ipython
+    from IPython.core.getipython import get_ipython
     ipython_present = True
 except ModuleNotFoundError:
+    get_ipython = None
     ipython_present = False
 
 if typing.TYPE_CHECKING:
@@ -61,7 +62,7 @@ def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OE
                         callback(disp)
 
                 # Render into the string stream
-                return oedisp_to_html(disp)
+                return oedisp_to_html(disp)  # pyright: ignore[reportCallIssue]
 
             # Empty molecule
             elif mol.NumAtoms() == 0:
@@ -158,8 +159,9 @@ def render_dataframe(
             molecule_columns.add(col)
             # Get metadata from the original array before any copying
             arr = df[col].array
-            if hasattr(arr, 'metadata') and arr.metadata:
-                original_metadata_by_col[col] = arr.metadata.copy()
+            metadata = getattr(arr, "metadata", None)
+            if metadata:
+                original_metadata_by_col[col] = metadata.copy()
 
     # We need to copy both the DataFrame and the molecules, because we modify them in-place to render them
     df = df.copy()
@@ -265,7 +267,12 @@ def render_dataframe(
         if col not in display_columns and col not in molecule_columns and col not in designunit_columns:
             formatters[col] = escape_formatter
 
-    return df.to_html(escape=False, formatters=formatters, col_space=col_space, **kwargs)
+    return df.to_html(  # pyright: ignore[reportCallIssue]
+        escape=False,
+        formatters=formatters,
+        col_space=col_space,  # pyright: ignore[reportArgumentType]
+        **kwargs
+    )
 
 
 ########################################################################################################################
@@ -281,10 +288,13 @@ if ipython_present:
 
         Note: Calls to this function are idempotent.
         """
+        assert get_ipython is not None
         ipython_instance = get_ipython()
 
         if ipython_instance is not None:
-            html_formatter = ipython_instance.display_formatter.formatters['text/html']
+            html_formatter = ipython_instance.display_formatter.formatters[  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+                'text/html'
+            ]
             try:
                 formatter = html_formatter.lookup(pd.DataFrame)
                 if formatter is not render_dataframe:
@@ -835,6 +845,7 @@ def _dataframe_highlight_using_column(
                     highlight_color = color
                 else:
                     highlight_color = oechem.OELightBlue
+                    assert color is not None
                     for c in color:
                         highlight_color = c
                         break
@@ -952,13 +963,15 @@ def _dataframe_fingerprint_similarity(
 
     # If we're using the first molecule as our reference
     if ref is None:
-        for mol in arr:  # type: oechem.OEMol
+        for mol in arr:
             if mol.IsValid():
                 ref = mol
                 break
         else:
             log.warning(f'No valid reference molecules to use for alignment in column {molecule_column}')
             return df
+
+    assert ref is not None
 
     # Check reference molecule
     if not ref.IsValid():
@@ -993,7 +1006,7 @@ def _dataframe_fingerprint_similarity(
     tanimotos = []
     index = []
 
-    for idx, mol in df[molecule_column].items():  # type: Hashable, oechem.OEMol
+    for idx, mol in df[molecule_column].items():
         index.append(idx)
         if mol is not None and mol.IsValid():
 
@@ -1013,8 +1026,8 @@ def _dataframe_fingerprint_similarity(
                 tanimotos.append(oegraphsim.OETanimoto(ref_fp, targ_fp))
 
                 # Calculate the similarity
-                targ_bonds = oechem.OEUIntArray(targ_mol.GetMaxBondIdx())
-                ref_bonds = oechem.OEUIntArray(ref_mol.GetMaxBondIdx())
+                targ_bonds = [0] * targ_mol.GetMaxBondIdx()
+                ref_bonds = [0] * ref_mol.GetMaxBondIdx()
 
                 # Overlaps
                 overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
@@ -1130,7 +1143,7 @@ OEDataFrameAccessor.fingerprint_similarity = _dataframe_fingerprint_similarity
 def _series_molgrid(
     self,
     title: bool | str | None = True,
-    tooltip_fields: list = None,
+    tooltip_fields: list | None = None,
     **kwargs
 ):
     """Display molecules in an interactive grid.
@@ -1170,7 +1183,7 @@ def _dataframe_molgrid(
     self,
     mol_col: str,
     title: bool | str | None = True,
-    tooltip_fields: list = None,
+    tooltip_fields: list | None = None,
     **kwargs
 ):
     """Display molecules from a column in an interactive grid.

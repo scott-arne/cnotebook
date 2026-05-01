@@ -105,6 +105,7 @@ def create_structure_highlighter(
             highlight_color = color
         else:
             # Get first color from iterator for traditional highlighting
+            assert color is not None
             highlight_color = oechem.OELightBlue
             for c in color:
                 highlight_color = c

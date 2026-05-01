@@ -63,9 +63,7 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
 
     mol = _ensure_3d_coords(mol)
 
-    if name is None:
-        title = mol.GetTitle()
-        name = title if title else "molecule"
+    resolved_name = name or mol.GetTitle() or "molecule"
 
     if _has_residue_info(mol):
         data = _mol_to_pdb_string(mol)
@@ -75,7 +73,7 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
         fmt = "sdf"
 
     return MoleculeData(
-        name=name,
+        name=resolved_name,
         data=data,
         format=fmt,
         source_type="molecule",
@@ -107,9 +105,7 @@ def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabl
             f"Expected OEDesignUnit, got {type(du).__name__}"
         )
 
-    if name is None:
-        title = du.GetTitle()
-        name = title if title else "design_unit"
+    resolved_name = name or du.GetTitle() or "design_unit"
 
     complex_mol = oechem.OEGraphMol()
     du.GetComponents(
@@ -131,7 +127,7 @@ def convert_design_unit(du: oechem.OEDesignUnit, name: str | None = None, disabl
     pdb_string = _mol_to_pdb_string(complex_mol)
 
     return MoleculeData(
-        name=name,
+        name=resolved_name,
         data=pdb_string,
         format="pdb",
         source_type="design_unit",
