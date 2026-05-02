@@ -7,7 +7,7 @@ HTML with no external network requests, making it suitable for offline use and
 secure environments.
 
 The viewer includes a built-in GUI with a sidebar for toggling molecule visibility,
-a menubar with view controls, and a terminal for executing 3Dmol.js commands
+a menubar with view controls, and a console for executing 3Dmol.js commands
 interactively.
 
 Quick Start
@@ -256,9 +256,14 @@ Control which GUI panels are visible:
     viewer = (
         C3D()
         .add_molecule(mol)
-        .set_ui(sidebar=True, menubar=True, terminal=True)
+        .set_ui(sidebar=True, menubar=True, console=True)
     )
     viewer.display()
+
+When the console is visible and ``height`` was not set explicitly, C3D uses a
+taller default cell height so the molecule viewer is not compressed by the
+console. Pass ``height=...`` to :class:`C3D` when you want to control the exact
+JupyterLab iframe height.
 
 .. iframe:: _static/c3d-full-ui.html
 
@@ -285,7 +290,7 @@ All configuration methods return ``self``, enabling fluent method chaining:
         .add_molecule(ligand, name="ligand")
         .add_style({"chain": "A"}, "cartoon", color="blue")
         .set_preset("sites")
-        .set_ui(sidebar=True, menubar=True, terminal=False)
+        .set_ui(sidebar=True, menubar=True, console=False)
         .set_background("#ffffff")
         .zoom_to("resn 502")
     )

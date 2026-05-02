@@ -77,6 +77,15 @@ class TestC3DConstructor:
         viewer.add_molecule(ethanol_3d)
         assert viewer._effective_height == 300
 
+    def test_effective_height_small_molecule_with_console(self, ethanol_3d):
+        """Small molecules with the console visible should get more vertical room."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecule(ethanol_3d)
+        viewer.set_ui(sidebar=True, menubar=True, console=True)
+        assert viewer._effective_height == 500
+
     def test_effective_height_explicit_overrides(self, ethanol_3d):
         """Explicit height should override the auto-computed value."""
         from cnotebook.c3d import C3D
@@ -107,7 +116,7 @@ class TestC3DConstructor:
         assert viewer._ui == {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
 
     def test_default_background_is_none(self):
@@ -567,7 +576,19 @@ class TestC3DBuilder:
         assert viewer._ui == {
             "sidebar": False,
             "menubar": True,
-            "terminal": False,
+            "console": False,
+        }
+
+    def test_set_ui_accepts_console_name(self):
+        """set_ui should expose console as the public command panel name."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.set_ui(sidebar=False, menubar=True, console=False)
+        assert viewer._ui == {
+            "sidebar": False,
+            "menubar": True,
+            "console": False,
         }
 
     def test_set_background_returns_self(self):
@@ -922,7 +943,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": False,
             "menubar": False,
-            "terminal": False,
+            "console": False,
         }
 
     def test_ui_defaults_two_molecules(self, ethanol_3d):
@@ -937,7 +958,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": True,
             "menubar": False,
-            "terminal": False,
+            "console": False,
         }
 
     def test_ui_defaults_three_molecules(self, ethanol_3d):
@@ -953,7 +974,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
 
     def test_explicit_set_ui_overrides_defaults(self, ethanol_3d):
@@ -968,7 +989,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
 
     def test_payload_is_json_serializable(self, ethanol_3d):
@@ -1491,7 +1512,7 @@ class TestC3DAddMolecules:
         # 3 molecules -> full GUI
         assert payload["ui"]["sidebar"] is True
         assert payload["ui"]["menubar"] is True
-        assert payload["ui"]["terminal"] is True
+        assert payload["ui"]["console"] is True
 
     def test_composition_with_single_add(self, ethanol_3d):
         """add_molecules should compose with add_molecule."""

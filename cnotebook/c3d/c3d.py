@@ -81,6 +81,7 @@ class C3D:
     """
 
     _DEFAULT_HEIGHT_SMALL = 300
+    _DEFAULT_HEIGHT_CONSOLE = 500
     _DEFAULT_HEIGHT_LARGE = 600
     _ATOM_THRESHOLD = 1000
 
@@ -89,8 +90,9 @@ class C3D:
 
         :param width: Viewer width in pixels.
         :param height: Viewer height in pixels. When ``None`` (the default),
-            the height is chosen automatically: 300 px if the largest
-            molecule has at most 1 000 atoms, otherwise 600 px.
+            the height is chosen automatically: 300 px for small viewers,
+            500 px when the console is visible, or 600 px when the largest
+            molecule has more than 1 000 atoms.
         :param theme: Color theme. ``"auto"`` detects from the host
             environment, ``"dark"`` or ``"light"`` sets explicitly.
         """
@@ -106,7 +108,7 @@ class C3D:
         self._ui: Dict[str, bool] = {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
         self._ui_explicit = False
         self._background: Optional[str] = None
@@ -639,19 +641,23 @@ class C3D:
         self,
         sidebar: bool = True,
         menubar: bool = True,
-        terminal: bool = True,
+        console: bool = True,
+        terminal: bool | None = None,
     ) -> C3D:
         """Configure which UI panels are visible.
 
         :param sidebar: Show the sidebar panel.
         :param menubar: Show the menubar panel.
-        :param terminal: Show the terminal panel.
+        :param console: Show the command console panel.
+        :param terminal: Deprecated alias for ``console``.
         :returns: Self, for method chaining.
         """
+        if terminal is not None:
+            console = terminal
         self._ui = {
             "sidebar": sidebar,
             "menubar": menubar,
-            "terminal": terminal,
+            "console": console,
         }
         self._ui_explicit = True
         return self
@@ -757,7 +763,7 @@ class C3D:
         smart defaults are applied based on molecule count:
 
         - **1 molecule** -- no GUI panels, white background.
-        - **2 molecules** -- sidebar only (no menubar or terminal).
+        - **2 molecules** -- sidebar only (no menubar or console).
         - **3+ molecules** -- full GUI (all panels visible).
 
         :returns: Payload dictionary.
@@ -778,9 +784,9 @@ class C3D:
         if self._ui_explicit:
             ui = dict(self._ui)
         elif n_mols <= 1:
-            ui = {"sidebar": False, "menubar": False, "terminal": False}
+            ui = {"sidebar": False, "menubar": False, "console": False}
         elif n_mols == 2:
-            ui = {"sidebar": True, "menubar": False, "terminal": False}
+            ui = {"sidebar": True, "menubar": False, "console": False}
         else:
             ui = dict(self._ui)
 
@@ -857,17 +863,25 @@ class C3D:
 
         When the height was explicitly set via the constructor, that value
         is returned.  Otherwise, the height is chosen based on the maximum
-        atom count across all molecules: 300 px when every entry has at
-        most 1 000 atoms, 600 px otherwise.
+        atom count across all molecules and whether the command console is
+        visible.
 
         :returns: Height in pixels.
         """
         if self._height is not None:
             return self._height
+        n_mols = len(self._molecules)
         max_atoms = max((m.num_atoms for m in self._molecules), default=0)
         if max_atoms > self._ATOM_THRESHOLD:
             return self._DEFAULT_HEIGHT_LARGE
-        return self._DEFAULT_HEIGHT_SMALL
+        height = self._DEFAULT_HEIGHT_SMALL
+
+        console_visible = (
+            self._ui.get("console", False) if self._ui_explicit else n_mols >= 3
+        )
+        if console_visible:
+            return max(height, self._DEFAULT_HEIGHT_CONSOLE)
+        return height
 
     def display(self):
         """Display the viewer in the current notebook environment.
