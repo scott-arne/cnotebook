@@ -2,6 +2,8 @@
   "include": [
     "cnotebook"
   ],
+  "venvPath": "/Users/johnss51/Applications/miniforge3/envs",
+  "venv": "main",
   "ignore": [
     "examples"
   ],
