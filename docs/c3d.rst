@@ -173,6 +173,59 @@ You can also pass a raw 3Dmol.js style dict for full control:
 
     viewer.add_style({"cartoon": {"color": "spectrum"}}, {"resi": 42})
 
+Surfaces, Maps, and Isosurfaces
+-------------------------------
+
+Molecular and solvent-accessible surfaces can be added to molecules, design
+units, or selections. The surface operations are applied in chain order, like
+style operations.
+
+.. code-block:: python
+
+    viewer = (
+        C3D()
+        .add_design_unit(du, name="complex")
+        .set_preset("sites")
+        .add_surface("complex", name="complex_surface", type="molecular")
+    )
+    viewer.display()
+
+Density maps can be embedded from local CCP4/MRC/MAP/CUBE files. The generated
+HTML remains self-contained.
+
+.. code-block:: python
+
+    viewer = (
+        C3D()
+        .add_design_unit(du, name="complex")
+        .add_map("density.ccp4", name="2Fo-Fc", show_box=True)
+        .add_isosurface("2Fo-Fc", name="density_mesh", level=None)
+    )
+    viewer.display()
+
+``level=None`` lets the GUI choose a suggested contour level from the map data.
+OpenEye ``OEScalarGrid`` objects can also be passed directly to ``add_map``.
+
+.. code-block:: python
+
+    viewer = (
+        C3D()
+        .add_molecule(mol, name="ligand")
+        .add_map(grid, name="site_grid")
+        .add_isosurface("site_grid", name="site_surface", representation="surface")
+    )
+
+Maps, surfaces, and isosurfaces can be removed in the same ordered chain:
+
+.. code-block:: python
+
+    viewer = (
+        C3D()
+        .add_design_unit(du, name="complex")
+        .add_surface("complex", name="temporary_surface")
+        .remove_surface("temporary_surface")
+    )
+
 Zoom Targets
 ------------
 
