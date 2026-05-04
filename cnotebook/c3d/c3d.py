@@ -9,7 +9,7 @@ from pathlib import Path
 from collections.abc import Iterable, Sequence
 from typing import Any, Dict, List, Optional, Union
 
-from cnotebook.c3d.convert import MoleculeData, convert_design_unit, convert_molecule
+from cnotebook.c3d.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
 
 # ---------------------------------------------------------------------------
 # Load static assets at module level
@@ -34,6 +34,9 @@ _STYLE_PRESETS = {
 }
 
 _VIEW_PRESETS = {"simple", "sites", "ball-and-stick"}
+_SURFACE_TYPES = {"molecular", "sasa"}
+_SURFACE_MODES = {"surface", "wireframe"}
+_ISOSURFACE_REPRESENTATIONS = {"mesh", "surface"}
 
 
 def _is_marimo() -> bool:
@@ -78,6 +81,7 @@ class C3D:
     """
 
     _DEFAULT_HEIGHT_SMALL = 300
+    _DEFAULT_HEIGHT_CONSOLE = 500
     _DEFAULT_HEIGHT_LARGE = 600
     _ATOM_THRESHOLD = 1000
 
@@ -86,8 +90,9 @@ class C3D:
 
         :param width: Viewer width in pixels.
         :param height: Viewer height in pixels. When ``None`` (the default),
-            the height is chosen automatically: 300 px if the largest
-            molecule has at most 1 000 atoms, otherwise 600 px.
+            the height is chosen automatically: 300 px for small viewers,
+            500 px when the console is visible, or 600 px when the largest
+            molecule has more than 1 000 atoms.
         :param theme: Color theme. ``"auto"`` detects from the host
             environment, ``"dark"`` or ``"light"`` sets explicitly.
         """
@@ -99,10 +104,11 @@ class C3D:
         self._height = height
         self._molecules: List[MoleculeData] = []
         self._operations: List[Dict[str, Any]] = []
+        self._active_maps: set[str] = set()
         self._ui: Dict[str, bool] = {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
         self._ui_explicit = False
         self._background: Optional[str] = None
@@ -397,6 +403,177 @@ class C3D:
             "nonpolar_hydrogen",
         )
 
+    def add_surface(
+        self,
+        selection: Union[str, Dict[str, Any]],
+        name: str | None = None,
+        type: str = "molecular",
+        color: str = "#FFFFFF",
+        opacity: float = 0.75,
+        mode: str = "surface",
+    ) -> C3D:
+        """Add a named surface operation to the scene.
+
+        :param selection: Atoms used to generate the surface.
+        :param name: Optional surface name for later removal.
+        :param type: Surface type. Accepted values are ``"molecular"`` and
+            ``"sasa"``.
+        :param color: CSS color string.
+        :param opacity: Surface opacity.
+        :param mode: Surface display mode. Accepted values are ``"surface"``
+            and ``"wireframe"``.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *type* or *mode* is not recognized.
+        """
+        surface_type = type.lower()
+        if surface_type not in _SURFACE_TYPES:
+            raise ValueError(
+                f"Unknown surface type '{type}'. "
+                f"Choose from: {', '.join(sorted(_SURFACE_TYPES))}"
+            )
+
+        surface_mode = mode.lower()
+        if surface_mode not in _SURFACE_MODES:
+            raise ValueError(
+                f"Unknown surface mode '{mode}'. "
+                f"Choose from: {', '.join(sorted(_SURFACE_MODES))}"
+            )
+
+        self._operations.append(
+            {
+                "op": "add_surface",
+                "selection": selection,
+                "name": name,
+                "type": surface_type,
+                "color": color,
+                "opacity": opacity,
+                "mode": surface_mode,
+            }
+        )
+        return self
+
+    def remove_surface(self, name: str) -> C3D:
+        """Remove a previously added surface by name.
+
+        :param name: Surface name to remove.
+        :returns: Self, for method chaining.
+        """
+        self._operations.append({"op": "remove_surface", "name": name})
+        return self
+
+    def add_map(
+        self,
+        path_or_grid: Union[str, Path, Any],
+        name: str | None = None,
+        format: str | None = None,
+        color: str = "#38BDF8",
+        opacity: float = 1.0,
+        show_box: bool = False,
+    ) -> C3D:
+        """Add a volumetric map operation to the scene.
+
+        :param path_or_grid: Map file path or OpenEye scalar grid.
+        :param name: Optional map name. Path inputs default to the file stem;
+            grid inputs default to the grid title when available.
+        :param format: Optional map format override for path inputs.
+        :param color: CSS color string.
+        :param opacity: Map opacity.
+        :param show_box: If True, show the map bounding box.
+        :returns: Self, for method chaining.
+        :raises ValueError: If a map with the resolved name is already active.
+        """
+        map_data = convert_map(path_or_grid, name=name, format=format)
+        if map_data.name in self._active_maps:
+            raise ValueError(f'Map "{map_data.name}" has already been added')
+
+        self._active_maps.add(map_data.name)
+        self._operations.append(
+            {
+                "op": "add_map",
+                "name": map_data.name,
+                "format": map_data.format,
+                "encoding": map_data.encoding,
+                "data": map_data.data,
+                "color": color,
+                "opacity": opacity,
+                "showBoundingBox": show_box,
+            }
+        )
+        return self
+
+    def remove_map(self, name: str) -> C3D:
+        """Remove a previously added map by name.
+
+        :param name: Map name to remove.
+        :returns: Self, for method chaining.
+        """
+        self._active_maps.discard(name)
+        self._operations.append({"op": "remove_map", "name": name})
+        return self
+
+    def add_isosurface(
+        self,
+        map_name: str,
+        name: str | None = None,
+        level: float | None = None,
+        selection: Union[str, Dict[str, Any], None] = None,
+        buffer: float | None = None,
+        carve: float | None = None,
+        representation: str = "mesh",
+        color: str = "#0000FF",
+        opacity: float = 0.75,
+    ) -> C3D:
+        """Add an isosurface operation for an active map.
+
+        :param map_name: Name of a map added by :meth:`add_map`.
+        :param name: Optional isosurface name for later removal.
+        :param level: Contour level. ``None`` lets the GUI choose a default.
+        :param selection: Optional atom selection used for clipping.
+        :param buffer: Optional selection buffer distance.
+        :param carve: Optional carve distance.
+        :param representation: Isosurface representation. Accepted values are
+            ``"mesh"`` and ``"surface"``.
+        :param color: CSS color string.
+        :param opacity: Isosurface opacity.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *map_name* is not active or *representation* is
+            not recognized.
+        """
+        if map_name not in self._active_maps:
+            raise ValueError(f'Map "{map_name}" has not been added')
+
+        surface_representation = representation.lower()
+        if surface_representation not in _ISOSURFACE_REPRESENTATIONS:
+            raise ValueError(
+                f"Unknown isosurface representation '{representation}'. "
+                f"Choose from: {', '.join(sorted(_ISOSURFACE_REPRESENTATIONS))}"
+            )
+
+        self._operations.append(
+            {
+                "op": "add_isosurface",
+                "mapName": map_name,
+                "name": name,
+                "level": level,
+                "selection": selection,
+                "buffer": buffer,
+                "carve": carve,
+                "representation": surface_representation,
+                "color": color,
+                "opacity": opacity,
+            }
+        )
+        return self
+
+    def remove_isosurface(self, name: str) -> C3D:
+        """Remove a previously added isosurface by name.
+
+        :param name: Isosurface name to remove.
+        :returns: Self, for method chaining.
+        """
+        self._operations.append({"op": "remove_isosurface", "name": name})
+        return self
+
     @staticmethod
     def _normalize_style(
         style: Union[str, Dict[str, Any]],
@@ -464,19 +641,23 @@ class C3D:
         self,
         sidebar: bool = True,
         menubar: bool = True,
-        terminal: bool = True,
+        console: bool = True,
+        terminal: bool | None = None,
     ) -> C3D:
         """Configure which UI panels are visible.
 
         :param sidebar: Show the sidebar panel.
         :param menubar: Show the menubar panel.
-        :param terminal: Show the terminal panel.
+        :param console: Show the command console panel.
+        :param terminal: Deprecated alias for ``console``.
         :returns: Self, for method chaining.
         """
+        if terminal is not None:
+            console = terminal
         self._ui = {
             "sidebar": sidebar,
             "menubar": menubar,
-            "terminal": terminal,
+            "console": console,
         }
         self._ui_explicit = True
         return self
@@ -582,7 +763,7 @@ class C3D:
         smart defaults are applied based on molecule count:
 
         - **1 molecule** -- no GUI panels, white background.
-        - **2 molecules** -- sidebar only (no menubar or terminal).
+        - **2 molecules** -- sidebar only (no menubar or console).
         - **3+ molecules** -- full GUI (all panels visible).
 
         :returns: Payload dictionary.
@@ -603,9 +784,9 @@ class C3D:
         if self._ui_explicit:
             ui = dict(self._ui)
         elif n_mols <= 1:
-            ui = {"sidebar": False, "menubar": False, "terminal": False}
+            ui = {"sidebar": False, "menubar": False, "console": False}
         elif n_mols == 2:
-            ui = {"sidebar": True, "menubar": False, "terminal": False}
+            ui = {"sidebar": True, "menubar": False, "console": False}
         else:
             ui = dict(self._ui)
 
@@ -682,17 +863,25 @@ class C3D:
 
         When the height was explicitly set via the constructor, that value
         is returned.  Otherwise, the height is chosen based on the maximum
-        atom count across all molecules: 300 px when every entry has at
-        most 1 000 atoms, 600 px otherwise.
+        atom count across all molecules and whether the command console is
+        visible.
 
         :returns: Height in pixels.
         """
         if self._height is not None:
             return self._height
+        n_mols = len(self._molecules)
         max_atoms = max((m.num_atoms for m in self._molecules), default=0)
         if max_atoms > self._ATOM_THRESHOLD:
             return self._DEFAULT_HEIGHT_LARGE
-        return self._DEFAULT_HEIGHT_SMALL
+        height = self._DEFAULT_HEIGHT_SMALL
+
+        console_visible = (
+            self._ui.get("console", False) if self._ui_explicit else n_mols >= 3
+        )
+        if console_visible:
+            return max(height, self._DEFAULT_HEIGHT_CONSOLE)
+        return height
 
     def display(self):
         """Display the viewer in the current notebook environment.

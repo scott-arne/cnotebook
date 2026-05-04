@@ -77,6 +77,15 @@ class TestC3DConstructor:
         viewer.add_molecule(ethanol_3d)
         assert viewer._effective_height == 300
 
+    def test_effective_height_small_molecule_with_console(self, ethanol_3d):
+        """Small molecules with the console visible should get more vertical room."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.add_molecule(ethanol_3d)
+        viewer.set_ui(sidebar=True, menubar=True, console=True)
+        assert viewer._effective_height == 500
+
     def test_effective_height_explicit_overrides(self, ethanol_3d):
         """Explicit height should override the auto-computed value."""
         from cnotebook.c3d import C3D
@@ -107,7 +116,7 @@ class TestC3DConstructor:
         assert viewer._ui == {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
 
     def test_default_background_is_none(self):
@@ -400,6 +409,156 @@ class TestC3DBuilder:
             }
         ]
 
+    def test_add_surface_appends_ordered_operation(self):
+        """add_surface should append a scene operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.add_surface(
+            "complex",
+            name="complex_surface",
+            type="sasa",
+            color="#111111",
+            opacity=0.4,
+            mode="wireframe",
+        )
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "add_surface",
+                "selection": "complex",
+                "name": "complex_surface",
+                "type": "sasa",
+                "color": "#111111",
+                "opacity": 0.4,
+                "mode": "wireframe",
+            }
+        ]
+
+    def test_remove_surface_appends_ordered_operation(self):
+        """remove_surface should append a delete operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_surface("complex_surface")
+
+        assert result is viewer
+        assert viewer._operations == [
+            {"op": "remove_surface", "name": "complex_surface"}
+        ]
+
+    def test_add_map_path_appends_ordered_operation(self, tmp_path):
+        """add_map should convert path inputs into operation payloads."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = C3D()
+        result = viewer.add_map(path, name="density", color="#ABCDEF", opacity=0.5, show_box=True)
+
+        assert result is viewer
+        assert viewer._operations == [
+            {
+                "op": "add_map",
+                "name": "density",
+                "format": "ccp4",
+                "encoding": "base64",
+                "data": "AQID",
+                "color": "#ABCDEF",
+                "opacity": 0.5,
+                "showBoundingBox": True,
+            }
+        ]
+
+    def test_remove_map_appends_ordered_operation(self):
+        """remove_map should append a delete operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_map("density")
+
+        assert result is viewer
+        assert viewer._operations == [{"op": "remove_map", "name": "density"}]
+
+    def test_add_isosurface_appends_ordered_operation(self, tmp_path):
+        """add_isosurface should target a previously added map."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = C3D()
+        viewer.add_map(path, name="density")
+        result = viewer.add_isosurface(
+            "density",
+            name="mesh",
+            level=None,
+            selection="ligand",
+            buffer=2.0,
+            carve=1.0,
+            representation="surface",
+            color="#123456",
+            opacity=0.25,
+        )
+
+        assert result is viewer
+        assert viewer._operations[-1] == {
+            "op": "add_isosurface",
+            "mapName": "density",
+            "name": "mesh",
+            "level": None,
+            "selection": "ligand",
+            "buffer": 2.0,
+            "carve": 1.0,
+            "representation": "surface",
+            "color": "#123456",
+            "opacity": 0.25,
+        }
+
+    def test_remove_isosurface_appends_ordered_operation(self):
+        """remove_isosurface should append a delete operation."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        result = viewer.remove_isosurface("mesh")
+
+        assert result is viewer
+        assert viewer._operations == [{"op": "remove_isosurface", "name": "mesh"}]
+
+    def test_add_surface_rejects_unknown_type(self):
+        """add_surface should validate surface type."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match="Unknown surface type"):
+            C3D().add_surface("complex", type="mesh")
+
+    def test_add_surface_rejects_unknown_mode(self):
+        """add_surface should validate surface mode."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match="Unknown surface mode"):
+            C3D().add_surface("complex", mode="solid")
+
+    def test_add_isosurface_rejects_unknown_map(self):
+        """add_isosurface should validate active map names."""
+        from cnotebook.c3d import C3D
+
+        with pytest.raises(ValueError, match='Map "missing" has not been added'):
+            C3D().add_isosurface("missing", name="mesh")
+
+    def test_add_isosurface_rejects_unknown_representation(self, tmp_path):
+        """add_isosurface should validate representation names."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = C3D().add_map(path, name="density")
+        with pytest.raises(ValueError, match="Unknown isosurface representation"):
+            viewer.add_isosurface("density", name="mesh", representation="volume")
+
     def test_set_ui_returns_self(self):
         """set_ui should return the C3D instance for chaining."""
         from cnotebook.c3d import C3D
@@ -417,7 +576,19 @@ class TestC3DBuilder:
         assert viewer._ui == {
             "sidebar": False,
             "menubar": True,
-            "terminal": False,
+            "console": False,
+        }
+
+    def test_set_ui_accepts_console_name(self):
+        """set_ui should expose console as the public command panel name."""
+        from cnotebook.c3d import C3D
+
+        viewer = C3D()
+        viewer.set_ui(sidebar=False, menubar=True, console=False)
+        assert viewer._ui == {
+            "sidebar": False,
+            "menubar": True,
+            "console": False,
         }
 
     def test_set_background_returns_self(self):
@@ -588,6 +759,82 @@ class TestC3DBuilder:
 
 
 # ---------------------------------------------------------------------------
+# TestC3DMapConversion
+# ---------------------------------------------------------------------------
+
+
+class TestC3DMapConversion:
+    """Verify map conversion helpers used by C3D."""
+
+    def test_convert_map_path_binary_ccp4(self, tmp_path):
+        """Binary map paths should be base64 encoded."""
+        from cnotebook.c3d.convert import convert_map
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03\x04")
+
+        data = convert_map(path, name="2Fo-Fc")
+
+        assert data.name == "2Fo-Fc"
+        assert data.format == "ccp4"
+        assert data.encoding == "base64"
+        assert data.data == "AQIDBA=="
+
+    def test_convert_map_path_text_cube(self, tmp_path):
+        """Cube files should be embedded as text."""
+        from cnotebook.c3d.convert import convert_map
+
+        path = tmp_path / "density.cube"
+        path.write_text("cube text\n", encoding="utf-8")
+
+        data = convert_map(path)
+
+        assert data.name == "density"
+        assert data.format == "cube"
+        assert data.encoding == "text"
+        assert data.data == "cube text\n"
+
+    def test_convert_map_missing_path_raises_file_not_found(self, tmp_path):
+        """Missing map paths should fail before HTML generation."""
+        from cnotebook.c3d.convert import convert_map
+
+        with pytest.raises(FileNotFoundError):
+            convert_map(tmp_path / "missing.ccp4")
+
+    def test_convert_map_unsupported_extension_raises_value_error(self, tmp_path):
+        """Unsupported map extensions should raise ValueError."""
+        from cnotebook.c3d.convert import convert_map
+
+        path = tmp_path / "density.dx"
+        path.write_text("not supported", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Unsupported map format"):
+            convert_map(path)
+
+    def test_convert_map_oescalar_grid_uses_title(self):
+        """OEScalarGrid inputs should be written as embedded CCP4 data."""
+        from cnotebook.c3d.convert import convert_map
+        from openeye import oegrid
+
+        grid = oegrid.OEScalarGrid()
+        assert grid.SetDim(2, 2, 2)
+        assert grid.SetMid(0.0, 0.0, 0.0)
+        assert grid.SetSpacing(1.0)
+        assert grid.SetTitle("grid-title")
+        for ix in range(2):
+            for iy in range(2):
+                for iz in range(2):
+                    grid.SetValue(ix, iy, iz, float(ix + iy + iz))
+
+        data = convert_map(grid)
+
+        assert data.name == "grid-title"
+        assert data.format == "ccp4"
+        assert data.encoding == "base64"
+        assert len(data.data) > 0
+
+
+# ---------------------------------------------------------------------------
 # TestC3DPayload
 # ---------------------------------------------------------------------------
 
@@ -630,6 +877,61 @@ class TestC3DPayload:
         payload = viewer._build_init_payload()
         assert payload["operations"] == []
 
+    def test_scene_operations_are_json_serializable(self, ethanol_3d, tmp_path):
+        """Surface, map, and isosurface operations should serialize cleanly."""
+        from cnotebook.c3d import C3D
+
+        path = tmp_path / "density.ccp4"
+        path.write_bytes(b"\x01\x02\x03")
+
+        viewer = (
+            C3D()
+            .add_molecule(ethanol_3d, name="ligand")
+            .add_surface("ligand", name="ligand_surface")
+            .add_map(path, name="density")
+            .add_isosurface("density", name="mesh", level=None)
+            .remove_surface("ligand_surface")
+        )
+
+        payload = viewer._build_init_payload()
+        serialized = json.dumps(payload)
+        deserialized = json.loads(serialized)
+
+        assert deserialized["operations"][-4:] == [
+            {
+                "op": "add_surface",
+                "selection": "ligand",
+                "name": "ligand_surface",
+                "type": "molecular",
+                "color": "#FFFFFF",
+                "opacity": 0.75,
+                "mode": "surface",
+            },
+            {
+                "op": "add_map",
+                "name": "density",
+                "format": "ccp4",
+                "encoding": "base64",
+                "data": "AQID",
+                "color": "#38BDF8",
+                "opacity": 1.0,
+                "showBoundingBox": False,
+            },
+            {
+                "op": "add_isosurface",
+                "mapName": "density",
+                "name": "mesh",
+                "level": None,
+                "selection": None,
+                "buffer": None,
+                "carve": None,
+                "representation": "mesh",
+                "color": "#0000FF",
+                "opacity": 0.75,
+            },
+            {"op": "remove_surface", "name": "ligand_surface"},
+        ]
+
     def test_ui_defaults_single_molecule(self, ethanol_3d):
         """Single molecule should default to no GUI panels."""
         from cnotebook.c3d import C3D
@@ -641,7 +943,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": False,
             "menubar": False,
-            "terminal": False,
+            "console": False,
         }
 
     def test_ui_defaults_two_molecules(self, ethanol_3d):
@@ -656,7 +958,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": True,
             "menubar": False,
-            "terminal": False,
+            "console": False,
         }
 
     def test_ui_defaults_three_molecules(self, ethanol_3d):
@@ -672,7 +974,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
 
     def test_explicit_set_ui_overrides_defaults(self, ethanol_3d):
@@ -687,7 +989,7 @@ class TestC3DPayload:
         assert payload["ui"] == {
             "sidebar": True,
             "menubar": True,
-            "terminal": True,
+            "console": True,
         }
 
     def test_payload_is_json_serializable(self, ethanol_3d):
@@ -1210,7 +1512,7 @@ class TestC3DAddMolecules:
         # 3 molecules -> full GUI
         assert payload["ui"]["sidebar"] is True
         assert payload["ui"]["menubar"] is True
-        assert payload["ui"]["terminal"] is True
+        assert payload["ui"]["console"] is True
 
     def test_composition_with_single_add(self, ethanol_3d):
         """add_molecules should compose with add_molecule."""
