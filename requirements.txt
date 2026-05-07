@@ -15,11 +15,11 @@ jinja2>=3.0.0
 
 # Optional: Pandas backend
 # pandas>=2.2.0
-# oepandas>=3.1.0
+# oepandas>=3.3.0
 
 # Optional: Polars backend
 # polars>=1.0.0
-# oepolars>=0.2.0
+# oepolars>=0.3.0
 
 # Optional: Jupyter environment
 # ipython>=8.0.0

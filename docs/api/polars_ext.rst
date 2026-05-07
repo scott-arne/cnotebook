@@ -10,7 +10,8 @@ Polars DataFrame Accessor
 -------------------------
 
 The ``chem`` accessor provides chemistry-aware operations on Polars DataFrames
-and Series containing molecule columns.
+and Series containing molecule columns. Install ``oepolars>=0.3.0`` to use the
+current CNotebook-supported Polars extension types.
 
 Usage
 -----

@@ -42,7 +42,7 @@ from .render import (
     oedu_to_disp,
     oedu_to_image,
 )
-from .pandas_ext import render_dataframe
+from .pandas_ext import _is_depictable_molecule_dtype, render_dataframe
 
 log = logging.getLogger("cnotebook")
 
@@ -340,12 +340,12 @@ try:
         format_mapping = {}
         column_widths: dict[str, int] = {}
 
-        # Check for MoleculeDtype / DisplayDtype (OEPandas specific)
+        # Check for MoleculeDtype / QueryDtype / DisplayDtype (OEPandas specific)
         if oepd is not None:
             for col in df.columns:
                 dtype = df[col].dtype
 
-                if isinstance(dtype, oepd.MoleculeDtype):
+                if _is_depictable_molecule_dtype(dtype):
                     arr = df[col].array
                     metadata = arr.metadata  # pyright: ignore
                     ctx = get_series_context(metadata).copy()

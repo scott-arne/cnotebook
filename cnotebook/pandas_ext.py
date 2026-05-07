@@ -37,6 +37,72 @@ SMARTS_DELIMITER_RE = re.compile(r'\s*[|\r\n\t]+\s*')
 log = logging.getLogger("cnotebook")
 
 
+def _oepandas_types(*names: str) -> tuple[type, ...]:
+    """
+    Resolve optional OEPandas type names.
+
+    :param names: Attribute names to resolve from the ``oepandas`` module.
+    :returns: Tuple of available types.
+    """
+    return tuple(
+        typ for name in names
+        if isinstance((typ := getattr(oepd, name, None)), type)
+    )
+
+
+_DEPICTABLE_MOLECULE_DTYPES = _oepandas_types("MoleculeDtype", "QueryDtype")
+_DEPICTABLE_MOLECULE_ARRAYS = _oepandas_types("MoleculeArray", "QueryArray")
+_DEPICTABLE_MOLECULE_DTYPE_MESSAGE = "oepandas.MoleculeDtype or oepandas.QueryDtype"
+_RENDER_OPTION_UNSET = object()
+
+
+def _is_depictable_molecule_dtype(dtype: Any) -> bool:
+    """
+    Check whether a Pandas dtype contains OpenEye molecules CNotebook can depict.
+
+    :param dtype: Pandas dtype to check.
+    :returns: ``True`` for OEPandas molecule or query dtypes.
+    """
+    return isinstance(dtype, _DEPICTABLE_MOLECULE_DTYPES)
+
+
+def _as_depictable_molecule_array(arr: Any) -> Any:
+    """
+    Validate an OEPandas array that stores depictable OpenEye molecules.
+
+    :param arr: Array object from a Pandas Series.
+    :returns: The validated array.
+    :raises TypeError: If the array is not a supported OEPandas molecule array.
+    """
+    if not isinstance(arr, _DEPICTABLE_MOLECULE_ARRAYS):
+        raise TypeError(f"Expected an OEPandas molecule or query array, got {type(arr).__name__}")
+    return arr
+
+
+def _collect_render_options(**options: Any) -> dict[str, Any]:
+    """
+    Collect render options that were explicitly provided by the caller.
+
+    :param options: Render option names and values.
+    :returns: Mapping containing only caller-provided options.
+    """
+    return {
+        name: value for name, value in options.items()
+        if value is not _RENDER_OPTION_UNSET
+    }
+
+
+def _apply_render_options(ctx: CNotebookContext, options: dict[str, Any]) -> None:
+    """
+    Apply render options to a CNotebook context.
+
+    :param ctx: Context to modify.
+    :param options: Render options to apply.
+    """
+    for name, value in options.items():
+        setattr(ctx, name, value)
+
+
 def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEMolBase], str]:
     """
     Closure that creates a function that renders an OEMol to HTML
@@ -147,16 +213,18 @@ def render_dataframe(
     formatters = formatters or {}
     col_space = col_space or {}
 
-    # Render columns with MoleculeDtype
+    # Render columns with molecule-like dtypes
     molecule_columns = set()
 
     # Capture metadata from ORIGINAL DataFrame BEFORE copying
     # (df.copy() may not preserve array metadata)
     original_metadata_by_col = {}
+    original_dtype_by_col = {}
 
     for col in df.columns:
-        if isinstance(df.dtypes[col], oepd.MoleculeDtype):
+        if _is_depictable_molecule_dtype(df.dtypes[col]):
             molecule_columns.add(col)
+            original_dtype_by_col[col] = df.dtypes[col]
             # Get metadata from the original array before any copying
             arr = df[col].array
             metadata = getattr(arr, "metadata", None)
@@ -167,14 +235,12 @@ def render_dataframe(
     df = df.copy()
 
     for col in molecule_columns:
-        # Direct assignment to help IDE understand this is a MoleculeArray
-        arr = df[col].array
-        assert isinstance(arr, oepd.MoleculeArray)
+        arr = _as_depictable_molecule_array(df[col].array)
         # Use preserved metadata from original DataFrame (not the copy which may have lost it)
         original_metadata = original_metadata_by_col.get(col, {})
         new_arr = arr.deepcopy()
         new_arr.metadata.update(original_metadata)
-        df[col] = pd.Series(new_arr, index=df[col].index, dtype=oepd.MoleculeDtype())
+        df[col] = pd.Series(new_arr, index=df[col].index, dtype=original_dtype_by_col[col])
 
     # ---------------------------------------------------
     # Molecule columns
@@ -190,9 +256,7 @@ def render_dataframe(
         if col in formatters:
             log.warning(f'Overwriting existing formatter for {col} with a molecule formatter')
 
-        # Direct assignment to help IDE understand this is a MoleculeArray
-        arr = df[col].array
-        assert isinstance(arr, oepd.MoleculeArray)
+        arr = _as_depictable_molecule_array(df[col].array)
 
         # Get the cnotebook options for this column
         series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
@@ -340,15 +404,14 @@ def _series_highlight(
     :param ref: Optional reference for alignment.
     :param method: Optional alignment method.
     """
-    if not isinstance(self._obj.dtype, oepd.MoleculeDtype):
+    if not _is_depictable_molecule_dtype(self._obj.dtype):
         raise TypeError(
-            "highlight only works on molecule columns (oepandas.MoleculeDtype). If this column has "
+            f"highlight only works on molecule columns ({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). If this column has "
             "molecules, use series.chem.as_molecule() to convert to a molecule column first."
         )
 
     # Get the molecule array
-    arr = self._obj.array
-    assert isinstance(arr, oepd.MoleculeArray)
+    arr = _as_depictable_molecule_array(self._obj.array)
 
     # Get / create a series context and save it (because we are modifying it locally)
     ctx = get_series_context(arr.metadata, save=True)
@@ -418,9 +481,10 @@ def _series_recalculate_depiction_coordinates(
     :param suppress_explicit_hydrogens: Suppress explicit hydrogens
     :param orientation: Preferred 2D orientation
     """
-    if not isinstance(self._obj.dtype, oepd.MoleculeDtype):
+    if not _is_depictable_molecule_dtype(self._obj.dtype):
         raise TypeError(
-            "recalculate_depiction_coordinates only works on molecule columns (oepandas.MoleculeDtype). If this "
+            "recalculate_depiction_coordinates only works on molecule columns "
+            f"({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). If this "
             "column has molecules, use series.chem.as_molecule() to convert to a molecule column first."
         )
 
@@ -437,14 +501,76 @@ def _series_recalculate_depiction_coordinates(
             oedepict.OEPrepareDepiction(mol, opts)
 
 
+def _series_set_render_options(
+        self,
+        *,
+        width=_RENDER_OPTION_UNSET,
+        height=_RENDER_OPTION_UNSET,
+        min_width=_RENDER_OPTION_UNSET,
+        min_height=_RENDER_OPTION_UNSET,
+        max_width=_RENDER_OPTION_UNSET,
+        max_height=_RENDER_OPTION_UNSET,
+        structure_scale=_RENDER_OPTION_UNSET,
+        atom_label_font_scale=_RENDER_OPTION_UNSET,
+        title_font_scale=_RENDER_OPTION_UNSET,
+        image_format=_RENDER_OPTION_UNSET,
+        bond_width_scaling=_RENDER_OPTION_UNSET,
+        title=_RENDER_OPTION_UNSET,
+        max_heavy_atoms=_RENDER_OPTION_UNSET,
+) -> None:
+    """
+    Set rendering options for a molecule or query series.
+
+    :param width: Image width in pixels. If 0, determined by structure scale.
+    :param height: Image height in pixels. If 0, determined by structure scale.
+    :param min_width: Minimum image width in pixels.
+    :param min_height: Minimum image height in pixels.
+    :param max_width: Maximum image width in pixels, or ``None`` for no limit.
+    :param max_height: Maximum image height in pixels, or ``None`` for no limit.
+    :param structure_scale: Scale factor for structure rendering.
+    :param atom_label_font_scale: Scale factor for atom labels.
+    :param title_font_scale: Scale factor for title font.
+    :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
+    :param bond_width_scaling: Whether to scale bond widths with structure scale.
+    :param title: Whether to display molecule titles.
+    :param max_heavy_atoms: Maximum heavy atom count to render, or ``None`` to disable.
+    """
+    if not _is_depictable_molecule_dtype(self._obj.dtype):
+        raise TypeError(
+            f"set_render_options only works on molecule columns ({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). If this "
+            "column has molecules, use series.chem.as_molecule() or series.chem.as_query() first."
+        )
+
+    options = _collect_render_options(
+        width=width,
+        height=height,
+        min_width=min_width,
+        min_height=min_height,
+        max_width=max_width,
+        max_height=max_height,
+        structure_scale=structure_scale,
+        atom_label_font_scale=atom_label_font_scale,
+        title_font_scale=title_font_scale,
+        image_format=image_format,
+        bond_width_scaling=bond_width_scaling,
+        title=title,
+        max_heavy_atoms=max_heavy_atoms,
+    )
+    if not options:
+        return
+
+    arr = _as_depictable_molecule_array(self._obj.array)
+    ctx = get_series_context(arr.metadata, save=True)
+    _apply_render_options(ctx, options)
+
+
 def _series_reset_depictions(self) -> None:
     """
     Reset depiction callbacks for a molecule series
     """
     # Check if array has metadata attribute (should be true for oepandas arrays)
     if hasattr(self._obj.array, "metadata"):
-        arr = self._obj.array
-        assert isinstance(arr, oepd.MoleculeArray)
+        arr = _as_depictable_molecule_array(self._obj.array)
         _ = arr.metadata.pop("cnotebook", None)
 
 
@@ -458,8 +584,7 @@ def _series_clear_formatting_rules(self) -> None:
     other context settings like image dimensions and styling.
     """
     if hasattr(self._obj.array, "metadata"):
-        arr = self._obj.array
-        assert isinstance(arr, oepd.MoleculeArray)
+        arr = _as_depictable_molecule_array(self._obj.array)
         ctx = arr.metadata.get("cnotebook", None)
         if ctx is not None and isinstance(ctx, CNotebookContext):
             ctx.reset_callbacks()
@@ -478,15 +603,14 @@ def _series_align_depictions(
     :param kwargs: Keyword arguments for aligner
     :return: Aligned molecule depictions
     """
-    if not isinstance(self._obj.dtype, oepd.MoleculeDtype):
+    if not _is_depictable_molecule_dtype(self._obj.dtype):
         raise TypeError(
-            "align_depictions only works on molecule columns (oepandas.MoleculeDtype). If this "
+            f"align_depictions only works on molecule columns ({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). If this "
             "column has molecules, use series.chem.as_molecule() to convert to a molecule column first."
         )
 
     # Get the rendering context for creating the displays
-    arr = self._obj.array
-    assert isinstance(arr, oepd.MoleculeArray)
+    arr = _as_depictable_molecule_array(self._obj.array)
 
     if isinstance(ref, str) and ref == "first":
         for mol in arr:
@@ -521,6 +645,86 @@ def _series_align_depictions(
 # CNotebook DataFrame accessor extensions for OEPandas .chem accessor
 ########################################################################################################################
 
+def _dataframe_set_render_options(
+        self,
+        molecule_columns: str | Iterable[str] | None = None,
+        *,
+        width=_RENDER_OPTION_UNSET,
+        height=_RENDER_OPTION_UNSET,
+        min_width=_RENDER_OPTION_UNSET,
+        min_height=_RENDER_OPTION_UNSET,
+        max_width=_RENDER_OPTION_UNSET,
+        max_height=_RENDER_OPTION_UNSET,
+        structure_scale=_RENDER_OPTION_UNSET,
+        atom_label_font_scale=_RENDER_OPTION_UNSET,
+        title_font_scale=_RENDER_OPTION_UNSET,
+        image_format=_RENDER_OPTION_UNSET,
+        bond_width_scaling=_RENDER_OPTION_UNSET,
+        title=_RENDER_OPTION_UNSET,
+        max_heavy_atoms=_RENDER_OPTION_UNSET,
+) -> None:
+    """
+    Set rendering options for molecule or query columns in a DataFrame.
+
+    If ``molecule_columns`` is ``None``, all MoleculeDtype and QueryDtype
+    columns are updated.
+
+    :param molecule_columns: Optional molecule/query column name or names.
+    :param width: Image width in pixels. If 0, determined by structure scale.
+    :param height: Image height in pixels. If 0, determined by structure scale.
+    :param min_width: Minimum image width in pixels.
+    :param min_height: Minimum image height in pixels.
+    :param max_width: Maximum image width in pixels, or ``None`` for no limit.
+    :param max_height: Maximum image height in pixels, or ``None`` for no limit.
+    :param structure_scale: Scale factor for structure rendering.
+    :param atom_label_font_scale: Scale factor for atom labels.
+    :param title_font_scale: Scale factor for title font.
+    :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
+    :param bond_width_scaling: Whether to scale bond widths with structure scale.
+    :param title: Whether to display molecule titles.
+    :param max_heavy_atoms: Maximum heavy atom count to render, or ``None`` to disable.
+    """
+    if molecule_columns is None:
+        columns = [
+            col for col in self._obj.columns
+            if _is_depictable_molecule_dtype(self._obj[col].dtype)
+        ]
+    elif isinstance(molecule_columns, str):
+        columns = [molecule_columns]
+    else:
+        columns = list(molecule_columns)
+
+    for col in columns:
+        if col not in self._obj.columns:
+            raise ValueError(f'Column {col} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
+        if not _is_depictable_molecule_dtype(self._obj[col].dtype):
+            raise TypeError(
+                f"set_render_options only works on molecule columns ({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). "
+                f"Column '{col}' has type {self._obj[col].dtype}."
+            )
+
+    options = _collect_render_options(
+        width=width,
+        height=height,
+        min_width=min_width,
+        min_height=min_height,
+        max_width=max_width,
+        max_height=max_height,
+        structure_scale=structure_scale,
+        atom_label_font_scale=atom_label_font_scale,
+        title_font_scale=title_font_scale,
+        image_format=image_format,
+        bond_width_scaling=bond_width_scaling,
+        title=title,
+        max_heavy_atoms=max_heavy_atoms,
+    )
+    if not options:
+        return
+
+    for col in columns:
+        self._obj[col].chem.set_render_options(**options)
+
+
 def _dataframe_recalculate_depiction_coordinates(
         self,
         *,
@@ -549,7 +753,7 @@ def _dataframe_recalculate_depiction_coordinates(
         molecule_columns = set()
 
         for col in self._obj.columns:
-            if isinstance(self._obj.dtypes[col], oepd.MoleculeDtype):
+            if _is_depictable_molecule_dtype(self._obj.dtypes[col]):
                 molecule_columns.add(col)
 
     elif isinstance(molecule_columns, str):
@@ -562,7 +766,7 @@ def _dataframe_recalculate_depiction_coordinates(
     for col in molecule_columns:
 
         if col in self._obj.columns:
-            if isinstance(self._obj.dtypes[col], oepd.MoleculeDtype):
+            if _is_depictable_molecule_dtype(self._obj.dtypes[col]):
                 self._obj[col].chem.recalculate_depiction_coordinates(
                     clear_coords=clear_coords,
                     add_depction_hydrogens=add_depction_hydrogens,
@@ -572,7 +776,7 @@ def _dataframe_recalculate_depiction_coordinates(
                 )
 
             else:
-                log.warning(f'Column {col} does not have a MoleculeDtype')
+                log.warning(f'Column {col} does not have a MoleculeDtype or QueryDtype')
 
         else:
             log.warning(f'{col} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
@@ -595,7 +799,7 @@ def _dataframe_reset_depictions(self, *, molecule_columns: str | Iterable[str] |
 
     # Filter invalid and non-molecule columns
     for col in filter(
-        lambda c: c in self._obj.columns and isinstance(self._obj[c].dtype, oepd.MoleculeDtype),
+        lambda c: c in self._obj.columns and _is_depictable_molecule_dtype(self._obj[c].dtype),
         columns
     ):
         self._obj[col].chem.reset_depictions()
@@ -636,7 +840,7 @@ def _dataframe_clear_formatting_rules(self, molecule_columns: str | Iterable[str
 
     # Filter invalid and non-molecule columns
     for col in filter(
-        lambda c: c in self._obj.columns and isinstance(self._obj[c].dtype, oepd.MoleculeDtype),
+        lambda c: c in self._obj.columns and _is_depictable_molecule_dtype(self._obj[c].dtype),
         columns
     ):
         self._obj[col].chem.clear_formatting_rules()
@@ -676,9 +880,10 @@ def _dataframe_highlight(
     if molecule_column not in self._obj.columns:
         raise ValueError(f'Column {molecule_column} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
 
-    if not isinstance(self._obj[molecule_column].dtype, oepd.MoleculeDtype):
+    if not _is_depictable_molecule_dtype(self._obj[molecule_column].dtype):
         raise TypeError(
-            f"highlight only works on molecule columns (oepandas.MoleculeDtype). Column '{molecule_column}' "
+            f"highlight only works on molecule columns ({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). "
+            f"Column '{molecule_column}' "
             f"has type {self._obj[molecule_column].dtype}."
         )
 
@@ -757,9 +962,10 @@ def _dataframe_highlight_using_column(
     if molecule_column not in df.columns:
         raise KeyError(f'{molecule_column} not found in DataFrame columns: ({", ".join(df.columns)}')
 
-    if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
+    if not _is_depictable_molecule_dtype(df[molecule_column].dtype):
         raise TypeError(
-            f"highlight_using_column only works on molecule columns (oepandas.MoleculeDtype). If {molecule_column}"
+            f"highlight_using_column only works on molecule columns ({_DEPICTABLE_MOLECULE_DTYPE_MESSAGE}). "
+            f"If {molecule_column}"
             " has molecules, use df.chem.as_molecule() to convert to a molecule column first."
         )
 
@@ -785,8 +991,7 @@ def _dataframe_highlight_using_column(
     displays = []
 
     # Get the rendering context for creating the displays
-    arr = df[molecule_column].array
-    assert isinstance(arr, oepd.MoleculeArray)
+    arr = _as_depictable_molecule_array(df[molecule_column].array)
     ctx = get_series_context(arr.metadata)
 
     for idx, row in df.iterrows():
@@ -1117,16 +1322,18 @@ def _dataframe_fingerprint_similarity(
 ########################################################################################################################
 
 # Import the OEPandas accessor classes
-from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor
+from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor  # noqa: E402
 
 # Add cnotebook methods to Series accessor
 OESeriesAccessor.highlight = _series_highlight
 OESeriesAccessor.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates
+OESeriesAccessor.set_render_options = _series_set_render_options
 OESeriesAccessor.reset_depictions = _series_reset_depictions
 OESeriesAccessor.clear_formatting_rules = _series_clear_formatting_rules
 OESeriesAccessor.align_depictions = _series_align_depictions
 
 # Add cnotebook methods to DataFrame accessor
+OEDataFrameAccessor.set_render_options = _dataframe_set_render_options
 OEDataFrameAccessor.recalculate_depiction_coordinates = _dataframe_recalculate_depiction_coordinates
 OEDataFrameAccessor.reset_depictions = _dataframe_reset_depictions
 OEDataFrameAccessor.clear_formatting_rules = _dataframe_clear_formatting_rules

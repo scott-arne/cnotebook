@@ -65,8 +65,9 @@ pip install cnotebook
 - You must have a valid license (free for academia).
 
 **Optional backends:**
-- Pandas support: `pip install pandas oepandas`
-- Polars support: `pip install polars oepolars`
+- Pandas support: `pip install "cnotebook[pandas]"` or `pip install pandas "oepandas>=3.3.0"`
+- Polars support: `pip install "cnotebook[polars]"` or `pip install polars "oepolars>=0.3.0"`
+- Both backends: `pip install "cnotebook[dataframes]"`
 
 Both backends can be installed together, neither are required unless you want to work with DataFrames.
 
@@ -105,6 +106,7 @@ CNotebook registers formatters so OpenEye molecule objects display as chemical s
 
 ### Molecule Support
 - Direct rendering of `oechem.OEMolBase` objects
+- Query molecule rendering for OEPandas `QueryDtype` columns
 - Advanced rendering with `OE2DMolDisplay` options
 - `OEDesignUnit` rendering (protein-ligand complexes)
 - Pandas integration via OEPandas
@@ -325,6 +327,19 @@ df
 ```
 
 <img src="docs/_static/pandas_highlight_and_align_dataframe.png" height="400">
+
+OEPandas query columns render through the same CNotebook depiction path as molecule columns:
+
+```python
+import pandas as pd
+import oepandas as oepd
+
+queries = pd.DataFrame({"Query": ["[#6]-[#8]", "[#7]"]})
+queries.chem.as_query("Query", inplace=True)
+
+queries["Query"].chem.set_render_options(image_format="svg", title=False)
+queries
+```
 
 ### Polars DataFrames
 

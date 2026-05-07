@@ -1,9 +1,16 @@
 import pytest
+import pandas as pd
 from unittest.mock import MagicMock, patch
 from openeye import oechem, oedepict
 from cnotebook.marimo_ext import _display_mol
 # Import the other display functions for testing
 import cnotebook.marimo_ext
+
+try:
+    import oepandas as oepd
+    oepandas_available = True
+except ImportError:
+    oepandas_available = False
 
 
 class TestDisplayMol:
@@ -143,8 +150,6 @@ class TestMarimoIntegration:
 
     def test_mime_method_is_display_mol(self):
         """Test that the _mime_ method is our display function"""
-        import cnotebook.marimo_ext
-        
         # The _mime_ method should be the _display_mol function
         assert oechem.OEMolBase._mime_ == _display_mol
     
@@ -356,6 +361,8 @@ class TestPolarsSupport:
         try:
             import polars
             import oepolars
+            assert polars is not None
+            assert oepolars is not None
             assert cnotebook.marimo_ext.oepolars_available is True
         except ImportError:
             assert cnotebook.marimo_ext.oepolars_available is False
@@ -670,6 +677,37 @@ class TestCtxBoundImage:
         # of the host page's CSS.
         assert "max-width:none" in content
         assert "max-width:100%" not in content
+
+
+class TestMarimoPandasFormatter:
+    """Test Pandas DataFrame formatting for Marimo tables."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_query_dtype_gets_molecule_formatter(self):
+        """QueryDtype columns should use the molecule formatter mapping."""
+        if not hasattr(oepd, "QueryDtype"):
+            pytest.skip("oepandas QueryDtype not available")
+        if not hasattr(cnotebook.marimo_ext, "marimo_pandas_formatter"):
+            pytest.skip("marimo table formatter not available")
+
+        query = oechem.OEQMol()
+        assert oechem.OEParseSmarts(query, "[#6]")
+        df = pd.DataFrame({
+            "query": pd.Series([query], dtype=oepd.QueryDtype()),
+        })
+
+        table_result = MagicMock()
+        table_result._mime_.return_value = ("text/html", "<table></table>")
+
+        with patch("cnotebook.marimo_ext.table", return_value=table_result) as mock_table, \
+             patch("cnotebook.marimo_ext._compute_molecule_column_width", return_value=123):
+            result = cnotebook.marimo_ext.marimo_pandas_formatter(df)
+
+        assert result == ("text/html", "<table></table>")
+        format_mapping = mock_table.call_args.kwargs["format_mapping"]
+        style_cell = mock_table.call_args.kwargs["style_cell"]
+        assert "query" in format_mapping
+        assert style_cell("0", "query", None)["width"] == "123px"
 
 
 class TestColumnStyleCell:

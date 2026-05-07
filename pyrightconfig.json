@@ -4,6 +4,7 @@
   ],
   "venvPath": "/Users/johnss51/Applications/miniforge3/envs",
   "venv": "main",
+  "pythonVersion": "3.11",
   "ignore": [
     "examples"
   ],
