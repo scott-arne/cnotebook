@@ -150,3 +150,14 @@ filterwarnings = [
     "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
 ]
+
+# ----------------------------------------------------------------------------------------
+# Static analysis configuration
+# ----------------------------------------------------------------------------------------
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.ruff.lint.per-file-ignores]
+"examples/**/*.ipynb" = ["F401"]
+"examples/**/*.py" = ["F401"]

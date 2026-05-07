@@ -1,4 +1,6 @@
 import logging
+from typing import Any
+
 from openeye import oechem, oedepict
 from .render import (
     oemol_to_html,
@@ -6,6 +8,8 @@ from .render import (
     oedu_to_html,
     oeimage_to_html,
 )
+
+get_ipython: Any = None
 
 # Only register iPython formatters if that is present
 try:

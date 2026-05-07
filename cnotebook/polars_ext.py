@@ -1,8 +1,13 @@
 import logging
+import re
 import typing
 import weakref
+from typing import Any
+
 import polars as pl
 import oepolars as oeplr  # pyright: ignore
+from oepolars.namespaces.dataframe import DataFrameChemNamespace  # pyright: ignore
+from oepolars.namespaces.series import SeriesChemNamespace  # pyright: ignore
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from .context import pass_cnotebook_context, get_series_context, create_local_context
 from typing import Iterable, Literal
@@ -17,6 +22,8 @@ from .render import (
     render_empty_molecule,
     render_exceeds_max_heavy_atoms
 )
+
+get_ipython: Any = None
 
 # Only register iPython formatters if that is present
 try:
@@ -547,7 +554,6 @@ def _series_align_depictions(
 # Monkey-patch onto oepolars SeriesChemNamespace
 # Note: Series-level highlight is not registered because Polars Series are ephemeral and
 # metadata doesn't persist across column accesses. Use df.chem.highlight() instead.
-from oepolars.namespaces.series import SeriesChemNamespace  # pyright: ignore
 SeriesChemNamespace.reset_depictions = _series_reset_depictions  # pyright: ignore
 SeriesChemNamespace.clear_formatting_rules = _series_clear_formatting_rules  # pyright: ignore
 SeriesChemNamespace.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates  # pyright: ignore
@@ -558,8 +564,6 @@ SeriesChemNamespace.align_depictions = _series_align_depictions  # pyright: igno
 # DataFrame accessor methods (monkey-patched onto oepolars)
 ########################################################################################################################
 
-# Regular expression for splitting SMARTS patterns
-import re
 SMARTS_DELIMITER_RE = re.compile(r'\s*[|\r\n\t]+\s*')
 
 # Store the fingerprint tag for fingerprint_similarity
@@ -1152,8 +1156,8 @@ def _dataframe_fingerprint_similarity(
     targ_series = pl.Series(target_similarity_column, targ_displays, dtype=oeplr.DisplayType())
 
     # Store molecule references in metadata to prevent GC (same as pandas version)
-    ref_series.chem.metadata["molecules"] = ref_molecules  # pyright: ignore  # noqa
-    targ_series.chem.metadata["molecules"] = targ_molecules  # pyright: ignore  # noqa
+    ref_series.chem.metadata["molecules"] = ref_molecules  # type: ignore[attr-defined]  # pyright: ignore
+    targ_series.chem.metadata["molecules"] = targ_molecules  # type: ignore[attr-defined]  # pyright: ignore
 
     # Add the columns to the DataFrame
     result = df.with_columns([tanimoto_series, ref_series, targ_series])
@@ -1161,8 +1165,6 @@ def _dataframe_fingerprint_similarity(
     return result
 
 
-# Monkey-patch onto oepolars DataFrameChemNamespace
-from oepolars.namespaces.dataframe import DataFrameChemNamespace  # pyright: ignore
 DataFrameChemNamespace.reset_depictions = _dataframe_reset_depictions  # pyright: ignore
 DataFrameChemNamespace.clear_formatting_rules = _dataframe_clear_formatting_rules  # pyright: ignore
 DataFrameChemNamespace.recalculate_depiction_coordinates = (  # pyright: ignore

@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Callable, Literal, Sequence
+from typing import Callable, Literal, Sequence, TypeAlias
 from openeye import oechem, oedepict
 
 log = logging.getLogger("cnotebook")
@@ -10,7 +10,7 @@ log = logging.getLogger("cnotebook")
 HighlightStyle = int | Literal["overlay_default", "overlay_ball_and_stick"]
 
 # Type alias for highlight colors
-HighlightColors = oechem.OEColor | oechem.OEColorIter
+HighlightColors: TypeAlias = oechem.OEColor | oechem.OEColorIter
 
 
 def escape_html(val):

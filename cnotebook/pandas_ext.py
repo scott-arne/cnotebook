@@ -3,9 +3,11 @@ import logging
 import typing
 import pandas as pd
 import oepandas as oepd
+from collections.abc import Hashable
 from typing import Iterable, Any, Literal
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from copy import copy as shallow_copy
+from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor
 from .context import pass_cnotebook_context, get_series_context
 from .helpers import escape_brackets, create_structure_highlighter
 from .align import create_aligner, fingerprint_maker
@@ -18,6 +20,8 @@ from .render import (
     render_empty_molecule,
     render_exceeds_max_heavy_atoms
 )
+
+get_ipython: Any = None
 
 # Only register iPython formatters if that is present
 try:
@@ -196,7 +200,7 @@ def escape_formatter(obj: Any) -> str:
 def render_dataframe(
         df: pd.DataFrame,
         formatters: dict | None = None,
-        col_space: dict[str, float | int] | None = None,
+        col_space: dict[Hashable, str | int] | None = None,
         ctx: CNotebookContext | None = None,
         **kwargs
 ) -> str:
@@ -267,7 +271,7 @@ def render_dataframe(
         if col in col_space:
             log.warning(f'Column spacing for {col} already defined by overwriting with molecule image width')
 
-        col_space[col] = float(series_ctx.width)
+        col_space[col] = int(series_ctx.width)
 
     # ---------------------------------------------------
     # Display columns
@@ -296,7 +300,7 @@ def render_dataframe(
         formatters[col] = create_disp_formatter(ctx=series_ctx)
 
         if len(arr) > 0:
-            col_space[col] = max(disp.GetWidth() for disp in arr if isinstance(disp, oedepict.OE2DMolDisplay))
+            col_space[col] = int(max(disp.GetWidth() for disp in arr if isinstance(disp, oedepict.OE2DMolDisplay)))
             col_space[col] = max(0, col_space[col])
         else:
             col_space[col] = 0
@@ -321,7 +325,7 @@ def render_dataframe(
         arr = df[col].array
         series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
         formatters[col] = create_du_formatter(ctx=series_ctx)
-        col_space[col] = float(series_ctx.width)
+        col_space[col] = int(series_ctx.width)
 
     # ---------------------------------------------------
     # All other columns
@@ -331,12 +335,14 @@ def render_dataframe(
         if col not in display_columns and col not in molecule_columns and col not in designunit_columns:
             formatters[col] = escape_formatter
 
-    return df.to_html(  # pyright: ignore[reportCallIssue]
+    html = df.to_html(  # pyright: ignore[reportCallIssue]
         escape=False,
         formatters=formatters,
         col_space=col_space,  # pyright: ignore[reportArgumentType]
         **kwargs
     )
+    assert html is not None
+    return html
 
 
 ########################################################################################################################
@@ -1169,7 +1175,7 @@ def _dataframe_fingerprint_similarity(
     # If we're using the first molecule as our reference
     if ref is None:
         for mol in arr:
-            if mol.IsValid():
+            if mol.IsValid():  # type: ignore[union-attr]
                 ref = mol
                 break
         else:
@@ -1321,26 +1327,23 @@ def _dataframe_fingerprint_similarity(
 # Monkey-patch CNotebook methods onto OEPandas accessors
 ########################################################################################################################
 
-# Import the OEPandas accessor classes
-from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor  # noqa: E402
-
 # Add cnotebook methods to Series accessor
-OESeriesAccessor.highlight = _series_highlight
-OESeriesAccessor.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates
-OESeriesAccessor.set_render_options = _series_set_render_options
-OESeriesAccessor.reset_depictions = _series_reset_depictions
-OESeriesAccessor.clear_formatting_rules = _series_clear_formatting_rules
-OESeriesAccessor.align_depictions = _series_align_depictions
+OESeriesAccessor.highlight = _series_highlight  # type: ignore[attr-defined]
+OESeriesAccessor.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates  # type: ignore[attr-defined]
+OESeriesAccessor.set_render_options = _series_set_render_options  # type: ignore[attr-defined]
+OESeriesAccessor.reset_depictions = _series_reset_depictions  # type: ignore[attr-defined]
+OESeriesAccessor.clear_formatting_rules = _series_clear_formatting_rules  # type: ignore[attr-defined]
+OESeriesAccessor.align_depictions = _series_align_depictions  # type: ignore[attr-defined]
 
 # Add cnotebook methods to DataFrame accessor
-OEDataFrameAccessor.set_render_options = _dataframe_set_render_options
-OEDataFrameAccessor.recalculate_depiction_coordinates = _dataframe_recalculate_depiction_coordinates
-OEDataFrameAccessor.reset_depictions = _dataframe_reset_depictions
-OEDataFrameAccessor.clear_formatting_rules = _dataframe_clear_formatting_rules
-OEDataFrameAccessor.copy_molecules = _dataframe_copy_molecules
-OEDataFrameAccessor.highlight = _dataframe_highlight
-OEDataFrameAccessor.highlight_using_column = _dataframe_highlight_using_column
-OEDataFrameAccessor.fingerprint_similarity = _dataframe_fingerprint_similarity
+OEDataFrameAccessor.set_render_options = _dataframe_set_render_options  # type: ignore[attr-defined]
+OEDataFrameAccessor.recalculate_depiction_coordinates = _dataframe_recalculate_depiction_coordinates  # type: ignore[attr-defined]
+OEDataFrameAccessor.reset_depictions = _dataframe_reset_depictions  # type: ignore[attr-defined]
+OEDataFrameAccessor.clear_formatting_rules = _dataframe_clear_formatting_rules  # type: ignore[attr-defined]
+OEDataFrameAccessor.copy_molecules = _dataframe_copy_molecules  # type: ignore[attr-defined]
+OEDataFrameAccessor.highlight = _dataframe_highlight  # type: ignore[attr-defined]
+OEDataFrameAccessor.highlight_using_column = _dataframe_highlight_using_column  # type: ignore[attr-defined]
+OEDataFrameAccessor.fingerprint_similarity = _dataframe_fingerprint_similarity  # type: ignore[attr-defined]
 
 
 ########################################################################################################################
@@ -1418,5 +1421,5 @@ def _dataframe_molgrid(
 
 
 # Add molgrid methods to accessors
-OESeriesAccessor.molgrid = _series_molgrid
-OEDataFrameAccessor.molgrid = _dataframe_molgrid
+OESeriesAccessor.molgrid = _series_molgrid  # type: ignore[attr-defined]
+OEDataFrameAccessor.molgrid = _dataframe_molgrid  # type: ignore[attr-defined]

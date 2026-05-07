@@ -5,15 +5,16 @@ This module provides MIME handlers for OpenEye objects and patches Marimo's
 internal table implementation to support molecule rendering with callbacks
 (highlighting, alignment, etc.) in Marimo's built-in DataFrame table component.
 """
+import importlib
 import logging
+from typing import Any
 
 import pandas as pd
 from openeye import oechem, oedepict
 
 # Import oepandas for dtype checking
 try:
-    # noinspection PyUnusedImports
-    import oepandas as oepd
+    oepd: Any = importlib.import_module("oepandas")
     oepandas_available = True
 except ImportError:
     oepd = None
@@ -21,10 +22,8 @@ except ImportError:
 
 # Import oepolars for dtype checking
 try:
-    # noinspection PyUnusedImports
-    import polars as pl
-    # noinspection PyUnusedImports
-    import oepolars as oeplr  # pyright: ignore
+    pl: Any = importlib.import_module("polars")
+    oeplr: Any = importlib.import_module("oepolars")
     oepolars_available = True
 except ImportError:
     pl = None
@@ -387,7 +386,7 @@ try:
             format_mapping=format_mapping,
             pagination=True,
             style_cell=style_cell,
-        )._mime_()
+        )._mime_()  # type: ignore[attr-defined]
 
     # 2. Inject into the Registry
     def install_marimo_pandas_formatter():
@@ -402,7 +401,7 @@ try:
     install_marimo_pandas_formatter()
 
     if pl is not None and oeplr is not None:
-        polars_dataframe = pl.DataFrame  # pyright: ignore
+        marimo_polars_dataframe = pl.DataFrame  # pyright: ignore
         molecule_type = oeplr.MoleculeType  # pyright: ignore
         display_type = oeplr.DisplayType  # pyright: ignore
         design_unit_type = oeplr.DesignUnitType  # pyright: ignore
@@ -468,19 +467,19 @@ try:
                 format_mapping=format_mapping,
                 pagination=True,
                 style_cell=style_cell,
-            )._mime_()
+            )._mime_()  # type: ignore[attr-defined]
 
         def install_marimo_polars_formatter():
             """Install the Polars DataFrame formatter if polars is available."""
             # Check if we've already installed it to avoid duplicates
             for typ, func in OPINIONATED_FORMATTERS.formatters.items():
                 if (
-                    typ is polars_dataframe
+                    typ is marimo_polars_dataframe
                     and func.__name__ == "marimo_polars_formatter"
                 ):
                     return  # Already installed
 
-            OPINIONATED_FORMATTERS.formatters[polars_dataframe] = (
+            OPINIONATED_FORMATTERS.formatters[marimo_polars_dataframe] = (
                 marimo_polars_formatter
             )
 
@@ -504,10 +503,10 @@ def _display_dataframe(self: pd.DataFrame):
     """
     return "text/html", render_dataframe(df=self, formatters=None, col_space=None)
 
-pd.DataFrame._mime_ = _display_dataframe  # pyright: ignore
+pd.DataFrame._mime_ = _display_dataframe  # type: ignore[attr-defined]  # pyright: ignore
 
 if pl is not None and oeplr is not None:
-    polars_dataframe = pl.DataFrame  # pyright: ignore
+    polars_dataframe: Any = pl.DataFrame  # pyright: ignore
 
     from .polars_ext import render_polars_dataframe
 

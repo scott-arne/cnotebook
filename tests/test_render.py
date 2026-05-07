@@ -1,4 +1,3 @@
-import pytest
 import base64
 from unittest.mock import MagicMock, patch
 from openeye import oechem, oedepict

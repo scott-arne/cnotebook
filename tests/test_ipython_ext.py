@@ -1,5 +1,4 @@
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from openeye import oechem, oedepict
 from cnotebook.ipython_ext import register_ipython_formatters
 from cnotebook.render import oemol_to_html, oedisp_to_html, oedu_to_html, oeimage_to_html

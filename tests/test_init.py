@@ -1,6 +1,8 @@
+import importlib.util
+
 import pytest
 import logging
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import MagicMock, patch
 from openeye import oechem, oedepict
 import cnotebook
 from cnotebook import (
@@ -209,22 +211,20 @@ class TestEnvDetection:
     def test_pandas_available_reflects_imports(self):
         """Test pandas_available reflects actual pandas/oepandas availability"""
         env = get_env()
-        try:
-            import pandas
-            import oepandas
-            assert env.pandas_available is True
-        except ImportError:
-            assert env.pandas_available is False
+        pandas_available = (
+            importlib.util.find_spec("pandas") is not None
+            and importlib.util.find_spec("oepandas") is not None
+        )
+        assert env.pandas_available is pandas_available
 
     def test_polars_available_reflects_imports(self):
         """Test polars_available reflects actual polars/oepolars availability"""
         env = get_env()
-        try:
-            import polars
-            import oepolars
-            assert env.polars_available is True
-        except ImportError:
-            assert env.polars_available is False
+        polars_available = (
+            importlib.util.find_spec("polars") is not None
+            and importlib.util.find_spec("oepolars") is not None
+        )
+        assert env.polars_available is polars_available
 
 
 class TestLevelSpecificFormatter:
@@ -362,7 +362,6 @@ class TestIntegration:
     def test_logging_works_end_to_end(self):
         """Test that logging works end to end"""
         import io
-        import sys
 
         # Capture log output
         log_capture = io.StringIO()
@@ -578,7 +577,7 @@ class TestDisplayHtmlEnvironments:
 
         with patch('IPython.display.HTML', mock_html_class), \
              patch('IPython.display.display', mock_ipy_display):
-            result = _display_html("<div>test</div>", env)
+            _display_html("<div>test</div>", env)
             mock_html_class.assert_called_once_with("<div>test</div>")
 
     def test_display_html_marimo(self):

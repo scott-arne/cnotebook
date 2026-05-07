@@ -5,13 +5,14 @@ import pytest
 pytest.importorskip("pandas")
 pytest.importorskip("oepandas")
 
+import cnotebook as _cnotebook  # noqa: E402,F401
+
 
 def test_series_molgrid():
     """Test that Series.chem.molgrid() works."""
     import pandas as pd
     from openeye import oechem
     import oepandas as oepd
-    import cnotebook
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -35,7 +36,6 @@ def test_dataframe_molgrid():
     import pandas as pd
     from openeye import oechem
     import oepandas as oepd
-    import cnotebook
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -60,7 +60,6 @@ def test_dataframe_molgrid_auto_detect_search_fields():
     """Test that string columns are auto-detected as search fields."""
     import pandas as pd
     from openeye import oechem
-    import oepandas as oepd
     from cnotebook import MolGrid
 
     mol1 = oechem.OEGraphMol()
@@ -562,7 +561,6 @@ def test_pandas_molgrid_cluster_parameter():
     import pandas as pd
     from openeye import oechem
     import oepandas as oepd
-    import cnotebook.pandas_ext  # Registers the accessor
 
     mols = []
     for smiles in ["CCO", "CC"]:

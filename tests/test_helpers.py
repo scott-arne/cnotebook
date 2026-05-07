@@ -1,6 +1,6 @@
 import pytest
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from openeye import oechem, oedepict
 from cnotebook.helpers import (
     escape_html,

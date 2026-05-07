@@ -1,13 +1,11 @@
 import pytest
-import unittest.mock as mock
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from openeye import oechem, oedepict
 from cnotebook.context import (
     CNotebookContext, 
     DeferredValue, 
     DEFERRED, 
     _Deferred,
-    cnotebook_context,
     pass_cnotebook_context,
     create_local_context,
     get_series_context

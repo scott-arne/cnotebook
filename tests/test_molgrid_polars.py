@@ -5,13 +5,13 @@ import pytest
 pytest.importorskip("polars")
 pytest.importorskip("oepolars")
 
+import cnotebook as _cnotebook  # noqa: E402,F401
+
 
 def test_polars_series_molgrid():
     """Test that Polars Series.chem.molgrid() works."""
     import polars as pl
     from openeye import oechem
-    import oepolars as oepl
-    import cnotebook
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
@@ -33,8 +33,6 @@ def test_polars_dataframe_molgrid():
     """Test that Polars DataFrame.chem.molgrid() works."""
     import polars as pl
     from openeye import oechem
-    import oepolars as oepl
-    import cnotebook
 
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")

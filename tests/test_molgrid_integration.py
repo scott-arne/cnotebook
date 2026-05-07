@@ -1,6 +1,5 @@
 """Integration tests for MolGrid."""
 
-import pytest
 from openeye import oechem
 
 
