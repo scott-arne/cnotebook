@@ -118,7 +118,7 @@ def test_molgrid_default_parameters(simple_mol):
     assert grid.selection_enabled is True
     assert grid.atom_label_font_scale == 2.0
     assert grid.structure_scale == oedepict.OEScale_AutoScale
-    assert grid.bond_width_scaling is False
+    assert grid.bond_width_scaling is True
     assert grid.render_title is False
     assert grid.depict_orientation == oedepict.OEDepictOrientation_Horizontal
 
@@ -140,6 +140,28 @@ def test_molgrid_prepares_wide_depictions_by_default():
     xs = [coord[0] for coord in coords]
     ys = [coord[1] for coord in coords]
     assert max(xs) - min(xs) > max(ys) - min(ys)
+
+
+def test_molgrid_scales_bond_widths_for_larger_molecules_by_default():
+    """Larger auto-scaled molecules should not keep the unscaled bond pen."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(
+        mol,
+        "O=C(Nc1ccc(F)c(Cl)c1)N1CCN(CC1)c1ccc(OCc2ccccc2)cc1",
+    )
+
+    grid = MolGrid([mol])
+    prepared = grid._prepare_molecule_for_rendering(mol)
+    display = grid._create_render_context().create_molecule_display(prepared)
+
+    bond_widths = [
+        bond_display.GetBgnPen().GetLineWidth()
+        for bond_display in display.GetBondDisplays()
+    ]
+
+    assert max(bond_widths) < oedepict.OE2DMolDisplayOptions().GetDefaultBondPen().GetLineWidth()
 
 
 def test_molgrid_set_render_options(simple_mol):

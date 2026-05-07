@@ -819,7 +819,7 @@ class MolGrid:
         atom_label_font_scale: float = 2.0,
         title_font_scale: float = 1.0,
         image_format: str = "svg",
-        bond_width_scaling: bool = False,
+        bond_width_scaling: bool = True,
         render_title: bool = False,
         depict_orientation: int = oedepict.OEDepictOrientation_Horizontal,
         max_heavy_atoms: Optional[int] = 100,
