@@ -10,10 +10,10 @@ import logging
 from openeye import oechem, oedepict
 
 # Core functionality that doesn't depend on backends
-from .context import cnotebook_context, CNotebookContext
-from .helpers import highlight_smarts
+from .context import CNotebookContext, cnotebook_context
+from .helpers import highlight_smarts as highlight_smarts
 
-__version__ = '2.2.14'
+__version__ = '2.2.15'
 
 # Configure logging first
 log = logging.getLogger("cnotebook")
@@ -194,15 +194,15 @@ def _detect_environment() -> CNotebookEnvInfo:
 
     # Detect molgrid (requires anywidget)
     try:
-        from cnotebook.grid import molgrid, MolGrid
-        molgrid_available = True
+        from cnotebook.grid import MolGrid, molgrid
+        molgrid_available = MolGrid is not None and molgrid is not None
     except ImportError:
         pass
 
     # Detect C3D viewer (requires anywidget)
     try:
         from cnotebook.c3d import C3D
-        c3d_available = True
+        c3d_available = C3D is not None
     except ImportError:
         pass
 
@@ -211,7 +211,7 @@ def _detect_environment() -> CNotebookEnvInfo:
         # noinspection PyUnusedImports
         import pandas as pd
         import oepandas as oepd
-        pandas_version = pd.__version__
+        pandas_version = pd.__version__ if oepd is not None else ""
     except ImportError:
         pass
 
@@ -220,7 +220,7 @@ def _detect_environment() -> CNotebookEnvInfo:
         # noinspection PyUnusedImports
         import polars as pl
         import oepolars as oeplr  # pyright: ignore[reportMissingImports]
-        polars_version = pl.__version__
+        polars_version = pl.__version__ if oeplr is not None else ""
     except ImportError:
         pass
 
@@ -287,7 +287,7 @@ def get_env() -> CNotebookEnvInfo:
 # Import and register pandas formatters if available
 if _env_info.pandas_available:
     try:
-        from .pandas_ext import render_dataframe, register_pandas_formatters
+        from .pandas_ext import render_dataframe as render_dataframe, register_pandas_formatters
 
         if _env_info.ipython_available:
             from .ipython_ext import register_ipython_formatters
@@ -300,7 +300,7 @@ if _env_info.pandas_available:
 # Import and register polars formatters if available
 if _env_info.polars_available:
     try:
-        from .polars_ext import render_polars_dataframe, register_polars_formatters
+        from .polars_ext import render_polars_dataframe as render_polars_dataframe, register_polars_formatters
 
         if _env_info.ipython_available:
             register_polars_formatters()
@@ -312,17 +312,17 @@ if _env_info.polars_available:
 if _env_info.marimo_available:
     try:
         from . import marimo_ext
-        log.debug("[cnotebook] Imported Marimo extension")
+        log.debug(f"[cnotebook] Imported Marimo extension: {marimo_ext.__name__}")
     except Exception as e:
         log.warning(f"[cnotebook] Failed to import Marimo extension: {e}")
 
 # Export molgrid at top level if available
 if _env_info.molgrid_available:
-    from .grid import molgrid, MolGrid
+    from .grid import MolGrid as MolGrid, molgrid as molgrid
 
 # Export C3D at top level if available
 if _env_info.c3d_available:
-    from .c3d import C3D
+    from .c3d import C3D as C3D
 
 
 ########################################################################################################################

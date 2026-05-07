@@ -15,7 +15,7 @@ Prerequisites
 
 .. code-block:: bash
 
-    pip install pandas oepandas
+    pip install "cnotebook[pandas]"
 
 Creating Molecule Columns
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -140,6 +140,27 @@ You should see:
     Molecule columns automatically render as chemical structures when displaying
     the DataFrame. This also works for anything that returns a DataFrame, such
     as ``df.head()``.
+
+Creating Query Columns
+^^^^^^^^^^^^^^^^^^^^^^
+
+OEPandas query columns use ``QueryDtype`` and render through the same CNotebook
+depiction path as molecule columns:
+
+.. code-block:: python
+
+    import cnotebook
+    import oepandas as oepd
+    import pandas as pd
+
+    queries = pd.DataFrame({
+        "Name": ["Alcohol query", "Nitrogen query"],
+        "Query": ["[#6]-[#8]", "[#7]"],
+    })
+
+    queries.chem.as_query("Query", inplace=True)
+    queries["Query"].chem.set_render_options(image_format="svg", title=False)
+    queries
 
 Substructure Highlighting
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1938,7 +1959,7 @@ Prerequisites
 
 .. code-block:: bash
 
-    pip install polars oepolars
+    pip install "cnotebook[polars]"
 
 Creating Molecule Columns
 ^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,9 +1,7 @@
 import pytest
 import pandas as pd
-import numpy as np
-from unittest.mock import MagicMock, patch, Mock, call
-from openeye import oechem, oedepict, oegraphsim
-import cnotebook
+from unittest.mock import MagicMock, patch
+from openeye import oechem, oedepict
 from cnotebook.pandas_ext import (
     render_dataframe,
     create_mol_formatter,
@@ -58,6 +56,28 @@ class TestRenderDataframe:
         assert isinstance(result, str)
         assert '<table' in result
         # The function should work even without actual molecule columns
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_render_dataframe_with_query_dtype(self):
+        """QueryDtype columns should use the molecule depiction formatter."""
+        if not hasattr(oepd, "QueryDtype"):
+            pytest.skip("oepandas QueryDtype not available")
+
+        query = oechem.OEQMol()
+        assert oechem.OEParseSmarts(query, "[#6]")
+
+        df = pd.DataFrame({
+            "query": pd.Series([query], dtype=oepd.QueryDtype()),
+        })
+
+        with patch("cnotebook.pandas_ext.oechem.OECount", return_value=1), \
+             patch("cnotebook.pandas_ext.oemol_to_disp") as mock_to_disp, \
+             patch("cnotebook.pandas_ext.oedisp_to_html", return_value="<img>query</img>"):
+            result = render_dataframe(df)
+
+        assert "<img>query</img>" in result
+        mock_to_disp.assert_called_once()
+        assert isinstance(mock_to_disp.call_args.args[0], oechem.OEQMol)
     
     def test_render_dataframe_custom_formatters(self):
         """Test rendering with custom formatters"""
@@ -588,6 +608,77 @@ class TestPandasDataFrameHighlight:
         assert len(ctx.callbacks) == 0  # But callbacks should be cleared
 
 
+class TestPandasDataFrameRenderOptions:
+    """Test DataFrame set_render_options method."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_specific_column(self):
+        """DataFrame render options should update a requested molecule column."""
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "name": ["ethanol"],
+        })
+
+        result = df.chem.set_render_options(
+            "mol",
+            structure_scale=1.5 * oedepict.OEScale_Default,
+            width=0,
+            height=0,
+        )
+
+        ctx = df["mol"].array.metadata.get("cnotebook")
+        assert result is None
+        assert ctx is not None
+        assert ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert ctx.width == 0
+        assert ctx.height == 0
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_all_depictable_columns(self):
+        """No column argument should update all MoleculeDtype and QueryDtype columns."""
+        if not hasattr(oepd, "QueryDtype"):
+            pytest.skip("oepandas QueryDtype not available")
+
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "CCO")
+        query = oechem.OEQMol()
+        assert oechem.OEParseSmarts(query, "[#6]")
+
+        df = pd.DataFrame({
+            "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+            "query": pd.Series([query], dtype=oepd.QueryDtype()),
+            "name": ["ethanol"],
+        })
+
+        df.chem.set_render_options(structure_scale=1.5 * oedepict.OEScale_Default)
+
+        mol_ctx = df["mol"].array.metadata.get("cnotebook")
+        query_ctx = df["query"].array.metadata.get("cnotebook")
+        assert mol_ctx is not None
+        assert query_ctx is not None
+        assert mol_ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert query_ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_rejects_non_molecule_column(self):
+        """Explicit non-molecule columns should raise TypeError."""
+        df = pd.DataFrame({"name": ["ethanol"]})
+
+        with pytest.raises(TypeError, match="set_render_options only works on molecule columns"):
+            df.chem.set_render_options("name", structure_scale=1.5 * oedepict.OEScale_Default)
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_requires_existing_column(self):
+        """Missing requested columns should raise ValueError."""
+        df = pd.DataFrame({"name": ["ethanol"]})
+
+        with pytest.raises(ValueError, match="Column mol not found"):
+            df.chem.set_render_options("mol", structure_scale=1.5 * oedepict.OEScale_Default)
+
+
 class TestPandasDataFrameCopyMolecules:
     """Test DataFrame copy_molecules method."""
 
@@ -668,7 +759,7 @@ class TestHighlightMetadataPreservation:
         assert len(original_ctx.callbacks) > 0, "Callbacks should be present"
 
         # Render the DataFrame (this triggers the deep copy)
-        html = render_dataframe(df)
+        _ = render_dataframe(df)
 
         # The original metadata should still have the callbacks
         # (this verifies the fix preserves callbacks)
@@ -875,6 +966,89 @@ class TestSeriesHighlight:
         assert ctx is not None
         assert len(ctx.callbacks) == 1
 
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_highlight_query_dtype_adds_callback(self):
+        """QueryDtype series should share molecule depiction callbacks."""
+        if not hasattr(oepd, "QueryDtype"):
+            pytest.skip("oepandas QueryDtype not available")
+
+        query = oechem.OEQMol()
+        assert oechem.OEParseSmarts(query, "[#6]")
+
+        series = pd.Series([query], dtype=oepd.QueryDtype())
+        series.chem.highlight("[#6]")
+
+        ctx = series.array.metadata.get("cnotebook")
+        assert ctx is not None
+        assert len(ctx.callbacks) == 1
+
+
+class TestSeriesRenderOptions:
+    """Test set_render_options() on Series .chem accessor."""
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_updates_molecule_context(self):
+        """Series render options should be saved in the column CNotebook context."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+        result = series.chem.set_render_options(
+            structure_scale=1.5 * oedepict.OEScale_Default,
+            image_format="svg",
+            max_heavy_atoms=None,
+            title=False,
+        )
+
+        ctx = series.array.metadata.get("cnotebook")
+        assert result is None
+        assert ctx is not None
+        assert ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert ctx.image_format == "svg"
+        assert ctx.max_heavy_atoms is None
+        assert ctx.title is False
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_preserves_existing_callbacks(self):
+        """Updating render options should not remove highlight callbacks."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+
+        series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+        series.chem.highlight("c1ccccc1")
+        original_ctx = series.array.metadata["cnotebook"]
+
+        series.chem.set_render_options(width=321)
+
+        ctx = series.array.metadata["cnotebook"]
+        assert ctx is original_ctx
+        assert ctx.width == 321
+        assert len(ctx.callbacks) == 1
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_updates_query_context(self):
+        """QueryDtype series should support the same render options."""
+        if not hasattr(oepd, "QueryDtype"):
+            pytest.skip("oepandas QueryDtype not available")
+
+        query = oechem.OEQMol()
+        assert oechem.OEParseSmarts(query, "[#6]")
+
+        series = pd.Series([query], dtype=oepd.QueryDtype())
+        series.chem.set_render_options(structure_scale=1.5 * oedepict.OEScale_Default)
+
+        ctx = series.array.metadata.get("cnotebook")
+        assert ctx is not None
+        assert ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_set_render_options_non_molecule_raises(self):
+        """Non-molecule-like Series should reject render options."""
+        series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
+
+        with pytest.raises(TypeError, match="set_render_options only works on molecule columns"):
+            series.chem.set_render_options(structure_scale=1.5 * oedepict.OEScale_Default)
+
 
 class TestSeriesAlignDepictions:
     """Test _series_align_depictions() method on Series .chem accessor."""
@@ -986,8 +1160,6 @@ class TestSeriesResetAndClear:
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_reset_depictions_clears_metadata(self):
         """reset_depictions should remove the 'cnotebook' key from metadata."""
-        from cnotebook.context import get_series_context
-
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol)

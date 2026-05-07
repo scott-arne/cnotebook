@@ -10,7 +10,8 @@ Pandas DataFrame Accessor
 -------------------------
 
 The ``chem`` accessor provides chemistry-aware operations on Pandas DataFrames
-and Series containing molecule columns.
+and Series containing molecule columns. CNotebook also treats OEPandas
+``QueryDtype`` columns as depictable query molecule columns.
 
 Usage
 -----
@@ -26,6 +27,10 @@ Usage
 
     # Convert SMILES to molecules
     df.chem.as_molecule("SMILES", inplace=True)
+
+    # Query columns render with the same formatter
+    queries = pd.DataFrame({"Query": ["[#6]-[#8]"]})
+    queries.chem.as_query("Query", inplace=True)
 
     # Highlight substructures
     df.SMILES.chem.highlight("c1ccccc1")
@@ -55,6 +60,10 @@ DataFrame Methods
 
    Create a MolGrid from the DataFrame.
 
+.. py:method:: DataFrame.chem.set_render_options(molecule_columns=None, **kwargs)
+
+   Set CNotebook rendering options for molecule or query columns.
+
 Series Methods
 --------------
 
@@ -65,6 +74,10 @@ Series Methods
 .. py:method:: Series.chem.align_depictions(reference)
 
    Align molecule depictions to a reference.
+
+.. py:method:: Series.chem.set_render_options(**kwargs)
+
+   Set CNotebook rendering options for a molecule or query Series.
 
 .. py:method:: Series.chem.molgrid(**kwargs)
 

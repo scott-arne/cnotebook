@@ -93,6 +93,14 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["invoke", "build", "pytest"]
 test = ["pytest", "pytest-cov"]
+pandas = ["pandas>=2.2.0", "oepandas>=3.3.0"]
+polars = ["polars>=1.0.0", "oepolars>=0.3.0"]
+dataframes = [
+    "pandas>=2.2.0",
+    "oepandas>=3.3.0",
+    "polars>=1.0.0",
+    "oepolars>=0.3.0",
+]
 
 # ----------------------------------------------------------------------------------------
 # These configurations are specific to the `setuptools` build backend
@@ -109,7 +117,7 @@ exclude = ["*test*"]
 [tool.setuptools.package-data]
 
 # Include static files (JS, CSS) in the package
-cnotebook = ["grid/static/*", "c3d/static/*"]
+cnotebook = ["py.typed", "grid/static/*", "c3d/static/*"]
 
 
 [tool.setuptools.dynamic]

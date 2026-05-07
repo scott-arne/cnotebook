@@ -11,8 +11,8 @@ CNotebook requires:
 
 Optional dependencies for DataFrame support:
 
-- **Pandas support**: ``pandas`` and ``oepandas``
-- **Polars support**: ``polars`` and ``oepolars``
+- **Pandas support**: ``pandas`` and ``oepandas>=3.3.0``
+- **Polars support**: ``polars`` and ``oepolars>=0.3.0``
 
 Installing CNotebook
 --------------------
@@ -38,13 +38,19 @@ For Pandas DataFrame support:
 
 .. code-block:: bash
 
-    pip install oepandas
+    pip install "cnotebook[pandas]"
 
 For Polars DataFrame support:
 
 .. code-block:: bash
 
-    pip install oepolars
+    pip install "cnotebook[polars]"
+
+To install both DataFrame backends:
+
+.. code-block:: bash
+
+    pip install "cnotebook[dataframes]"
 
 CNotebook will automatically detect which backends are available and use them
 accordingly.
