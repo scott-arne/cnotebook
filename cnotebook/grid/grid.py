@@ -5,12 +5,12 @@ import sys
 import uuid
 from html import escape
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 import anywidget
 import pandas as pd
 from traitlets.traitlets import Unicode
-from openeye import oechem
+from openeye import oechem, oedepict  # type: ignore[import-untyped]
 
 from cnotebook.context import CNotebookContext
 from cnotebook.render import oemol_to_html
@@ -19,11 +19,31 @@ from cnotebook.render import oemol_to_html
 _STATIC_DIR = Path(__file__).parent / "static"
 _LIST_JS = (_STATIC_DIR / "list.min.js").read_text()
 
+HTML: Any = None
+display: Callable[..., Any] | None = None
+
 try:
-    from IPython.display import HTML, display
+    from IPython.display import HTML as _HTML, display as _display
 except ModuleNotFoundError:
-    HTML = None
-    display = None
+    pass
+else:
+    HTML = _HTML
+    display = _display
+
+
+_RENDER_OPTION_UNSET = object()
+
+
+def _collect_render_options(**options: Any) -> dict[str, Any]:
+    """Collect render options explicitly provided by the caller.
+
+    :param options: Render option names and values.
+    :returns: Mapping containing only caller-provided options.
+    """
+    return {
+        name: value for name, value in options.items()
+        if value is not _RENDER_OPTION_UNSET
+    }
 
 
 def _is_marimo() -> bool:
@@ -34,7 +54,7 @@ def _is_marimo() -> bool:
     if "marimo" not in sys.modules:
         return False
     try:
-        import marimo as mo  # pyright: ignore[reportMissingImports]
+        import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
         # Check if we're actually in a marimo runtime
         return mo.running_in_notebook()
     except (ImportError, AttributeError):
@@ -789,10 +809,20 @@ class MolGrid:
         title: Union[bool, str, None] = True,
         tooltip_fields: Optional[List[str]] = None,
         n_items_per_page: int = 24,
-        width: int = 200,
-        height: int = 200,
-        atom_label_font_scale: float = 1.5,
+        width: int = 260,
+        height: int = 240,
+        min_width: Optional[float] = 260.0,
+        min_height: Optional[float] = 240.0,
+        max_width: Optional[float] = None,
+        max_height: Optional[float] = None,
+        structure_scale: float = oedepict.OEScale_AutoScale,
+        atom_label_font_scale: float = 2.0,
+        title_font_scale: float = 1.0,
         image_format: str = "svg",
+        bond_width_scaling: bool = False,
+        render_title: bool = False,
+        depict_orientation: int = oedepict.OEDepictOrientation_Horizontal,
+        max_heavy_atoms: Optional[int] = 100,
         select: bool = True,
         information: bool = True,
         data: Optional[Union[str, List[str]]] = None,
@@ -812,8 +842,21 @@ class MolGrid:
         :param n_items_per_page: Number of molecules per page.
         :param width: Image width in pixels.
         :param height: Image height in pixels.
+        :param min_width: Minimum image width in pixels.
+        :param min_height: Minimum image height in pixels.
+        :param max_width: Maximum image width in pixels, or None for no limit.
+        :param max_height: Maximum image height in pixels, or None for no limit.
+        :param structure_scale: Scale factor for structure rendering. Defaults
+            to auto-scale so drug-like molecules fill each grid cell.
         :param atom_label_font_scale: Scale factor for atom labels.
+        :param title_font_scale: Scale factor for title font.
         :param image_format: Image format ("svg" or "png").
+        :param bond_width_scaling: Whether to scale bond widths with structure scale.
+        :param render_title: Whether to draw molecule titles inside rendered images.
+            Card labels remain controlled by the ``title`` parameter.
+        :param depict_orientation: Preferred 2D depiction orientation for grid
+            renderings.
+        :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
         :param select: Enable selection checkboxes.
         :param information: Enable info button with hover tooltip.
         :param data: Column(s) to display in info tooltip. If None, auto-detects
@@ -863,6 +906,7 @@ class MolGrid:
             self.information_fields = []
 
         # Auto-detect search fields from DataFrame if not provided
+        self.search_fields: Optional[List[str]]
         if search_fields is None and dataframe is not None:
             self.search_fields = self._auto_detect_search_fields(dataframe, mol_col)
         else:
@@ -871,8 +915,18 @@ class MolGrid:
         # Rendering settings
         self.width = width
         self.height = height
+        self.min_width = min_width
+        self.min_height = min_height
+        self.max_width = max_width
+        self.max_height = max_height
+        self.structure_scale = structure_scale
         self.image_format = image_format
         self.atom_label_font_scale = atom_label_font_scale
+        self.title_font_scale = title_font_scale
+        self.bond_width_scaling = bond_width_scaling
+        self.render_title = render_title
+        self.depict_orientation = depict_orientation
+        self.max_heavy_atoms = max_heavy_atoms
 
         # Initialize selection storage
         MolGrid._selections[self.name] = {}
@@ -1004,7 +1058,7 @@ class MolGrid:
         :param smarts_pattern: SMARTS pattern string.
         :returns: List of indices of matching molecules.
         """
-        matches = []
+        matches: List[int] = []
         try:
             ss = oechem.OESubSearch(smarts_pattern)
             if not ss.IsValid():
@@ -1038,29 +1092,130 @@ class MolGrid:
         else:
             return oechem.OEGetSDData(mol, field) or None
 
+    def set_render_options(
+        self,
+        *,
+        width=_RENDER_OPTION_UNSET,
+        height=_RENDER_OPTION_UNSET,
+        min_width=_RENDER_OPTION_UNSET,
+        min_height=_RENDER_OPTION_UNSET,
+        max_width=_RENDER_OPTION_UNSET,
+        max_height=_RENDER_OPTION_UNSET,
+        structure_scale=_RENDER_OPTION_UNSET,
+        atom_label_font_scale=_RENDER_OPTION_UNSET,
+        title_font_scale=_RENDER_OPTION_UNSET,
+        image_format=_RENDER_OPTION_UNSET,
+        bond_width_scaling=_RENDER_OPTION_UNSET,
+        title=_RENDER_OPTION_UNSET,
+        depict_orientation=_RENDER_OPTION_UNSET,
+        max_heavy_atoms=_RENDER_OPTION_UNSET,
+    ) -> None:
+        """Set rendering options for molecules in this grid.
+
+        These options mirror the molecule render settings used by Pandas
+        chemistry accessors. The ``title`` option controls titles drawn inside
+        molecule images; grid card labels remain controlled by the MolGrid
+        ``title`` constructor argument.
+
+        :param width: Image width in pixels. If 0, determined by structure scale.
+        :param height: Image height in pixels. If 0, determined by structure scale.
+        :param min_width: Minimum image width in pixels.
+        :param min_height: Minimum image height in pixels.
+        :param max_width: Maximum image width in pixels, or None for no limit.
+        :param max_height: Maximum image height in pixels, or None for no limit.
+        :param structure_scale: Scale factor for structure rendering.
+        :param atom_label_font_scale: Scale factor for atom labels.
+        :param title_font_scale: Scale factor for title font.
+        :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
+        :param bond_width_scaling: Whether to scale bond widths with structure scale.
+        :param title: Whether to display molecule titles inside rendered images.
+        :param depict_orientation: Preferred 2D depiction orientation for grid
+            renderings.
+        :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
+        """
+        options = _collect_render_options(
+            width=width,
+            height=height,
+            min_width=min_width,
+            min_height=min_height,
+            max_width=max_width,
+            max_height=max_height,
+            structure_scale=structure_scale,
+            atom_label_font_scale=atom_label_font_scale,
+            title_font_scale=title_font_scale,
+            image_format=image_format,
+            bond_width_scaling=bond_width_scaling,
+            title=title,
+            depict_orientation=depict_orientation,
+            max_heavy_atoms=max_heavy_atoms,
+        )
+        if not options:
+            return
+
+        if "title" in options:
+            options["render_title"] = options.pop("title")
+
+        for name, value in options.items():
+            setattr(self, name, value)
+
+    def _prepare_molecule_for_rendering(self, mol):
+        """Create a molecule copy prepared for MolGrid rendering.
+
+        MolGrid favors horizontal depictions so elongated drug-like molecules
+        use card width instead of becoming narrow vertical strips.
+
+        :param mol: OpenEye molecule object.
+        :returns: Prepared molecule copy.
+        """
+        if not isinstance(mol, oechem.OEMolBase):
+            return mol
+
+        render_mol = mol.CreateCopy()
+        if render_mol.IsValid() and render_mol.NumAtoms() > 0:
+            opts = oedepict.OEPrepareDepictionOptions()
+            opts.SetDepictOrientation(self.depict_orientation)
+            oedepict.OEPrepareDepiction(render_mol, opts)
+        return render_mol
+
+    def _create_render_context(self) -> CNotebookContext:
+        """Create a render context from the grid's current render options.
+
+        :returns: CNotebook context used to render each grid molecule.
+        """
+        return CNotebookContext(
+            width=self.width,
+            height=self.height,
+            min_width=self.min_width,
+            min_height=self.min_height,
+            max_width=self.max_width,
+            max_height=self.max_height,
+            structure_scale=self.structure_scale,
+            atom_label_font_scale=self.atom_label_font_scale,
+            title_font_scale=self.title_font_scale,
+            image_format=self.image_format,
+            bond_width_scaling=self.bond_width_scaling,
+            title=self.render_title,
+            max_heavy_atoms=self.max_heavy_atoms,
+            scope="local",
+        )
+
     def _prepare_data(self) -> List[dict]:
         """Prepare molecule data for template rendering.
 
         :returns: List of dicts with molecule data for each item.
         """
         data = []
-        ctx = CNotebookContext(
-            width=self.width,
-            height=self.height,
-            image_format=self.image_format,
-            atom_label_font_scale=self.atom_label_font_scale,
-            title=False,
-            scope="local",
-        )
+        ctx = self._create_render_context()
 
         for idx, mol in enumerate(self._molecules):
+            render_mol = self._prepare_molecule_for_rendering(mol)
             item = {
                 "index": idx,
                 "title": None,
                 "mol_title": mol.GetTitle() if mol.IsValid() else None,
                 "tooltip": {},
                 "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
-                "img": oemol_to_html(mol, ctx=ctx),
+                "img": oemol_to_html(render_mol, ctx=ctx),
             }
 
             # Extract title
@@ -1161,7 +1316,7 @@ class MolGrid:
         cluster_data_js = "null"
         cluster_counts_js = "null"
         cluster_enabled = self.cluster is not None
-        cluster_map = {}
+        cluster_map: Dict[str, List[int]] = {}
 
         if cluster_enabled:
             # Build cluster metadata: {label: [indices], ...}
@@ -2118,7 +2273,7 @@ class MolGrid:
         ></iframe>'''
 
         if _is_marimo():
-            import marimo as mo  # pyright: ignore[reportMissingImports]
+            import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
             return mo.vstack([self.widget, mo.Html(iframe_html)])
         else:
             if HTML is None:

@@ -2,7 +2,7 @@
 
 import json
 import pytest
-from openeye import oechem
+from openeye import oechem, oedepict
 
 
 # ============================================================================
@@ -112,11 +112,88 @@ def test_molgrid_default_parameters(simple_mol):
     assert grid.title is True
     assert grid.tooltip_fields == []
     assert grid.n_items_per_page == 24
-    assert grid.width == 200
-    assert grid.height == 200
+    assert grid.width == 260
+    assert grid.height == 240
     assert grid.image_format == "svg"
     assert grid.selection_enabled is True
-    assert grid.atom_label_font_scale == 1.5
+    assert grid.atom_label_font_scale == 2.0
+    assert grid.structure_scale == oedepict.OEScale_AutoScale
+    assert grid.bond_width_scaling is False
+    assert grid.render_title is False
+    assert grid.depict_orientation == oedepict.OEDepictOrientation_Horizontal
+
+
+def test_molgrid_prepares_wide_depictions_by_default():
+    """Elongated drug-like molecules should render horizontally in MolGrid."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(
+        mol,
+        "O=C(Nc1ccc(F)c(Cl)c1)N1CCN(CC1)c1ccc(OCc2ccccc2)cc1",
+    )
+
+    grid = MolGrid([mol])
+    prepared = grid._prepare_molecule_for_rendering(mol)
+
+    coords = [prepared.GetCoords(atom) for atom in prepared.GetAtoms()]
+    xs = [coord[0] for coord in coords]
+    ys = [coord[1] for coord in coords]
+    assert max(xs) - min(xs) > max(ys) - min(ys)
+
+
+def test_molgrid_set_render_options(simple_mol):
+    """MolGrid render options should update the grid rendering context."""
+    from cnotebook import MolGrid
+
+    grid = MolGrid([simple_mol])
+
+    result = grid.set_render_options(
+        width=320,
+        height=240,
+        min_width=180,
+        min_height=160,
+        max_width=360,
+        max_height=280,
+        structure_scale=1.5 * oedepict.OEScale_Default,
+        atom_label_font_scale=1.25,
+        title_font_scale=0.9,
+        image_format="png",
+        bond_width_scaling=True,
+        title=True,
+        max_heavy_atoms=None,
+    )
+
+    assert result is None
+    assert grid.width == 320
+    assert grid.height == 240
+    assert grid.min_width == 180
+    assert grid.min_height == 160
+    assert grid.max_width == 360
+    assert grid.max_height == 280
+    assert grid.structure_scale == 1.5 * oedepict.OEScale_Default
+    assert grid.atom_label_font_scale == 1.25
+    assert grid.title_font_scale == 0.9
+    assert grid.image_format == "png"
+    assert grid.bond_width_scaling is True
+    assert grid.render_title is True
+    assert grid.max_heavy_atoms is None
+
+
+def test_molgrid_set_render_options_updates_rendered_output(simple_mol):
+    """MolGrid should use updated render options for later HTML output."""
+    from cnotebook import MolGrid
+
+    grid = MolGrid([simple_mol])
+
+    grid.set_render_options(width=320, height=240, image_format="png")
+
+    html = grid.to_html()
+    data = grid._prepare_data()
+
+    assert "--molgrid-image-width: 320px;" in html
+    assert "--molgrid-image-height: 240px;" in html
+    assert "data:image/png" in data[0]["img"]
 
 
 def test_molgrid_custom_parameters(simple_mol):
