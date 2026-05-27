@@ -13,7 +13,7 @@ from openeye import oechem, oedepict
 from .context import CNotebookContext, cnotebook_context
 from .helpers import highlight_smarts as highlight_smarts
 
-__version__ = '2.3.2'
+__version__ = '2.3.3'
 
 # Configure logging first
 log = logging.getLogger("cnotebook")

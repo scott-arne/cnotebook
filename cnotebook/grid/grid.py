@@ -13,11 +13,14 @@ from traitlets.traitlets import Unicode
 from openeye import oechem, oedepict  # type: ignore[import-untyped]
 
 from cnotebook.context import CNotebookContext
-from cnotebook.render import oemol_to_html
+from cnotebook.render import oedisp_to_html, oemol_to_html
 
 # Load List.js from local static file
 _STATIC_DIR = Path(__file__).parent / "static"
 _LIST_JS = (_STATIC_DIR / "list.min.js").read_text()
+_DEFAULT_RENDER_CONTEXT = CNotebookContext()
+DEFAULT_STRUCTURE_SCALE = _DEFAULT_RENDER_CONTEXT.structure_scale
+DEFAULT_ATOM_LABEL_FONT_SCALE = _DEFAULT_RENDER_CONTEXT.atom_label_font_scale
 
 HTML: Any = None
 display: Callable[..., Any] | None = None
@@ -815,13 +818,13 @@ class MolGrid:
         min_height: Optional[float] = 240.0,
         max_width: Optional[float] = None,
         max_height: Optional[float] = None,
-        structure_scale: float = oedepict.OEScale_AutoScale,
-        atom_label_font_scale: float = 2.0,
+        structure_scale: float = DEFAULT_STRUCTURE_SCALE,
+        atom_label_font_scale: float = DEFAULT_ATOM_LABEL_FONT_SCALE,
         title_font_scale: float = 1.0,
         image_format: str = "svg",
         bond_width_scaling: bool = True,
         render_title: bool = False,
-        depict_orientation: int = oedepict.OEDepictOrientation_Horizontal,
+        depict_orientation: int = oedepict.OEDepictOrientation_Default,
         max_heavy_atoms: Optional[int] = 100,
         select: bool = True,
         information: bool = True,
@@ -847,11 +850,13 @@ class MolGrid:
         :param max_width: Maximum image width in pixels, or None for no limit.
         :param max_height: Maximum image height in pixels, or None for no limit.
         :param structure_scale: Scale factor for structure rendering. Defaults
-            to auto-scale so drug-like molecules fill each grid cell.
+            to the standard CNotebook molecule scale so grid depictions match
+            single-molecule depictions when no shrink-to-fit is needed.
         :param atom_label_font_scale: Scale factor for atom labels.
         :param title_font_scale: Scale factor for title font.
         :param image_format: Image format ("svg" or "png").
-        :param bond_width_scaling: Whether to scale bond widths with structure scale.
+        :param bond_width_scaling: Whether MolGrid should reduce bond widths
+            when a molecule is shrunk below the baseline structure scale.
         :param render_title: Whether to draw molecule titles inside rendered images.
             Card labels remain controlled by the ``title`` parameter.
         :param depict_orientation: Preferred 2D depiction orientation for grid
@@ -1193,29 +1198,118 @@ class MolGrid:
             atom_label_font_scale=self.atom_label_font_scale,
             title_font_scale=self.title_font_scale,
             image_format=self.image_format,
-            bond_width_scaling=self.bond_width_scaling,
+            bond_width_scaling=False,
             title=self.render_title,
             max_heavy_atoms=self.max_heavy_atoms,
             scope="local",
         )
 
-    def _prepare_data(self) -> List[dict]:
+    @staticmethod
+    def _set_bond_display_line_width(
+        bond_display: oedepict.OE2DBondDisplay,
+        line_width: float,
+    ) -> None:
+        """Set both pens on a bond display while preserving existing styling.
+
+        :param bond_display: Bond display to update.
+        :param line_width: New line width.
+        """
+        for get_pen, set_pen in (
+            (bond_display.GetBgnPen, bond_display.SetBgnPen),
+            (bond_display.GetEndPen, bond_display.SetEndPen),
+        ):
+            pen = oedepict.OEPen(get_pen())
+            pen.SetLineWidth(line_width)
+            set_pen(pen)
+
+    def _scale_bond_widths_for_display(
+        self,
+        disp: oedepict.OE2DMolDisplay,
+        *,
+        baseline_scale: float,
+    ) -> None:
+        """Reduce bond widths when the display was shrunk below baseline scale.
+
+        OpenEye's built-in bond-width scaling changes the default baseline pen
+        too aggressively for MolGrid. This keeps unshrunk molecules visually
+        consistent with single-molecule rendering and only scales pens down
+        when the structure itself had to shrink to fit the grid card.
+
+        :param disp: Molecule display to update.
+        :param baseline_scale: Structure scale used when no shrink-to-fit occurs.
+        """
+        if not self.bond_width_scaling or baseline_scale <= 0:
+            return
+
+        scale = disp.GetScale()
+        if scale >= baseline_scale:
+            return
+
+        default_width = oedepict.OE2DMolDisplayOptions().GetDefaultBondPen().GetLineWidth()
+        line_width = max(1.0, default_width * (scale / baseline_scale))
+        for bond_display in disp.GetBondDisplays():
+            self._set_bond_display_line_width(bond_display, line_width)
+
+    def _create_molecule_display(
+        self,
+        mol: oechem.OEMolBase,
+        ctx: Optional[CNotebookContext] = None,
+    ) -> oedepict.OE2DMolDisplay:
+        """Create a grid molecule display with MolGrid bond-width handling.
+
+        :param mol: Prepared molecule to display.
+        :param ctx: Optional render context. Defaults to this grid's context.
+        :returns: Molecule display.
+        """
+        if ctx is None:
+            ctx = self._create_render_context()
+
+        disp = ctx.create_molecule_display(mol)
+        self._scale_bond_widths_for_display(disp, baseline_scale=self.structure_scale)
+        return disp
+
+    def _render_molecule_html(
+        self,
+        mol: oechem.OEMolBase,
+        *,
+        ctx: CNotebookContext,
+    ) -> str:
+        """Render a molecule using MolGrid display post-processing.
+
+        :param mol: Molecule to render.
+        :param ctx: Render context.
+        :returns: HTML image markup.
+        """
+        if (
+            isinstance(mol, oechem.OEMolBase)
+            and mol.IsValid()
+            and (
+                ctx.max_heavy_atoms is None
+                or oechem.OECount(mol, oechem.OEIsHeavy()) <= ctx.max_heavy_atoms
+            )
+        ):
+            disp = self._create_molecule_display(mol, ctx=ctx)
+            return oedisp_to_html(disp, ctx=ctx)
+
+        return oemol_to_html(mol, ctx=ctx)
+
+    def _prepare_data(self) -> List[Dict[str, Any]]:
         """Prepare molecule data for template rendering.
 
         :returns: List of dicts with molecule data for each item.
         """
-        data = []
+        data: List[Dict[str, Any]] = []
         ctx = self._create_render_context()
 
         for idx, mol in enumerate(self._molecules):
             render_mol = self._prepare_molecule_for_rendering(mol)
-            item = {
+            item: Dict[str, Any] = {
                 "index": idx,
                 "title": None,
                 "mol_title": mol.GetTitle() if mol.IsValid() else None,
                 "tooltip": {},
                 "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
-                "img": oemol_to_html(render_mol, ctx=ctx),
+                "img": self._render_molecule_html(render_mol, ctx=ctx),
             }
 
             # Extract title

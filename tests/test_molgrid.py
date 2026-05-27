@@ -3,6 +3,7 @@
 import json
 import pytest
 from openeye import oechem, oedepict
+from cnotebook.context import CNotebookContext
 
 
 # ============================================================================
@@ -84,6 +85,18 @@ def test_cnotebook_molgrid_function():
     assert grid.name == "factory-test"
 
 
+def test_cnotebook_molgrid_factory_uses_class_render_defaults(simple_mol):
+    """The top-level factory should match MolGrid render defaults."""
+    from cnotebook import molgrid
+
+    grid = molgrid([simple_mol])
+    single_ctx = CNotebookContext()
+
+    assert grid.structure_scale == pytest.approx(single_ctx.structure_scale)
+    assert grid.atom_label_font_scale == pytest.approx(single_ctx.atom_label_font_scale)
+    assert grid.bond_width_scaling is True
+
+
 # ============================================================================
 # Initialization Tests
 # ============================================================================
@@ -116,15 +129,56 @@ def test_molgrid_default_parameters(simple_mol):
     assert grid.height == 240
     assert grid.image_format == "svg"
     assert grid.selection_enabled is True
-    assert grid.atom_label_font_scale == 2.0
-    assert grid.structure_scale == oedepict.OEScale_AutoScale
+    assert grid.atom_label_font_scale == pytest.approx(1.15)
+    assert grid.atom_label_font_scale == pytest.approx(CNotebookContext().atom_label_font_scale)
+    assert grid.structure_scale == pytest.approx(CNotebookContext().structure_scale)
     assert grid.bond_width_scaling is True
     assert grid.render_title is False
-    assert grid.depict_orientation == oedepict.OEDepictOrientation_Horizontal
+    assert grid.depict_orientation == oedepict.OEDepictOrientation_Default
 
 
-def test_molgrid_prepares_wide_depictions_by_default():
-    """Elongated drug-like molecules should render horizontally in MolGrid."""
+def test_molgrid_does_not_enlarge_small_molecules_past_grid_scale(simple_mol):
+    """Small molecules should keep the grid's baseline depiction scale."""
+    from cnotebook import MolGrid
+
+    grid = MolGrid([simple_mol])
+    prepared = grid._prepare_molecule_for_rendering(simple_mol)
+    display = grid._create_render_context().create_molecule_display(prepared)
+
+    assert display.GetScale() == pytest.approx(grid.structure_scale)
+
+
+def test_molgrid_compact_molecule_matches_single_molecule_scale_and_bonds():
+    """Compact molecules should match the single-molecule depiction style."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CC(C)(C)c1nn(C)c(C(=O)O)c1O")
+
+    grid = MolGrid([mol])
+    single_ctx = CNotebookContext()
+    single = oechem.OEGraphMol(mol)
+    oedepict.OEPrepareDepiction(single, True)
+    single_display = single_ctx.create_molecule_display(single)
+
+    prepared = grid._prepare_molecule_for_rendering(mol)
+    display = grid._create_molecule_display(prepared)
+
+    single_bond_widths = [
+        bond_display.GetBgnPen().GetLineWidth()
+        for bond_display in single_display.GetBondDisplays()
+    ]
+    grid_bond_widths = [
+        bond_display.GetBgnPen().GetLineWidth()
+        for bond_display in display.GetBondDisplays()
+    ]
+
+    assert display.GetScale() == pytest.approx(single_display.GetScale())
+    assert max(grid_bond_widths) == pytest.approx(max(single_bond_widths))
+
+
+def test_molgrid_prepares_depictions_with_single_molecule_orientation_by_default():
+    """Default MolGrid preparation should match single-molecule orientation."""
     from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
@@ -134,6 +188,32 @@ def test_molgrid_prepares_wide_depictions_by_default():
     )
 
     grid = MolGrid([mol])
+    prepared = grid._prepare_molecule_for_rendering(mol)
+    single = oechem.OEGraphMol(mol)
+    oedepict.OEPrepareDepiction(single, True)
+
+    coords = [prepared.GetCoords(atom) for atom in prepared.GetAtoms()]
+    xs = [coord[0] for coord in coords]
+    ys = [coord[1] for coord in coords]
+    single_coords = [single.GetCoords(atom) for atom in single.GetAtoms()]
+    single_xs = [coord[0] for coord in single_coords]
+    single_ys = [coord[1] for coord in single_coords]
+
+    assert max(xs) - min(xs) == pytest.approx(max(single_xs) - min(single_xs))
+    assert max(ys) - min(ys) == pytest.approx(max(single_ys) - min(single_ys))
+
+
+def test_molgrid_can_prepare_wide_depictions_when_requested():
+    """Elongated drug-like molecules can still be rendered horizontally."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(
+        mol,
+        "O=C(Nc1ccc(F)c(Cl)c1)N1CCN(CC1)c1ccc(OCc2ccccc2)cc1",
+    )
+
+    grid = MolGrid([mol], depict_orientation=oedepict.OEDepictOrientation_Horizontal)
     prepared = grid._prepare_molecule_for_rendering(mol)
 
     coords = [prepared.GetCoords(atom) for atom in prepared.GetAtoms()]
@@ -143,7 +223,7 @@ def test_molgrid_prepares_wide_depictions_by_default():
 
 
 def test_molgrid_scales_bond_widths_for_larger_molecules_by_default():
-    """Larger auto-scaled molecules should not keep the unscaled bond pen."""
+    """Larger scaled-down molecules should not keep the unscaled bond pen."""
     from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
@@ -154,7 +234,11 @@ def test_molgrid_scales_bond_widths_for_larger_molecules_by_default():
 
     grid = MolGrid([mol])
     prepared = grid._prepare_molecule_for_rendering(mol)
-    display = grid._create_render_context().create_molecule_display(prepared)
+    display = grid._create_molecule_display(prepared)
+
+    assert display.GetWidth() <= grid.width
+    assert display.GetHeight() <= grid.height
+    assert display.GetScale() < oedepict.OEScale_Default
 
     bond_widths = [
         bond_display.GetBgnPen().GetLineWidth()

@@ -78,6 +78,7 @@ class TestCNotebookContext:
         assert ctx.min_height == 200.0
         assert ctx.max_width is None
         assert ctx.max_height is None
+        assert ctx.atom_label_font_scale == pytest.approx(1.15)
         assert ctx.image_format == "png"
         assert ctx.bond_width_scaling is False
         assert ctx.title is True
@@ -299,7 +300,7 @@ class TestCNotebookContext:
         assert ctx.width == 0
         assert ctx.height == 0
         assert ctx.image_format == "png"
-        assert ctx.atom_label_font_scale == 1.0
+        assert ctx.atom_label_font_scale == pytest.approx(1.15)
         assert ctx.max_heavy_atoms == 100
 
 

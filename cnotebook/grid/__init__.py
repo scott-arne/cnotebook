@@ -1,6 +1,6 @@
 """Interactive molecule grid for Jupyter and Marimo notebooks."""
 
-from cnotebook.grid.grid import MolGrid
+from cnotebook.grid.grid import DEFAULT_ATOM_LABEL_FONT_SCALE, DEFAULT_STRUCTURE_SCALE, MolGrid
 from typing import Dict, Iterable, List, Optional, Union
 from openeye import oedepict  # type: ignore[import-untyped]
 
@@ -17,13 +17,13 @@ def molgrid(
     min_height: Optional[float] = 240.0,
     max_width: Optional[float] = None,
     max_height: Optional[float] = None,
-    structure_scale: float = oedepict.OEScale_AutoScale,
-    atom_label_font_scale: float = 2.0,
+    structure_scale: float = DEFAULT_STRUCTURE_SCALE,
+    atom_label_font_scale: float = DEFAULT_ATOM_LABEL_FONT_SCALE,
     title_font_scale: float = 1.0,
     image_format: str = "svg",
-    bond_width_scaling: bool = False,
+    bond_width_scaling: bool = True,
     render_title: bool = False,
-    depict_orientation: int = oedepict.OEDepictOrientation_Horizontal,
+    depict_orientation: int = oedepict.OEDepictOrientation_Default,
     max_heavy_atoms: Optional[int] = 100,
     select: bool = True,
     information: bool = True,
@@ -46,11 +46,14 @@ def molgrid(
     :param min_height: Minimum image height in pixels.
     :param max_width: Maximum image width in pixels, or None for no limit.
     :param max_height: Maximum image height in pixels, or None for no limit.
-    :param structure_scale: Scale factor for structure rendering.
+    :param structure_scale: Scale factor for structure rendering. Defaults to
+        the standard CNotebook molecule scale so grid depictions match
+        single-molecule depictions when no shrink-to-fit is needed.
     :param atom_label_font_scale: Scale factor for atom labels.
     :param title_font_scale: Scale factor for title font.
     :param image_format: "svg" or "png" (default "svg").
-    :param bond_width_scaling: Whether to scale bond widths with structure scale.
+    :param bond_width_scaling: Whether MolGrid should reduce bond widths when
+        a molecule is shrunk below the baseline structure scale.
     :param render_title: Whether to draw titles inside molecule images.
         Card labels remain controlled by the ``title`` parameter.
     :param depict_orientation: Preferred 2D depiction orientation for grid
