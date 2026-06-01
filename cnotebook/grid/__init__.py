@@ -1,8 +1,12 @@
 """Interactive molecule grid for Jupyter and Marimo notebooks."""
 
-from cnotebook.grid.grid import DEFAULT_ATOM_LABEL_FONT_SCALE, DEFAULT_STRUCTURE_SCALE, MolGrid
+from cnotebook.grid.grid import (
+    BEST_FIT_ORIENTATION,
+    DEFAULT_ATOM_LABEL_FONT_SCALE,
+    DEFAULT_STRUCTURE_SCALE,
+    MolGrid,
+)
 from typing import Dict, Iterable, List, Optional, Union
-from openeye import oedepict  # type: ignore[import-untyped]
 
 
 def molgrid(
@@ -23,7 +27,7 @@ def molgrid(
     image_format: str = "svg",
     bond_width_scaling: bool = True,
     render_title: bool = False,
-    depict_orientation: int = oedepict.OEDepictOrientation_Default,
+    depict_orientation: int = BEST_FIT_ORIENTATION,
     max_heavy_atoms: Optional[int] = 100,
     select: bool = True,
     information: bool = True,
@@ -57,7 +61,8 @@ def molgrid(
     :param render_title: Whether to draw titles inside molecule images.
         Card labels remain controlled by the ``title`` parameter.
     :param depict_orientation: Preferred 2D depiction orientation for grid
-        renderings.
+        renderings. Defaults to :data:`BEST_FIT_ORIENTATION`, which prepares
+        each molecule in whichever orientation renders largest in the card.
     :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
     :param select: Enable selection checkboxes.
     :param information: Enable info button with hover tooltip.
@@ -101,4 +106,4 @@ def molgrid(
     )
 
 
-__all__ = ["MolGrid", "molgrid"]
+__all__ = ["BEST_FIT_ORIENTATION", "MolGrid", "molgrid"]

@@ -318,7 +318,11 @@ if _env_info.marimo_available:
 
 # Export molgrid at top level if available
 if _env_info.molgrid_available:
-    from .grid import MolGrid as MolGrid, molgrid as molgrid
+    from .grid import (
+        BEST_FIT_ORIENTATION as BEST_FIT_ORIENTATION,
+        MolGrid as MolGrid,
+        molgrid as molgrid,
+    )
 
 # Export C3D at top level if available
 if _env_info.c3d_available:

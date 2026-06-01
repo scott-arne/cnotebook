@@ -22,6 +22,19 @@ _DEFAULT_RENDER_CONTEXT = CNotebookContext()
 DEFAULT_STRUCTURE_SCALE = _DEFAULT_RENDER_CONTEXT.structure_scale
 DEFAULT_ATOM_LABEL_FONT_SCALE = _DEFAULT_RENDER_CONTEXT.atom_label_font_scale
 
+# Sentinel ``depict_orientation`` requesting per-molecule best-fit selection.
+# Real OEDepictOrientation values are positive, so a negative value cannot
+# collide with one that would be passed to ``SetDepictOrientation``.
+BEST_FIT_ORIENTATION = -1
+
+# Orientations considered when ``BEST_FIT_ORIENTATION`` is selected. Default is
+# tried first so it wins ties: elongated molecules only rotate to Horizontal
+# when doing so lets them render larger than their natural orientation.
+_BEST_FIT_CANDIDATES = (
+    oedepict.OEDepictOrientation_Default,
+    oedepict.OEDepictOrientation_Horizontal,
+)
+
 HTML: Any = None
 display: Callable[..., Any] | None = None
 
@@ -824,7 +837,7 @@ class MolGrid:
         image_format: str = "svg",
         bond_width_scaling: bool = True,
         render_title: bool = False,
-        depict_orientation: int = oedepict.OEDepictOrientation_Default,
+        depict_orientation: int = BEST_FIT_ORIENTATION,
         max_heavy_atoms: Optional[int] = 100,
         select: bool = True,
         information: bool = True,
@@ -860,7 +873,10 @@ class MolGrid:
         :param render_title: Whether to draw molecule titles inside rendered images.
             Card labels remain controlled by the ``title`` parameter.
         :param depict_orientation: Preferred 2D depiction orientation for grid
-            renderings.
+            renderings. Defaults to :data:`BEST_FIT_ORIENTATION`, which prepares
+            each molecule in whichever orientation renders largest in the card.
+            Pass an explicit ``oedepict.OEDepictOrientation_*`` value to force a
+            single orientation for every molecule.
         :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
         :param select: Enable selection checkboxes.
         :param information: Enable info button with hover tooltip.
@@ -1135,7 +1151,7 @@ class MolGrid:
         :param bond_width_scaling: Whether to scale bond widths with structure scale.
         :param title: Whether to display molecule titles inside rendered images.
         :param depict_orientation: Preferred 2D depiction orientation for grid
-            renderings.
+            renderings, or :data:`BEST_FIT_ORIENTATION` to pick per molecule.
         :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
         """
         options = _collect_render_options(
@@ -1163,11 +1179,68 @@ class MolGrid:
         for name, value in options.items():
             setattr(self, name, value)
 
+    @staticmethod
+    def _prepare_in_orientation(mol, orientation: int):
+        """Create a depiction-prepared copy of ``mol`` in a given orientation.
+
+        :param mol: OpenEye molecule object.
+        :param orientation: OEDepictOrientation value.
+        :returns: Prepared molecule copy.
+        """
+        render_mol = mol.CreateCopy()
+        opts = oedepict.OEPrepareDepictionOptions()
+        opts.SetDepictOrientation(orientation)
+        oedepict.OEPrepareDepiction(render_mol, opts)
+        return render_mol
+
+    def _fitting_scale(self, prepared) -> float:
+        """Largest depiction scale that fits ``prepared`` in the grid card.
+
+        Uses OpenEye's AutoScale on the grid card dimensions and caps the
+        result at the baseline ``structure_scale`` so molecules small enough to
+        render at full scale are not enlarged past it.
+
+        :param prepared: Depiction-prepared molecule.
+        :returns: Capped fitting scale for this molecule in the grid card.
+        """
+        opts = oedepict.OE2DMolDisplayOptions()
+        opts.SetWidth(self.width)
+        opts.SetHeight(self.height)
+        opts.SetScale(oedepict.OEScale_AutoScale)
+        opts.SetTitleLocation(oedepict.OETitleLocation_Hidden)
+        fit = oedepict.OE2DMolDisplay(prepared, opts).GetScale()
+        return min(self.structure_scale, fit)
+
+    def _prepare_best_fit(self, mol):
+        """Prepare ``mol`` in whichever candidate orientation renders largest.
+
+        Compact molecules render at the capped baseline scale in every
+        orientation and so keep their natural (Default) depiction. Elongated
+        molecules that must shrink to fit pick the orientation that lets them
+        fill the card, avoiding narrow vertical strips.
+
+        :param mol: OpenEye molecule object.
+        :returns: Prepared molecule copy in the best-fitting orientation.
+        """
+        best_mol = self._prepare_in_orientation(mol, _BEST_FIT_CANDIDATES[0])
+        best_scale = self._fitting_scale(best_mol)
+        for orientation in _BEST_FIT_CANDIDATES[1:]:
+            prepared = self._prepare_in_orientation(mol, orientation)
+            scale = self._fitting_scale(prepared)
+            if scale > best_scale:
+                best_scale = scale
+                best_mol = prepared
+        return best_mol
+
     def _prepare_molecule_for_rendering(self, mol):
         """Create a molecule copy prepared for MolGrid rendering.
 
-        MolGrid favors horizontal depictions so elongated drug-like molecules
-        use card width instead of becoming narrow vertical strips.
+        With ``depict_orientation`` set to :data:`BEST_FIT_ORIENTATION` (the
+        default), each molecule is prepared in whichever candidate orientation
+        lets it render largest in the grid card, so elongated drug-like
+        molecules use card width instead of becoming narrow vertical strips
+        while compact molecules keep their natural single-molecule depiction.
+        Any explicit orientation is honored as-is.
 
         :param mol: OpenEye molecule object.
         :returns: Prepared molecule copy.
@@ -1175,12 +1248,13 @@ class MolGrid:
         if not isinstance(mol, oechem.OEMolBase):
             return mol
 
-        render_mol = mol.CreateCopy()
-        if render_mol.IsValid() and render_mol.NumAtoms() > 0:
-            opts = oedepict.OEPrepareDepictionOptions()
-            opts.SetDepictOrientation(self.depict_orientation)
-            oedepict.OEPrepareDepiction(render_mol, opts)
-        return render_mol
+        if not (mol.IsValid() and mol.NumAtoms() > 0):
+            return mol.CreateCopy()
+
+        if self.depict_orientation == BEST_FIT_ORIENTATION:
+            return self._prepare_best_fit(mol)
+
+        return self._prepare_in_orientation(mol, self.depict_orientation)
 
     def _create_render_context(self) -> CNotebookContext:
         """Create a render context from the grid's current render options.

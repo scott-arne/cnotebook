@@ -4,6 +4,7 @@ import json
 import pytest
 from openeye import oechem, oedepict
 from cnotebook.context import CNotebookContext
+from cnotebook.grid import BEST_FIT_ORIENTATION
 
 
 # ============================================================================
@@ -134,7 +135,7 @@ def test_molgrid_default_parameters(simple_mol):
     assert grid.structure_scale == pytest.approx(CNotebookContext().structure_scale)
     assert grid.bond_width_scaling is True
     assert grid.render_title is False
-    assert grid.depict_orientation == oedepict.OEDepictOrientation_Default
+    assert grid.depict_orientation == BEST_FIT_ORIENTATION
 
 
 def test_molgrid_does_not_enlarge_small_molecules_past_grid_scale(simple_mol):
@@ -177,8 +178,13 @@ def test_molgrid_compact_molecule_matches_single_molecule_scale_and_bonds():
     assert max(grid_bond_widths) == pytest.approx(max(single_bond_widths))
 
 
-def test_molgrid_prepares_depictions_with_single_molecule_orientation_by_default():
-    """Default MolGrid preparation should match single-molecule orientation."""
+def test_molgrid_best_fit_orients_elongated_molecules_to_fill_card():
+    """Best-fit (the default) should widen elongated molecules to fill the card.
+
+    An elongated molecule rendered in its natural single-molecule orientation
+    becomes a narrow vertical strip in a near-square card. Best-fit instead
+    picks the orientation that lets it render at a larger scale.
+    """
     from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
@@ -188,6 +194,32 @@ def test_molgrid_prepares_depictions_with_single_molecule_orientation_by_default
     )
 
     grid = MolGrid([mol])
+    assert grid.depict_orientation == BEST_FIT_ORIENTATION
+
+    best_fit = grid._prepare_molecule_for_rendering(mol)
+    natural = grid._prepare_in_orientation(mol, oedepict.OEDepictOrientation_Default)
+
+    best_coords = [best_fit.GetCoords(atom) for atom in best_fit.GetAtoms()]
+    best_xs = [coord[0] for coord in best_coords]
+    best_ys = [coord[1] for coord in best_coords]
+
+    # Best-fit lays the molecule out wider than tall and renders at a larger
+    # scale than the natural single-molecule orientation would in this card.
+    assert max(best_xs) - min(best_xs) > max(best_ys) - min(best_ys)
+    assert grid._fitting_scale(best_fit) >= grid._fitting_scale(natural)
+
+
+def test_molgrid_explicit_orientation_matches_single_molecule():
+    """An explicit Default orientation should match single-molecule layout."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(
+        mol,
+        "O=C(Nc1ccc(F)c(Cl)c1)N1CCN(CC1)c1ccc(OCc2ccccc2)cc1",
+    )
+
+    grid = MolGrid([mol], depict_orientation=oedepict.OEDepictOrientation_Default)
     prepared = grid._prepare_molecule_for_rendering(mol)
     single = oechem.OEGraphMol(mol)
     oedepict.OEPrepareDepiction(single, True)
