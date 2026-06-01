@@ -35,6 +35,13 @@ _BEST_FIT_CANDIDATES = (
     oedepict.OEDepictOrientation_Horizontal,
 )
 
+# Depiction margin (percent) used for grid cards. In fixed-scale mode the
+# margin bounds how large a molecule that must shrink to fit can be drawn;
+# OpenEye's default 5% leaves visible whitespace around large structures, so
+# the grid uses OpenEye's 3% floor to let them render a touch larger. Molecules
+# small enough to render at the full structure scale are unaffected.
+_GRID_DEPICTION_MARGIN = 3.0
+
 HTML: Any = None
 display: Callable[..., Any] | None = None
 
@@ -1207,6 +1214,7 @@ class MolGrid:
         opts.SetWidth(self.width)
         opts.SetHeight(self.height)
         opts.SetScale(oedepict.OEScale_AutoScale)
+        opts.SetMargins(_GRID_DEPICTION_MARGIN)
         opts.SetTitleLocation(oedepict.OETitleLocation_Hidden)
         fit = oedepict.OE2DMolDisplay(prepared, opts).GetScale()
         return min(self.structure_scale, fit)
@@ -1338,7 +1346,18 @@ class MolGrid:
         if ctx is None:
             ctx = self._create_render_context()
 
-        disp = ctx.create_molecule_display(mol)
+        if ctx.structure_scale != oedepict.OEScale_AutoScale:
+            # Fixed-scale mode (the grid default): replicate the context's
+            # display construction but tighten the depiction margin so large
+            # molecules that must shrink to fit are drawn a touch larger. The
+            # context returns early without min/max handling in this mode, so
+            # nothing is lost by building the display here.
+            opts = ctx.display_options
+            opts.SetMargins(_GRID_DEPICTION_MARGIN)
+            disp = oedepict.OE2DMolDisplay(mol, opts)
+        else:
+            disp = ctx.create_molecule_display(mol)
+
         self._scale_bond_widths_for_display(disp, baseline_scale=self.structure_scale)
         return disp
 

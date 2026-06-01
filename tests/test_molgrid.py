@@ -280,6 +280,46 @@ def test_molgrid_scales_bond_widths_for_larger_molecules_by_default():
     assert max(bond_widths) < oedepict.OE2DMolDisplayOptions().GetDefaultBondPen().GetLineWidth()
 
 
+def test_molgrid_tightens_margin_to_enlarge_large_molecules():
+    """Large molecules should render larger than at OpenEye's default margin."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(
+        mol,
+        "O=C1CCC(N2C(=O)c3cccc(NC(=O)CCCCCCN4CCN(c5ccc(Nc6ncc(Cl)c"
+        "(Nc7ccccc7)n6)cc5)CC4)c3C2=O)C(=O)N1",
+    )
+
+    grid = MolGrid([mol])
+    prepared = grid._prepare_molecule_for_rendering(mol)
+    display = grid._create_molecule_display(prepared)
+
+    # Reference: same molecule at OpenEye's default 5% depiction margin.
+    default_opts = oedepict.OE2DMolDisplayOptions()
+    default_opts.SetWidth(grid.width)
+    default_opts.SetHeight(grid.height)
+    default_opts.SetScale(grid.structure_scale)
+    default_opts.SetTitleLocation(oedepict.OETitleLocation_Hidden)
+    default_scale = oedepict.OE2DMolDisplay(prepared, default_opts).GetScale()
+
+    # The molecule must shrink below the baseline scale to fit, and the
+    # tightened grid margin lets it render larger than the default would.
+    assert display.GetScale() < grid.structure_scale
+    assert display.GetScale() > default_scale
+
+
+def test_molgrid_margin_does_not_enlarge_small_molecules(simple_mol):
+    """Small molecules stay at the baseline scale regardless of margin."""
+    from cnotebook import MolGrid
+
+    grid = MolGrid([simple_mol])
+    prepared = grid._prepare_molecule_for_rendering(simple_mol)
+    display = grid._create_molecule_display(prepared)
+
+    assert display.GetScale() == pytest.approx(grid.structure_scale)
+
+
 def test_molgrid_set_render_options(simple_mol):
     """MolGrid render options should update the grid rendering context."""
     from cnotebook import MolGrid
