@@ -124,7 +124,7 @@ class TestCreateStructureHighlighter:
         opts = oedepict.OE2DMolDisplayOptions()
         return oedepict.OE2DMolDisplay(mol, opts)
 
-    @patch("cnotebook.helpers.oedepict.OEAddHighlighting")
+    @patch("cnotebook.core.helpers.oedepict.OEAddHighlighting")
     def test_string_query_traditional_highlighter_adds_matches(self, mock_add_highlighting):
         """A string SMARTS query should highlight real substructure matches."""
         color = oechem.OEColor(oechem.OELightBlue)
@@ -138,7 +138,7 @@ class TestCreateStructureHighlighter:
 
         assert mock_add_highlighting.call_count >= 1
 
-    @patch("cnotebook.helpers.oedepict.OEAddHighlightOverlay")
+    @patch("cnotebook.core.helpers.oedepict.OEAddHighlightOverlay")
     def test_subsearch_overlay_highlighter_adds_overlay(self, mock_add_overlay):
         """An OESubSearch query should drive overlay highlighting."""
         ss = oechem.OESubSearch("c1ccccc1")
@@ -148,7 +148,7 @@ class TestCreateStructureHighlighter:
 
         mock_add_overlay.assert_called_once()
 
-    @patch("cnotebook.helpers.oedepict.OEAddHighlighting")
+    @patch("cnotebook.core.helpers.oedepict.OEAddHighlighting")
     def test_traditional_highlighter_uses_first_color_from_iterator(self, mock_add_highlighting):
         """Traditional highlighting should work when color is an OEColorIter."""
         highlighter = create_structure_highlighter(
@@ -214,8 +214,8 @@ class TestCreateStructureHighlighterAdvanced:
         opts = oedepict.OE2DMolDisplayOptions()
         return oedepict.OE2DMolDisplay(mol, opts)
 
-    @patch('cnotebook.helpers.log')
-    @patch("cnotebook.helpers.oedepict.OEAddHighlighting")
+    @patch('cnotebook.core.helpers.log')
+    @patch("cnotebook.core.helpers.oedepict.OEAddHighlighting")
     def test_highlighter_overlay_single_color_fallback(self, mock_add_highlighting, mock_log):
         """Test that overlay with single OEColor triggers warning and fallback."""
         color = oechem.OEColor(oechem.OELightBlue)
