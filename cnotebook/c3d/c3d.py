@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from html import escape
 from pathlib import Path
@@ -10,15 +9,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Dict, List, Optional, Union
 
 from cnotebook.core.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
-
-# ---------------------------------------------------------------------------
-# Load static assets at module level
-# ---------------------------------------------------------------------------
-
-_STATIC_DIR = Path(__file__).parent / "static"
-_3DMOL_JS = (_STATIC_DIR / "3Dmol-min.js").read_text()
-_GUI_JS = (_STATIC_DIR / "3dmol-gui.js").read_text()
-_GUI_CSS = (_STATIC_DIR / "3dmol-gui.css").read_text()
+from cnotebook.core import viewer3d
 
 # ---------------------------------------------------------------------------
 # Style presets
@@ -754,104 +745,27 @@ class C3D:
     # ------------------------------------------------------------------
 
     def _build_init_payload(self) -> Dict[str, Any]:
-        """Build the JSON-serializable initialization payload.
-
-        This dict is embedded in the HTML page as
-        ``window.__C3D_INIT__`` and consumed by the GUI JavaScript.
-
-        When the user has not explicitly configured UI or background,
-        smart defaults are applied based on molecule count:
-
-        - **1 molecule** -- no GUI panels, white background.
-        - **2 molecules** -- sidebar only (no menubar or console).
-        - **3+ molecules** -- full GUI (all panels visible).
-
-        :returns: Payload dictionary.
-        """
-        molecules = [
-            {
-                "name": m.name,
-                "data": m.data,
-                "format": m.format,
-                "disabled": m.disabled,
-            }
-            for m in self._molecules
-        ]
-
-        n_mols = len(self._molecules)
-
-        # Smart UI defaults based on molecule count
-        if self._ui_explicit:
-            ui = dict(self._ui)
-        elif n_mols <= 1:
-            ui = {"sidebar": False, "menubar": False, "console": False}
-        elif n_mols == 2:
-            ui = {"sidebar": True, "menubar": False, "console": False}
-        else:
-            ui = dict(self._ui)
-
-        # Default to orient when neither zoom_to nor orient was set
-        orient = self._orient
-        if self._orient is None and self._zoom_to is None:
-            orient = True
-
-        return {
-            "molecules": molecules,
-            "operations": list(self._operations),
-            "ui": ui,
-            "theme": self._theme,
-            "background": self._background,
-            "zoomTo": self._zoom_to,
-            "orient": orient,
-        }
+        """Build the JSON-serializable initialization payload (see core.viewer3d)."""
+        return viewer3d.build_init_payload(
+            self._molecules,
+            self._operations,
+            ui=self._ui,
+            ui_explicit=self._ui_explicit,
+            theme=self._theme,
+            background=self._background,
+            zoom_to=self._zoom_to,
+            orient=self._orient,
+        )
 
     def to_html(self) -> str:
-        """Generate a self-contained HTML document for the viewer.
-
-        All JavaScript and CSS dependencies are inlined so the document
-        requires no external network requests.
-
-        :returns: Complete HTML document as a string.
-        :raises ValueError: If no molecules have been added.
-        """
+        """Generate a self-contained HTML document for the viewer."""
         if not self._molecules:
             raise ValueError(
                 "No molecules have been added. "
                 "Call add_molecule() or add_design_unit() first."
             )
-
         payload = self._build_init_payload()
-        payload_json = json.dumps(payload)
-
-        return (
-            "<!DOCTYPE html>\n"
-            '<html lang="en">\n'
-            "<head>\n"
-            '<meta charset="UTF-8">\n'
-            '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
-            "<style>\n"
-            f"{_GUI_CSS}\n"
-            "</style>\n"
-            "<script>\n"
-            f"{_3DMOL_JS}\n"
-            "</script>\n"
-            "</head>\n"
-            "<body>\n"
-            '<div id="app">\n'
-            '  <div id="menubar-container" class="menubar"></div>\n'
-            '  <div id="viewer-container" class="viewer-container"></div>\n'
-            '  <div id="sidebar-container" class="sidebar"></div>\n'
-            '  <div id="terminal-container" class="terminal"></div>\n'
-            "</div>\n"
-            "<script>\n"
-            f"window.__C3D_INIT__ = {payload_json};\n"
-            "</script>\n"
-            '<script type="module">\n'
-            f"{_GUI_JS}\n"
-            "</script>\n"
-            "</body>\n"
-            "</html>"
-        )
+        return viewer3d.render_html(payload, width=self._width, height=self._effective_height)
 
     # ------------------------------------------------------------------
     # Display
