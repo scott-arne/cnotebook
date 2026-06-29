@@ -117,7 +117,7 @@ exclude = ["*test*"]
 [tool.setuptools.package-data]
 
 # Include static files (JS, CSS) in the package
-cnotebook = ["py.typed", "grid/static/*", "c3d/static/*"]
+cnotebook = ["py.typed", "grid/static/*", "c3d/static/*", "core/static/*"]
 
 
 [tool.setuptools.dynamic]
