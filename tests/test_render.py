@@ -94,7 +94,7 @@ class TestOedispToHtml:
     @patch('openeye.oedepict.OEWriteImageToString')
     @patch('openeye.oedepict.OERenderMolecule')
     @patch('openeye.oedepict.OEImage')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oedisp_to_html_basic(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
         """Test converting OE2DMolDisplay to HTML - basic functionality"""
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
@@ -124,7 +124,7 @@ class TestOedispToHtml:
     @patch('openeye.oedepict.OEWriteImageToString')
     @patch('openeye.oedepict.OERenderMolecule')
     @patch('openeye.oedepict.OEImage')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oedisp_to_html_uses_ctx_dimensions(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
         """When both ctx.width and ctx.height are non-zero, they are used for display sizing."""
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
@@ -151,7 +151,7 @@ class TestOedispToHtml:
     @patch('openeye.oedepict.OEWriteImageToString')
     @patch('openeye.oedepict.OERenderMolecule')
     @patch('openeye.oedepict.OEImage')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oedisp_to_html_width_only_scales_height(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
         """When only ctx.width is set, height is scaled proportionally."""
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
@@ -174,7 +174,7 @@ class TestOedispToHtml:
     @patch('openeye.oedepict.OEWriteImageToString')
     @patch('openeye.oedepict.OERenderMolecule')
     @patch('openeye.oedepict.OEImage')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oedisp_to_html_height_only_scales_width(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
         """When only ctx.height is set, width is scaled proportionally."""
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
@@ -197,7 +197,7 @@ class TestOedispToHtml:
     @patch('openeye.oedepict.OEWriteImageToString')
     @patch('openeye.oedepict.OERenderMolecule')
     @patch('openeye.oedepict.OEImage')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oedisp_to_html_default_uses_intrinsic(self, mock_create_img, mock_oeimage, mock_render, mock_write_image):
         """When both ctx dimensions are 0 (default), intrinsic dimensions are used."""
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
@@ -221,7 +221,7 @@ class TestOedispToHtml:
 class TestRenderEmptyMessage:
     """Test render_empty_molecule and render_invalid_molecule functions"""
     
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_render_empty_molecule_basic(self, mock_create_img):
         """Test rendering empty molecule message"""
         mock_create_img.return_value = '<img>empty</img>'
@@ -237,7 +237,7 @@ class TestRenderEmptyMessage:
         assert call_args[0][1] == 150  # height
         assert result == '<img>empty</img>'
     
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_render_invalid_molecule_basic(self, mock_create_img):
         """Test rendering invalid molecule message"""
         mock_create_img.return_value = '<img>invalid</img>'
@@ -257,7 +257,7 @@ class TestRenderEmptyMessage:
 class TestRenderExceedsMaxHeavyAtoms:
     """Test render_exceeds_max_heavy_atoms and _create_exceeds_heavy_atoms_image functions"""
 
-    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedepict.OEImage')
     def test_create_image_draws_two_lines(self, mock_oeimage):
         """Test that the helper draws error text on two lines"""
         mock_image = MagicMock()
@@ -278,7 +278,7 @@ class TestRenderExceedsMaxHeavyAtoms:
         assert draw_calls[0][0][1] == "Exceeds Max Heavy Atoms"
         assert draw_calls[1][0][1] == "for Rendering"
 
-    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedepict.OEImage')
     def test_create_image_with_title(self, mock_oeimage):
         """Test that the helper draws the molecule title when ctx.title is True"""
         mock_image = MagicMock()
@@ -297,7 +297,7 @@ class TestRenderExceedsMaxHeavyAtoms:
         assert draw_calls[1][0][1] == "for Rendering"
         assert draw_calls[2][0][1] == "MyMolecule"
 
-    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedepict.OEImage')
     def test_create_image_title_enabled_but_empty(self, mock_oeimage):
         """Test that no title is drawn when molecule title is empty"""
         mock_image = MagicMock()
@@ -312,9 +312,9 @@ class TestRenderExceedsMaxHeavyAtoms:
 
         assert mock_image.DrawText.call_count == 2
 
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     @patch('openeye.oedepict.OEWriteImageToString')
-    @patch('cnotebook.render._create_exceeds_heavy_atoms_image')
+    @patch('cnotebook.core.render._create_exceeds_heavy_atoms_image')
     def test_render_exceeds_max_heavy_atoms(self, mock_create_image, mock_write_image, mock_create_img):
         """Test the HTML rendering function delegates to the helper"""
         mock_image = MagicMock()
@@ -378,10 +378,10 @@ class TestOemolToDisp:
 class TestOemolToImage:
     """Test the oemol_to_image function"""
 
-    @patch('cnotebook.render.oechem.OECount')
-    @patch('cnotebook.render.oedepict.OERenderMolecule')
-    @patch('cnotebook.render.oedepict.OEImage')
-    @patch('cnotebook.render.oemol_to_disp')
+    @patch('cnotebook.core.render.oechem.OECount')
+    @patch('cnotebook.core.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.core.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oemol_to_disp')
     def test_valid_molecule(self, mock_to_disp, mock_oeimage, mock_render, mock_oecount):
         """Test converting valid molecule to OEImage"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -405,7 +405,7 @@ class TestOemolToImage:
         mock_render.assert_called_once_with(mock_image, mock_disp)
         assert result == mock_image
 
-    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedepict.OEImage')
     def test_empty_molecule(self, mock_oeimage):
         """Test converting empty molecule to OEImage with placeholder text"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -425,7 +425,7 @@ class TestOemolToImage:
         assert draw_text_args[1] == "Empty Molecule"
         assert result == mock_image
 
-    @patch('cnotebook.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedepict.OEImage')
     def test_invalid_molecule(self, mock_oeimage):
         """Test converting invalid molecule (with atoms) to OEImage"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -445,8 +445,8 @@ class TestOemolToImage:
         assert draw_text_args[1] == "Invalid Molecule"
         assert result == mock_image
 
-    @patch('cnotebook.render._create_exceeds_heavy_atoms_image')
-    @patch('cnotebook.render.oechem.OECount')
+    @patch('cnotebook.core.render._create_exceeds_heavy_atoms_image')
+    @patch('cnotebook.core.render.oechem.OECount')
     def test_exceeds_max_heavy_atoms(self, mock_oecount, mock_create_image):
         """Test that valid molecule exceeding heavy atom limit shows placeholder"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -463,10 +463,10 @@ class TestOemolToImage:
         mock_create_image.assert_called_once_with(mock_mol, ctx=ctx)
         assert result == mock_image
 
-    @patch('cnotebook.render.oedepict.OERenderMolecule')
-    @patch('cnotebook.render.oedepict.OEImage')
-    @patch('cnotebook.render.oemol_to_disp')
-    @patch('cnotebook.render.oechem.OECount')
+    @patch('cnotebook.core.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.core.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oemol_to_disp')
+    @patch('cnotebook.core.render.oechem.OECount')
     def test_within_max_heavy_atoms(self, mock_oecount, mock_to_disp, mock_oeimage, mock_render):
         """Test that valid molecule within heavy atom limit renders normally"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -488,9 +488,9 @@ class TestOemolToImage:
         mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
         assert result == mock_image
 
-    @patch('cnotebook.render.oedepict.OERenderMolecule')
-    @patch('cnotebook.render.oedepict.OEImage')
-    @patch('cnotebook.render.oemol_to_disp')
+    @patch('cnotebook.core.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.core.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oemol_to_disp')
     def test_max_heavy_atoms_none_disables_check(self, mock_to_disp, mock_oeimage, mock_render):
         """Test that max_heavy_atoms=None disables the heavy atom check"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -515,8 +515,8 @@ class TestOemolToImage:
 class TestOemolToHtml:
     """Test the oemol_to_html function"""
 
-    @patch('cnotebook.render.oeimage_to_html')
-    @patch('cnotebook.render.oemol_to_image')
+    @patch('cnotebook.core.render.oeimage_to_html')
+    @patch('cnotebook.core.render.oemol_to_image')
     def test_oemol_to_html_delegates(self, mock_to_image, mock_image_to_html):
         """Test that oemol_to_html delegates to oemol_to_image + oeimage_to_html"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -537,8 +537,8 @@ class TestOemolToHtml:
 class TestOeduToDisp:
     """Test the oedu_to_disp function"""
 
-    @patch('cnotebook.render.oemol_to_disp')
-    @patch('cnotebook.render.oechem.OEGraphMol')
+    @patch('cnotebook.core.render.oemol_to_disp')
+    @patch('cnotebook.core.render.oechem.OEGraphMol')
     def test_with_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
         """Test DU with a ligand returns (display, ligand) tuple"""
         mock_lig = MagicMock()
@@ -558,8 +558,8 @@ class TestOeduToDisp:
         mock_oemol_to_disp.assert_called_once_with(mock_lig, ctx=ctx)
         assert result == (mock_disp, mock_lig)
 
-    @patch('cnotebook.render.oemol_to_disp')
-    @patch('cnotebook.render.oechem.OEGraphMol')
+    @patch('cnotebook.core.render.oemol_to_disp')
+    @patch('cnotebook.core.render.oechem.OEGraphMol')
     def test_without_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
         """Test DU without ligand returns None"""
         mock_lig = MagicMock()
@@ -576,8 +576,8 @@ class TestOeduToDisp:
         mock_oemol_to_disp.assert_not_called()
         assert result is None
 
-    @patch('cnotebook.render.oemol_to_disp')
-    @patch('cnotebook.render.oechem.OEGraphMol')
+    @patch('cnotebook.core.render.oemol_to_disp')
+    @patch('cnotebook.core.render.oechem.OEGraphMol')
     def test_with_empty_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
         """Test DU where GetLigand returns True but ligand has 0 atoms"""
         mock_lig = MagicMock()
@@ -598,10 +598,10 @@ class TestOeduToDisp:
 class TestOeduToImage:
     """Test the oedu_to_image function"""
 
-    @patch('cnotebook.render._draw_du_label')
-    @patch('cnotebook.render.oedepict.OERenderMolecule')
-    @patch('cnotebook.render.oedepict.OEImage')
-    @patch('cnotebook.render.oedu_to_disp')
+    @patch('cnotebook.core.render._draw_du_label')
+    @patch('cnotebook.core.render.oedepict.OERenderMolecule')
+    @patch('cnotebook.core.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedu_to_disp')
     def test_with_ligand(self, mock_oedu_to_disp, mock_oeimage, mock_render,
                          mock_draw_label):
         """Test DU with ligand renders to OEImage with label"""
@@ -625,9 +625,9 @@ class TestOeduToImage:
         mock_draw_label.assert_called_once_with(mock_image)
         assert result == mock_image
 
-    @patch('cnotebook.render._draw_du_label')
-    @patch('cnotebook.render.oedepict.OEImage')
-    @patch('cnotebook.render.oedu_to_disp')
+    @patch('cnotebook.core.render._draw_du_label')
+    @patch('cnotebook.core.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedu_to_disp')
     def test_apo_no_ligand(self, mock_oedu_to_disp, mock_oeimage, mock_draw_label):
         """Test apo DU creates OEImage with label and Apo text"""
         mock_oedu_to_disp.return_value = None
@@ -647,9 +647,9 @@ class TestOeduToImage:
         assert draw_text_args[1] == "Apo DesignUnit"
         assert result == mock_image
 
-    @patch('cnotebook.render._draw_du_label')
-    @patch('cnotebook.render.oedepict.OEImage')
-    @patch('cnotebook.render.oedu_to_disp')
+    @patch('cnotebook.core.render._draw_du_label')
+    @patch('cnotebook.core.render.oedepict.OEImage')
+    @patch('cnotebook.core.render.oedu_to_disp')
     def test_apo_uses_context_dimensions(self, mock_oedu_to_disp, mock_oeimage,
                                          mock_draw_label):
         """Test apo image uses context min_width and min_height"""
@@ -668,8 +668,8 @@ class TestOeduToImage:
 class TestOeduToHtml:
     """Test the oedu_to_html function"""
 
-    @patch('cnotebook.render.oeimage_to_html')
-    @patch('cnotebook.render.oedu_to_image')
+    @patch('cnotebook.core.render.oeimage_to_html')
+    @patch('cnotebook.core.render.oedu_to_image')
     def test_oedu_to_html_delegates(self, mock_to_image, mock_image_to_html):
         """Test that oedu_to_html delegates to oedu_to_image + oeimage_to_html"""
         mock_du = MagicMock(spec=oechem.OEDesignUnit)
@@ -691,7 +691,7 @@ class TestOeimageToHtml:
     """Test the oeimage_to_html function"""
 
     @patch('openeye.oedepict.OEWriteImageToString')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oeimage_to_html_basic(self, mock_create_img, mock_write_image):
         """Test converting OEImage to HTML"""
         mock_image = MagicMock(spec=oedepict.OEImage)
@@ -715,7 +715,7 @@ class TestOeimageToHtml:
         assert result == '<img>image</img>'
 
     @patch('openeye.oedepict.OEWriteImageToString')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oeimage_to_html_uses_ctx_dimensions(self, mock_create_img, mock_write_image):
         """When both ctx.width and ctx.height are non-zero, they are used for display sizing."""
         mock_image = MagicMock(spec=oedepict.OEImage)
@@ -735,7 +735,7 @@ class TestOeimageToHtml:
         assert call_args[0][1] == 200  # display height
 
     @patch('openeye.oedepict.OEWriteImageToString')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oeimage_to_html_width_only_scales_height(self, mock_create_img, mock_write_image):
         """When only ctx.width is set, height is scaled proportionally."""
         mock_image = MagicMock(spec=oedepict.OEImage)
@@ -755,7 +755,7 @@ class TestOeimageToHtml:
         assert call_args[0][1] == 100.0  # display height = 200 * (200/400)
 
     @patch('openeye.oedepict.OEWriteImageToString')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oeimage_to_html_height_only_scales_width(self, mock_create_img, mock_write_image):
         """When only ctx.height is set, width is scaled proportionally."""
         mock_image = MagicMock(spec=oedepict.OEImage)
@@ -775,7 +775,7 @@ class TestOeimageToHtml:
         assert call_args[0][1] == 100    # display height = ctx.height
 
     @patch('openeye.oedepict.OEWriteImageToString')
-    @patch('cnotebook.render.create_img_tag')
+    @patch('cnotebook.core.render.create_img_tag')
     def test_oeimage_to_html_default_uses_intrinsic(self, mock_create_img, mock_write_image):
         """When both ctx dimensions are 0 (default), intrinsic dimensions are used."""
         mock_image = MagicMock(spec=oedepict.OEImage)
