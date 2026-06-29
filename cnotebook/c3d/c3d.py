@@ -9,7 +9,7 @@ from pathlib import Path
 from collections.abc import Iterable, Sequence
 from typing import Any, Dict, List, Optional, Union
 
-from cnotebook.c3d.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
+from cnotebook.core.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
 
 # ---------------------------------------------------------------------------
 # Load static assets at module level

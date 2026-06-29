@@ -35,3 +35,16 @@ def test_old_helpers_align_paths_still_work():
     from cnotebook.align import create_aligner as old_a
     from cnotebook.core.align import create_aligner as new_a
     assert old_h is new_h and old_a is new_a
+
+
+def test_core_convert_exports():
+    from cnotebook.core.convert import MoleculeData, convert_molecule, convert_design_unit
+    assert callable(MoleculeData)
+    assert callable(convert_molecule)
+    assert callable(convert_design_unit)
+
+
+def test_old_convert_path_still_works():
+    from cnotebook.c3d.convert import convert_molecule as old
+    from cnotebook.core.convert import convert_molecule as new
+    assert old is new

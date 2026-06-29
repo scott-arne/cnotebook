@@ -189,7 +189,7 @@ class TestEnsure3DCoords:
 
     def test_ensure_3d_coords_generates_conformer(self):
         """A SMILES-only molecule (dimension 0) should get 3D coords via Omega."""
-        from cnotebook.c3d.convert import _ensure_3d_coords
+        from cnotebook.core.convert import _ensure_3d_coords
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "CCO")
@@ -201,7 +201,7 @@ class TestEnsure3DCoords:
 
     def test_ensure_3d_coords_3d_passthrough(self, mol_3d):
         """A molecule that already has 3D coords should be returned unchanged."""
-        from cnotebook.c3d.convert import _ensure_3d_coords
+        from cnotebook.core.convert import _ensure_3d_coords
 
         result = _ensure_3d_coords(mol_3d)
         assert result is mol_3d
