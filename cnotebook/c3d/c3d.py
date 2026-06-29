@@ -10,24 +10,22 @@ from typing import Any, Dict, List, Optional, Union
 
 from cnotebook.core.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
 from cnotebook.core import viewer3d
+from cnotebook.core.vocabulary import (
+    ISOSURFACE_REPRESENTATIONS as _ISOSURFACE_REPRESENTATION_TUPLE,
+    STYLE_PRESETS as _STYLE_PRESETS,
+    SURFACE_MODES as _SURFACE_MODE_TUPLE,
+    SURFACE_TYPES as _SURFACE_TYPE_TUPLE,
+    VIEW_PRESETS as _VIEW_PRESET_TUPLE,
+)
 
 # ---------------------------------------------------------------------------
 # Style presets
 # ---------------------------------------------------------------------------
 
-_STYLE_PRESETS = {
-    "cartoon": "cartoon",
-    "stick": "stick",
-    "sphere": "sphere",
-    "line": "line",
-    "cross": "cross",
-    "surface": "surface",
-}
-
-_VIEW_PRESETS = {"simple", "sites", "ball-and-stick"}
-_SURFACE_TYPES = {"molecular", "sasa"}
-_SURFACE_MODES = {"surface", "wireframe"}
-_ISOSURFACE_REPRESENTATIONS = {"mesh", "surface"}
+_VIEW_PRESETS = set(_VIEW_PRESET_TUPLE)
+_SURFACE_TYPES = set(_SURFACE_TYPE_TUPLE)
+_SURFACE_MODES = set(_SURFACE_MODE_TUPLE)
+_ISOSURFACE_REPRESENTATIONS = set(_ISOSURFACE_REPRESENTATION_TUPLE)
 
 
 def _is_marimo() -> bool:

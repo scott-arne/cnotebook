@@ -15,6 +15,9 @@ from typing import Any
 
 from openeye import oechem
 
+from cnotebook.core.vocabulary import BINARY_MAP_FORMATS as _BINARY_MAP_FORMATS
+from cnotebook.core.vocabulary import TEXT_MAP_FORMATS as _TEXT_MAP_FORMATS
+
 log = logging.getLogger("cnotebook")
 
 
@@ -54,8 +57,6 @@ class MapData:
     encoding: str
 
 
-_BINARY_MAP_FORMATS = {"ccp4", "map", "mrc"}
-_TEXT_MAP_FORMATS = {"cube"}
 _SUPPORTED_MAP_FORMATS = _BINARY_MAP_FORMATS | _TEXT_MAP_FORMATS
 
 
