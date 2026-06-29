@@ -5,12 +5,14 @@
 .vite
 .pytest_cache
 .ruff_cache
+.mypy_cache
 .claude
 .ipynb_checkpoints
 __marimo__/
 .worktrees/
 docs/plans
 docs/superpowers
+docs/hyperpowers
 *DEBUG*
 
 ### Python template
