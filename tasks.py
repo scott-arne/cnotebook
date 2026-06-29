@@ -75,7 +75,7 @@ def update_gui(c, ref=None):
     """
     gui_dir = ROOT / "vendor" / "3dmol-js-gui"
     dist_assets = gui_dir / "dist" / "assets"
-    static_dir = ROOT / "cnotebook" / "c3d" / "static"
+    static_dir = ROOT / "cnotebook" / "core" / "static"
 
     # Check npm is available
     result = c.run("command -v npm", warn=True, hide=True)
