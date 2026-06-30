@@ -141,7 +141,7 @@ def _path_html(steps: list[PathStep], terminal: Terminal) -> str:
 def _path_image(steps: list[PathStep], terminal: Terminal, fmt: str, ctx: CNotebookContext) -> str:
     # A simple vertical breadcrumb drawn with OEImage text primitives.
     row_h = 22
-    width = 360
+    width = int(ctx.width) if ctx.width and ctx.width > 0 else 360
     height = max(row_h * (len(steps) + 2), row_h * 2)
     image = oedepict.OEImage(width, height)
     font = oedepict.OEFont(

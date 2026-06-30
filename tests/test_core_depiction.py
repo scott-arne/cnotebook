@@ -107,3 +107,24 @@ def test_render_path_html_escapes_caller_text():
     assert "&amp;" in html
     assert "&lt;terminal&gt;" in html
     assert "&lt; y" in html
+
+
+def test_render_path_image_honors_context_width():
+    """Path image output must honor ctx.width when rendering to png/svg."""
+    steps = [("Q1", True, "detail1"), ("Q2", False, "detail2")]
+    terminal = ("High", None, "High risk")
+
+    # Create context with width=500
+    ctx = CNotebookContext(width=500)
+
+    # Render as PNG with custom width
+    png_out = render_path(steps, terminal, format="png", ctx=ctx)
+    assert isinstance(png_out, str)
+    # create_img_tag embeds width as style='width:500px;...' for PNG
+    assert "width:500px" in png_out
+
+    # Render as SVG with custom width
+    svg_out = render_path(steps, terminal, format="svg", ctx=ctx)
+    assert isinstance(svg_out, str)
+    # create_img_tag wraps SVG in <div style='width:500px;...'>
+    assert "width:500px" in svg_out
