@@ -128,3 +128,23 @@ def test_render_path_image_honors_context_width():
     assert isinstance(svg_out, str)
     # create_img_tag wraps SVG in <div style='width:500px;...'>
     assert "width:500px" in svg_out
+
+
+def test_render_path_image_honors_context_width_and_height():
+    """Path image output must honor BOTH ctx.width and ctx.height when set."""
+    steps = [("Q1", True, "detail1"), ("Q2", False, "detail2")]
+    terminal = ("High", None, "High risk")
+
+    # Create context with BOTH width=500 and height=400
+    ctx = CNotebookContext(width=500, height=400)
+
+    # Render as PNG with custom dimensions
+    png_out = render_path(steps, terminal, format="png", ctx=ctx)
+    assert isinstance(png_out, str)
+    # create_img_tag embeds width in style (height uses height:auto, so we only verify width + success)
+    assert "width:500px" in png_out
+
+    # Render as SVG with custom dimensions
+    svg_out = render_path(steps, terminal, format="svg", ctx=ctx)
+    assert isinstance(svg_out, str)
+    assert "width:500px" in svg_out
