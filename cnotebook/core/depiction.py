@@ -62,6 +62,11 @@ def highlight_alerts(
     if not mol.IsValid() or mol.NumAtoms() == 0:
         return oemol_to_image(mol, ctx=render_ctx)
 
+    # Honor max_heavy_atoms limit for valid molecules
+    if (render_ctx.max_heavy_atoms is not None
+            and oechem.OECount(mol, oechem.OEIsHeavy()) > render_ctx.max_heavy_atoms):
+        return oemol_to_image(mol, ctx=render_ctx)
+
     work = oechem.OEGraphMol(mol)
     oedepict.OEPrepareDepiction(work)
     # create_molecule_display honors the context's sizing/scale rules (and is the
