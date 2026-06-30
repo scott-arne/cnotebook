@@ -12,6 +12,15 @@ from cnotebook.core.convert import (
     convert_map,
     convert_molecule,
 )
+from cnotebook.core.depiction import (
+    AlertGroup,
+    PathStep,
+    Terminal,
+    highlight_alerts,
+    render_path,
+    render_summary,
+    summary_image,
+)
 from cnotebook.core.io import (
     MoleculeParseError,
     load_design_unit,
@@ -21,20 +30,27 @@ from cnotebook.core.io import (
 from cnotebook.core.render import oedu_to_image, oeimage_to_html, oemol_to_image
 
 __all__ = [
+    "AlertGroup",
     "CNotebookContext",
     "RenderContext",
     "MapData",
     "MoleculeData",
     "MoleculeParseError",
+    "PathStep",
+    "Terminal",
     "convert_design_unit",
     "convert_map",
     "convert_molecule",
+    "highlight_alerts",
     "load_design_unit",
     "load_molecule",
     "load_molecules",
     "oedu_to_image",
     "oeimage_to_html",
     "oemol_to_image",
+    "render_path",
+    "render_summary",
+    "summary_image",
     "viewer3d",
     "vocabulary",
 ]
