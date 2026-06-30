@@ -40,3 +40,20 @@ def test_highlight_alerts_honors_max_heavy_atoms():
     assert isinstance(image, oedepict.OEImage)
     assert image.GetWidth() == 200.0
     assert image.GetHeight() == 200.0
+
+
+def test_atom_bond_set_includes_bonds():
+    from cnotebook.core.depiction import _atom_bond_set
+
+    mol = _mol("CC(=O)O")  # acetic acid: CH3-C(=O)-OH
+    # Atom indices: 0=C(methyl), 1=C(carbonyl), 2=O(=O), 3=O(-OH)
+    carbonyl_c = 1
+    o_double = 2
+    o_single = 3
+
+    abset = _atom_bond_set(mol, (carbonyl_c, o_double, o_single))
+
+    # Should have 3 atoms
+    assert abset.NumAtoms() == 3
+    # Should have 2 bonds: C=O and C-O
+    assert abset.NumBonds() > 0

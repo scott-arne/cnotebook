@@ -34,6 +34,9 @@ def _atom_bond_set(mol: oechem.OEMolBase, indices: tuple[int, ...]) -> oechem.OE
     for atom in mol.GetAtoms():
         if atom.GetIdx() in wanted:
             abset.AddAtom(atom)
+    for bond in mol.GetBonds():
+        if bond.GetBgn().GetIdx() in wanted and bond.GetEnd().GetIdx() in wanted:
+            abset.AddBond(bond)
     return abset
 
 
