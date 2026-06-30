@@ -37,6 +37,12 @@ class MoleculeParseError(ValueError):
         super().__init__(message)
         self.format = fmt
 
+    def __reduce__(self) -> tuple[type, tuple[str, str]]:
+        # Default exception pickling replays ``self.args`` through ``__init__``,
+        # but ``args`` holds only the message, so the required ``fmt`` would be
+        # lost. Pin both fields so the error survives a process-pool boundary.
+        return (self.__class__, (str(self), self.format))
+
 
 def _decode(data: str, format: str, encoding: str) -> bytes | str:
     """Decode the raw input according to *encoding*, validating against *format*.

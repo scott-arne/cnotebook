@@ -1,4 +1,5 @@
 import base64
+import pickle
 
 import pytest
 from openeye import oechem
@@ -14,6 +15,16 @@ from cnotebook.core.io import (
 def test_load_smiles():
     mol = load_molecule("c1ccccc1", "smiles")
     assert mol.NumAtoms() == 6
+
+
+def test_molecule_parse_error_is_picklable():
+    # The error crosses a ProcessPoolExecutor boundary in oefastapi, so it must
+    # survive pickling with both its message and .format intact.
+    err = MoleculeParseError("Could not parse SMILES.", "smiles")
+    restored = pickle.loads(pickle.dumps(err))
+    assert isinstance(restored, MoleculeParseError)
+    assert str(restored) == "Could not parse SMILES."
+    assert restored.format == "smiles"
 
 
 def test_load_design_unit_roundtrip():
