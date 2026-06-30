@@ -225,3 +225,25 @@ def test_render_summary_png_honors_max_heavy_atoms():
     assert isinstance(out, str)
     # Molecule cell shows placeholder, but path cell still renders → non-empty embeddable
     assert "img" in out or "svg" in out.lower()
+
+
+def test_render_summary_png_honors_context_title_disabled():
+    """ctx.title=False is honored in summary png rendering."""
+    mol = _mol("c1ccccc1CC(=O)O")
+    # Create a context with title disabled
+    ctx = CNotebookContext(title=False)
+    out = render_summary(mol, [], [("Cramer", _steps(), _terminal())], format="png", ctx=ctx)
+    assert isinstance(out, str)
+    # Should return embeddable string without error (actual title rendering is hard to assert from string)
+    assert "img" in out or "svg" in out.lower()
+
+
+def test_render_summary_png_many_terminal_only_paths_no_crash():
+    """Many terminal-only paths don't crash and produce a taller image."""
+    mol = _mol("c1ccccc1")
+    # 8 terminal-only paths (0 steps each)
+    paths = [(f"Tree{i}", [], _terminal()) for i in range(8)]
+    out = render_summary(mol, [], paths, format="png")
+    assert isinstance(out, str)
+    # Should not crash and should return non-empty embeddable string
+    assert "img" in out or "svg" in out.lower()

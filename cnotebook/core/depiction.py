@@ -196,7 +196,7 @@ def _legend_html(groups: list[AlertGroup]) -> str:
     color_iter = iter(oechem.OEGetContrastColors())
     for label, color, matches in groups:
         if matches:
-            swatch = _color_hex(color if color is not None else next(color_iter, None))
+            swatch = _color_hex(color if color is not None else next(color_iter, oechem.OEColor(oechem.OELightBlue)))
             items.append(
                 f"<li><span style='display:inline-block;width:10px;height:10px;"
                 f"background:{swatch};margin-right:4px'></span>{escape_html(label)}</li>"
@@ -245,9 +245,15 @@ def summary_image(
     :returns: The composed image.
     """
     render_ctx = _resolve_ctx(ctx)
-    n_lines = sum(len(steps) for _l, steps, _t in paths) + 2 * max(len(paths), 1)
+    # Calculate default height matching actual y-advance the drawing code uses
+    path_text_height = 20  # initial top offset (y starts at 20)
+    for _src, steps, _term in paths:
+        path_text_height += 22          # source label row
+        path_text_height += 22 * len(steps)  # one row per step
+        path_text_height += 28          # terminal row + gap
+    path_text_height += 12  # bottom padding
     default_width = 720
-    default_height = max(300, 24 * n_lines)
+    default_height = max(300, path_text_height)
     width = int(render_ctx.width) if render_ctx.width and render_ctx.width > 0 else default_width
     height = int(render_ctx.height) if render_ctx.height and render_ctx.height > 0 else default_height
     image = oedepict.OEImage(width, height)
@@ -281,9 +287,11 @@ def summary_image(
             # Within limit: render the highlighted structure
             work = oechem.OEGraphMol(mol)
             oedepict.OEPrepareDepiction(work)
-            opts = oedepict.OE2DMolDisplayOptions(
-                mol_cell.GetWidth(), mol_cell.GetHeight(), oedepict.OEScale_AutoScale
-            )
+            # Start from the context's display options (honors title/scale/font settings)
+            opts = render_ctx.display_options
+            opts.SetWidth(mol_cell.GetWidth())
+            opts.SetHeight(mol_cell.GetHeight())
+            opts.SetScale(oedepict.OEScale_AutoScale)
             disp = oedepict.OE2DMolDisplay(work, opts)
             color_iter = iter(oechem.OEGetContrastColors())
             for _label, color, matches in alert_groups:
