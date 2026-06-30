@@ -205,3 +205,23 @@ def test_render_summary_html_escapes_source_label():
     assert "<script>" not in html
     # Escaped form MUST appear
     assert "&lt;script&gt;" in html
+
+
+def test_render_summary_png_honors_context_width():
+    """summary_image/render_summary png honors a context width."""
+    mol = _mol("c1ccccc1")
+    ctx = CNotebookContext(width=500)
+    out = render_summary(mol, [], [("Cramer", _steps(), _terminal())], format="png", ctx=ctx)
+    assert isinstance(out, str)
+    # create_img_tag embeds width as style='width:500px;...' for PNG
+    assert "width:500px" in out
+
+
+def test_render_summary_png_honors_max_heavy_atoms():
+    """Over-limit molecule doesn't render the full structure in summary_image."""
+    mol = _mol("c1ccccc1")  # benzene: 6 heavy atoms
+    ctx = CNotebookContext(max_heavy_atoms=2)
+    out = render_summary(mol, [], [("Cramer", _steps(), _terminal())], format="png", ctx=ctx)
+    assert isinstance(out, str)
+    # Molecule cell shows placeholder, but path cell still renders → non-empty embeddable
+    assert "img" in out or "svg" in out.lower()

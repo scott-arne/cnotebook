@@ -241,11 +241,15 @@ def summary_image(
     :param mol: The molecule.
     :param alert_groups: Combined ``(label, color | None, matches)`` groups.
     :param paths: ``(source_label, steps, terminal)`` per tree.
-    :param ctx: Render context (reserved for future sizing use).
+    :param ctx: Render context; controls canvas size and heavy-atom limit.
     :returns: The composed image.
     """
+    render_ctx = _resolve_ctx(ctx)
     n_lines = sum(len(steps) for _l, steps, _t in paths) + 2 * max(len(paths), 1)
-    width, height = 720, max(300, 24 * n_lines)
+    default_width = 720
+    default_height = max(300, 24 * n_lines)
+    width = int(render_ctx.width) if render_ctx.width and render_ctx.width > 0 else default_width
+    height = int(render_ctx.height) if render_ctx.height and render_ctx.height > 0 else default_height
     image = oedepict.OEImage(width, height)
     grid = oedepict.OEImageGrid(image, 1, 2)
     mol_cell = grid.GetCell(1, 1)
@@ -261,22 +265,36 @@ def summary_image(
             label, placeholder_font,
         )
     else:
-        work = oechem.OEGraphMol(mol)
-        oedepict.OEPrepareDepiction(work)
-        opts = oedepict.OE2DMolDisplayOptions(
-            mol_cell.GetWidth(), mol_cell.GetHeight(), oedepict.OEScale_AutoScale
-        )
-        disp = oedepict.OE2DMolDisplay(work, opts)
-        color_iter = iter(oechem.OEGetContrastColors())
-        for _label, color, matches in alert_groups:
-            if not matches:
-                continue
-            if color is None:
-                color = next(color_iter, oechem.OEColor(oechem.OELightBlue))
-            highlight = oedepict.OEHighlightByBallAndStick(color)
-            for match in matches:
-                oedepict.OEAddHighlighting(disp, highlight, _atom_bond_set(work, match))
-        oedepict.OERenderMolecule(mol_cell, disp)
+        # Check heavy-atom limit BEFORE building the display
+        if (render_ctx.max_heavy_atoms is not None
+                and oechem.OECount(mol, oechem.OEIsHeavy()) > render_ctx.max_heavy_atoms):
+            # Over limit: draw placeholder into the molecule cell
+            placeholder_font = oedepict.OEFont(
+                oedepict.OEFontFamily_Arial, oedepict.OEFontStyle_Normal, 14,
+                oedepict.OEAlignment_Center, oechem.OEDarkBlue,
+            )
+            mol_cell.DrawText(
+                oedepict.OE2DPoint(mol_cell.GetWidth() / 2, mol_cell.GetHeight() / 2),
+                "Exceeds Max Heavy Atoms", placeholder_font,
+            )
+        else:
+            # Within limit: render the highlighted structure
+            work = oechem.OEGraphMol(mol)
+            oedepict.OEPrepareDepiction(work)
+            opts = oedepict.OE2DMolDisplayOptions(
+                mol_cell.GetWidth(), mol_cell.GetHeight(), oedepict.OEScale_AutoScale
+            )
+            disp = oedepict.OE2DMolDisplay(work, opts)
+            color_iter = iter(oechem.OEGetContrastColors())
+            for _label, color, matches in alert_groups:
+                if not matches:
+                    continue
+                if color is None:
+                    color = next(color_iter, oechem.OEColor(oechem.OELightBlue))
+                highlight = oedepict.OEHighlightByBallAndStick(color)
+                for match in matches:
+                    oedepict.OEAddHighlighting(disp, highlight, _atom_bond_set(work, match))
+            oedepict.OERenderMolecule(mol_cell, disp)
 
     path_cell = grid.GetCell(1, 2)
     font = oedepict.OEFont(
