@@ -2,7 +2,7 @@ import pytest
 from openeye import oechem, oedepict
 
 from cnotebook.core.context import CNotebookContext
-from cnotebook.core.depiction import highlight_alerts, render_path
+from cnotebook.core.depiction import highlight_alerts, render_path, render_summary
 
 
 def _mol(smiles):
@@ -148,3 +148,48 @@ def test_render_path_image_honors_context_width_and_height():
     svg_out = render_path(steps, terminal, format="svg", ctx=ctx)
     assert isinstance(svg_out, str)
     assert "width:500px" in svg_out
+
+
+def test_render_summary_html_includes_paths_and_legend():
+    mol = _mol("c1ccccc1CC(=O)O")
+    groups = [("Cramer Q3", None, ((7,),)),
+              ("Cramer Q22", None, ())]  # non-localizable fired alert
+    paths = [("Cramer", _steps(), _terminal())]
+    html = render_summary(mol, groups, paths, format="html", legend=True)
+    assert isinstance(html, str)
+    assert "Cramer" in html
+    assert "Is aromatic" in html              # the path rendered
+    assert "not structurally localizable" in html  # empty-match legend entry
+
+
+def test_render_summary_legend_false_omits_legend():
+    mol = _mol("c1ccccc1")
+    groups = [("Cramer Q22", None, ())]
+    paths = [("Cramer", _steps(), _terminal())]
+    html = render_summary(mol, groups, paths, format="html", legend=False)
+    assert "not structurally localizable" not in html
+
+
+def test_render_summary_png_returns_embeddable_string():
+    mol = _mol("c1ccccc1")
+    out = render_summary(mol, [], [("Cramer", _steps(), _terminal())], format="png")
+    assert isinstance(out, str)
+    assert "img" in out or "svg" in out.lower()
+
+
+def test_render_summary_svg_returns_string():
+    mol = _mol("c1ccccc1")
+    out = render_summary(mol, [], [("Cramer", _steps(), _terminal())], format="svg")
+    assert isinstance(out, str)
+
+
+def test_render_summary_unknown_format_raises():
+    with pytest.raises(ValueError):
+        render_summary(_mol("c1ccccc1"), [], [], format="pdf")
+
+
+def test_render_summary_png_empty_molecule_does_not_crash():
+    # empty molecule -> placeholder cell, still returns an embeddable string
+    out = render_summary(oechem.OEGraphMol(), [], [("Cramer", _steps(), _terminal())], format="png")
+    assert isinstance(out, str)
+    assert "img" in out or "svg" in out.lower()
