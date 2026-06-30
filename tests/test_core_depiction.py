@@ -1,7 +1,8 @@
+import pytest
 from openeye import oechem, oedepict
 
 from cnotebook.core.context import CNotebookContext
-from cnotebook.core.depiction import highlight_alerts
+from cnotebook.core.depiction import highlight_alerts, render_path
 
 
 def _mol(smiles):
@@ -57,3 +58,37 @@ def test_atom_bond_set_includes_bonds():
     assert abset.NumAtoms() == 3
     # Should have 2 bonds: C=O and C-O
     assert abset.NumBonds() > 0
+
+
+def _steps():
+    return [("Has disallowed elements", False, "no match"),
+            ("Is aromatic", True, "1 match")]
+
+
+def _terminal():
+    return ("High (Class III)", None, "High presumed oral toxicity.")
+
+
+def test_render_path_html_contains_labels_and_terminal():
+    html = render_path(_steps(), _terminal(), format="html")
+    assert isinstance(html, str)
+    assert "Is aromatic" in html
+    assert "High (Class III)" in html
+    # YES/NO answers surfaced
+    assert "YES" in html and "NO" in html
+
+
+def test_render_path_png_returns_embeddable_string():
+    out = render_path(_steps(), _terminal(), format="png")
+    assert isinstance(out, str)
+    assert "img" in out or "svg" in out.lower()
+
+
+def test_render_path_unknown_format_raises():
+    with pytest.raises(ValueError):
+        render_path(_steps(), _terminal(), format="pdf")
+
+
+def test_render_path_empty_steps_renders_terminal_only():
+    html = render_path([], _terminal(), format="html")
+    assert "High (Class III)" in html
