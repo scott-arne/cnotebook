@@ -193,3 +193,15 @@ def test_render_summary_png_empty_molecule_does_not_crash():
     out = render_summary(oechem.OEGraphMol(), [], [("Cramer", _steps(), _terminal())], format="png")
     assert isinstance(out, str)
     assert "img" in out or "svg" in out.lower()
+
+
+def test_render_summary_html_escapes_source_label():
+    """Source labels in render_summary must be escaped to prevent HTML injection."""
+    mol = _mol("c1ccccc1")
+    malicious_label = "<script>alert(1)</script>"
+    paths = [(malicious_label, _steps(), _terminal())]
+    html = render_summary(mol, [], paths, format="html")
+    # Raw HTML metacharacters must NOT appear
+    assert "<script>" not in html
+    # Escaped form MUST appear
+    assert "&lt;script&gt;" in html

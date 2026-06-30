@@ -212,7 +212,7 @@ def _summary_html(mol_html, alert_groups, paths, render_ctx, legend) -> str:
     for source_label, steps, terminal in paths:
         path_blocks.append(
             f"<div style='margin:4px 0'><div style='font-weight:600;font-size:12px;"
-            f"font-family:sans-serif'>{source_label}</div>"
+            f"font-family:sans-serif'>{escape_html(source_label)}</div>"
             f"{render_path(steps, terminal, format='html', ctx=render_ctx)}</div>"
         )
     legend_html = _legend_html(alert_groups) if legend else ""
