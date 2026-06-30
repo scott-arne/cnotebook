@@ -11,6 +11,7 @@ import logging
 from openeye import oechem, oedepict
 
 from cnotebook.core.context import CNotebookContext, cnotebook_context
+from cnotebook.core.helpers import escape_html
 from cnotebook.core.render import oemol_to_image, create_img_tag
 
 log = logging.getLogger("cnotebook")
@@ -120,15 +121,15 @@ def _path_html(steps: list[PathStep], terminal: Terminal) -> str:
             f"<span style='display:inline-block;min-width:34px;padding:1px 6px;"
             f"border-radius:3px;color:#fff;background:{chip_bg};font-size:11px;"
             f"text-align:center'>{chip}</span> "
-            f"<span>{label}</span>"
-            f"<span style='color:#888;font-size:11px'> — {detail}</span></li>"
+            f"<span>{escape_html(label)}</span>"
+            f"<span style='color:#888;font-size:11px'> — {escape_html(detail)}</span></li>"
         )
     name, color, description = terminal
     badge = (
         f"<div style='margin-top:6px;padding:4px 10px;border-radius:4px;"
         f"display:inline-block;color:#fff;background:{_color_hex(color, '#B71C1C')};"
-        f"font-weight:600'>{name}</div>"
-        f"<div style='color:#666;font-size:11px;margin-top:2px'>{description}</div>"
+        f"font-weight:600'>{escape_html(name)}</div>"
+        f"<div style='color:#666;font-size:11px;margin-top:2px'>{escape_html(description)}</div>"
     )
     return (
         "<div style='font-family:sans-serif;font-size:13px'>"

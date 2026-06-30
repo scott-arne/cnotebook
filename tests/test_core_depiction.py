@@ -92,3 +92,18 @@ def test_render_path_unknown_format_raises():
 def test_render_path_empty_steps_renders_terminal_only():
     html = render_path([], _terminal(), format="html")
     assert "High (Class III)" in html
+
+
+def test_render_path_html_escapes_caller_text():
+    # Caller text may contain HTML metacharacters that must be escaped.
+    steps = [("<script>alert(1)</script>", True, "a & b")]
+    terminal = ("<terminal>", None, "x < y")
+    html = render_path(steps, terminal, format="html")
+    # Raw HTML metacharacters must NOT appear
+    assert "<script>" not in html
+    assert "<terminal>" not in html
+    # Escaped forms MUST appear
+    assert "&lt;script&gt;" in html
+    assert "&amp;" in html
+    assert "&lt;terminal&gt;" in html
+    assert "&lt; y" in html
