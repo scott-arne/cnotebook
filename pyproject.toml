@@ -101,6 +101,7 @@ dataframes = [
     "polars>=1.0.0",
     "oepolars>=0.3.0",
 ]
+notebook = ["anywidget>=0.9.0", "jinja2>=3.0.0", "ipython>=8.0.0", "marimo>=0.1.0"]
 
 # ----------------------------------------------------------------------------------------
 # These configurations are specific to the `setuptools` build backend
@@ -117,7 +118,7 @@ exclude = ["*test*"]
 [tool.setuptools.package-data]
 
 # Include static files (JS, CSS) in the package
-cnotebook = ["py.typed", "grid/static/*", "c3d/static/*"]
+cnotebook = ["py.typed", "grid/static/*", "c3d/static/*", "core/static/*"]
 
 
 [tool.setuptools.dynamic]

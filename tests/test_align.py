@@ -98,7 +98,7 @@ class TestGetAtomMask:
     def test_get_atom_mask_empty_mask_error(self):
         """Test error when atom mask is None/empty after processing"""
         # Mock the typemap to return None type initially
-        with patch('cnotebook.align.oegraphsim.OEFPAtomType_None', 0):
+        with patch('cnotebook.core.align.oegraphsim.OEFPAtomType_None', 0):
             with patch.dict(atom_fp_typemap, {'none': 0}):
                 with pytest.raises(ValueError, match="No atom fingerprint types configured"):
                     get_atom_mask("none")
@@ -139,7 +139,7 @@ class TestGetBondMask:
     def test_get_bond_mask_empty_mask_error(self):
         """Test error when bond mask is None/empty after processing"""
         # Mock the typemap to return None type initially
-        with patch('cnotebook.align.oegraphsim.OEFPBondType_None', 0):
+        with patch('cnotebook.core.align.oegraphsim.OEFPBondType_None', 0):
             with patch.dict(bond_fp_typemap, {'none': 0}):
                 with pytest.raises(ValueError, match="No bond fingerprint types configured"):
                     get_bond_mask("none")
@@ -435,7 +435,7 @@ class TestOEFingerprintAligner:
 class TestCreateAligner:
     """Test the create_aligner function - logic only"""
 
-    @patch('cnotebook.align.OESubSearchAligner')
+    @patch('cnotebook.core.align.OESubSearchAligner')
     def test_create_aligner_subsearch(self, mock_aligner_class):
         """Test creating aligner with OESubSearch"""
         mock_ss = MagicMock(spec=oechem.OESubSearch)
@@ -447,7 +447,7 @@ class TestCreateAligner:
         mock_aligner_class.assert_called_once_with(mock_ss)
         assert result == mock_aligner
 
-    @patch('cnotebook.align.OEMCSSearchAligner')
+    @patch('cnotebook.core.align.OEMCSSearchAligner')
     def test_create_aligner_mcssearch(self, mock_aligner_class):
         """Test creating aligner with OEMCSSearch"""
         mock_mcss = MagicMock(spec=oechem.OEMCSSearch)
@@ -459,7 +459,7 @@ class TestCreateAligner:
         mock_aligner_class.assert_called_once_with(mock_mcss)
         assert result == mock_aligner
 
-    @patch('cnotebook.align.OESubSearchAligner')
+    @patch('cnotebook.core.align.OESubSearchAligner')
     def test_create_aligner_smarts_string(self, mock_aligner_class):
         """Test creating aligner with SMARTS string"""
         mock_aligner = MagicMock()
@@ -470,7 +470,7 @@ class TestCreateAligner:
         mock_aligner_class.assert_called_once_with("c1ccccc1")
         assert result == mock_aligner
 
-    @patch('cnotebook.align.OEFingerprintAligner')
+    @patch('cnotebook.core.align.OEFingerprintAligner')
     def test_create_aligner_molbase_default(self, mock_aligner_class):
         """Test creating aligner with OEMolBase (default method)"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -484,7 +484,7 @@ class TestCreateAligner:
         assert result == mock_aligner
         mock_aligner_class.assert_called_once_with(mock_mol)
 
-    @patch('cnotebook.align.OESubSearchAligner')
+    @patch('cnotebook.core.align.OESubSearchAligner')
     def test_create_aligner_molbase_substructure(self, mock_aligner_class):
         """Test creating aligner with OEMolBase and substructure method"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -496,7 +496,7 @@ class TestCreateAligner:
         mock_aligner_class.assert_called_once_with(mock_mol)
         assert result == mock_aligner
 
-    @patch('cnotebook.align.OEMCSSearchAligner')
+    @patch('cnotebook.core.align.OEMCSSearchAligner')
     def test_create_aligner_molbase_mcss(self, mock_aligner_class):
         """Test creating aligner with OEMolBase and mcss method"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
@@ -580,8 +580,8 @@ class TestOEMCSSearchAlignerInit:
         oechem.OESmilesToMol(mol, "c1ccccc1")
         func = object()
 
-        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
-             patch('cnotebook.align.oechem.OEMCSMaxBondsCompleteCycles', return_value=func):
+        with patch('cnotebook.core.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.core.align.oechem.OEMCSMaxBondsCompleteCycles', return_value=func):
             aligner = OEMCSSearchAligner(mol)
 
         assert aligner.refmol is not None
@@ -594,8 +594,8 @@ class TestOEMCSSearchAlignerInit:
         oechem.OESmilesToMol(mol, "c1ccccc1")
         func = object()
 
-        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
-             patch('cnotebook.align.oechem.OEMCSMaxAtoms', return_value=func):
+        with patch('cnotebook.core.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.core.align.oechem.OEMCSMaxAtoms', return_value=func):
             aligner = OEMCSSearchAligner(mol, func="atoms")
 
         assert aligner.mcss.func is func
@@ -612,7 +612,7 @@ class TestOEMCSSearchAlignerInit:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
-        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS):
+        with patch('cnotebook.core.align.oechem.OEMCSSearch', _RecordingMCS):
             aligner = OEMCSSearchAligner(mol, min_atoms=6)
 
         assert aligner.mcss.min_atoms == 6
@@ -757,8 +757,8 @@ class TestOEMCSSearchAlignerFuncVariants:
         oechem.OESmilesToMol(mol, "c1ccccc1")
         func = object()
 
-        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
-             patch('cnotebook.align.oechem.OEMCSMaxBonds', return_value=func):
+        with patch('cnotebook.core.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.core.align.oechem.OEMCSMaxBonds', return_value=func):
             aligner = OEMCSSearchAligner(mol, func="bonds")
 
         assert aligner.mcss.func is func
@@ -769,8 +769,8 @@ class TestOEMCSSearchAlignerFuncVariants:
         oechem.OESmilesToMol(mol, "c1ccccc1")
         func = object()
 
-        with patch('cnotebook.align.oechem.OEMCSSearch', _RecordingMCS), \
-             patch('cnotebook.align.oechem.OEMCSMaxAtomsCompleteCycles', return_value=func):
+        with patch('cnotebook.core.align.oechem.OEMCSSearch', _RecordingMCS), \
+             patch('cnotebook.core.align.oechem.OEMCSMaxAtomsCompleteCycles', return_value=func):
             aligner = OEMCSSearchAligner(mol, func="atoms_and_cycles")
 
         assert aligner.mcss.func is func
