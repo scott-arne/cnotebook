@@ -259,7 +259,7 @@ def test_primitives_exported_from_core():
 
 def test_version_bumped():
     import cnotebook
-    assert cnotebook.__version__ == "2.4.0"
+    assert cnotebook.__version__ == "3.0.0"
 
 
 def test_render_summary_png_honors_terminal_color():
