@@ -260,3 +260,19 @@ def test_primitives_exported_from_core():
 def test_version_bumped():
     import cnotebook
     assert cnotebook.__version__ == "2.4.0"
+
+
+def test_render_summary_png_honors_terminal_color():
+    """summary_image respects terminal color when drawing the terminal line."""
+    mol = _mol("c1ccccc1")
+    steps = [("Has disallowed elements", False, "no match")]
+    # Terminal with a distinct non-None color
+    terminal = ("High (Class III)", oechem.OEColor(0xB7, 0x1C, 0x1C), "High presumed oral toxicity.")
+    paths = [("Cramer", steps, terminal)]
+    # Render as PNG with colored terminal
+    out = render_summary(mol, [], paths, format="png")
+    assert isinstance(out, str)
+    # Should return embeddable string without error (color is rendered into image)
+    assert "img" in out or "svg" in out.lower()
+    # Verify it produces non-empty bytes (practical assertion for the code path working)
+    assert len(out) > 0

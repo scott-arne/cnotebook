@@ -56,6 +56,9 @@ def highlight_alerts(
     matches are skipped. This primitive returns a bare highlighted image; the
     color -> label legend is an HTML concern owned by :func:`render_summary`.
 
+    When alert groups share atoms, later groups' highlights are drawn over earlier
+    ones; the legend still lists every group.
+
     :param mol: Molecule to depict.
     :param groups: ``(label, color | None, match-tuples)`` per alert.
     :param style: ``"ball_and_stick"`` (default) or ``"stick"``.
@@ -317,7 +320,13 @@ def summary_image(
             mark = "Y" if answer else "N"
             path_cell.DrawText(oedepict.OE2DPoint(8, y), f"[{mark}] {label}", font)
             y += 22
-        path_cell.DrawText(oedepict.OE2DPoint(8, y), f"=> {terminal[0]}", font)
+        # Honor terminal color when drawing the terminal line
+        terminal_color = terminal[1] if terminal[1] is not None else oechem.OEColor(oechem.OEBlack)
+        terminal_font = oedepict.OEFont(
+            oedepict.OEFontFamily_Arial, oedepict.OEFontStyle_Bold, 13,
+            oedepict.OEAlignment_Left, terminal_color,
+        )
+        path_cell.DrawText(oedepict.OE2DPoint(8, y), f"=> {terminal[0]}", terminal_font)
         y += 28
     return image
 
