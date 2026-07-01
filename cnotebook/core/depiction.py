@@ -177,6 +177,11 @@ def render_path(
 ) -> str:
     """Render a decision path as an HTML fragment or an embeddable image string.
 
+    The HTML format is the richer one: it shows each step's ``detail`` text (e.g.
+    a match count) alongside the label. The ``png``/``svg`` breadcrumb is a compact,
+    portable rendering that intentionally omits the per-step ``detail`` to keep the
+    fixed-width image legible; use ``format="html"`` when the detail text matters.
+
     :param steps: Ordered ``(label, answer, detail)`` steps.
     :param terminal: ``(name, color | None, description)`` outcome badge.
     :param format: ``"html"`` (default), ``"png"``, or ``"svg"``.
