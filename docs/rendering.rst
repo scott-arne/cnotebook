@@ -189,7 +189,9 @@ This context object has the following attributes that can be set:
 +------------------------+------------------+---------------+-----------------------------------------------------+
 | ``max_height``         | ``float | None`` | ``None``      | Maximum image height in pixels.                     |
 +------------------------+------------------+---------------+-----------------------------------------------------+
-| ``structure_scale``    | ``float``        | ``12.0``      | Structure scaling factor (OEScale_Default * 0.6).   |
+| ``structure_scale``    | ``float``        | ``0.6``       | Factor multiplied by ``OEScale_Default`` for scale. |
++------------------------+------------------+---------------+-----------------------------------------------------+
+| ``auto_scale``         | ``bool``         | ``False``     | Fill the image canvas (AutoScale) instead of scale. |
 +------------------------+------------------+---------------+-----------------------------------------------------+
 | ``atom_label_font_scale`` | ``float``     | ``1.0``       | Scale factor for atom labels (0.5 to 2.0).          |
 +------------------------+------------------+---------------+-----------------------------------------------------+
@@ -210,12 +212,13 @@ scale bond widths, and turn off displaying titles.
 .. code-block:: python
 
     import cnotebook
-    from openeye import oedepict
+    from openeye import oechem
 
     # Get the global context
     ctx = cnotebook.cnotebook_context.get()
 
-    ctx.structure_scale = 2.0 * oedepict.OEScale_Default
+    # structure_scale is a factor of OpenEye's default scale, so 2.0 doubles it
+    ctx.structure_scale = 2.0
     ctx.bond_width_scaling = True
     ctx.title = False
 

@@ -79,7 +79,7 @@ def oedisp_to_html(
         display_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=image_bytes,
-        wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
+        wrap_svg=not ctx.auto_scale
     )
 
 
@@ -112,7 +112,7 @@ def render_empty_molecule(*, ctx: CNotebookContext) -> str:
         min_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
-        wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
+        wrap_svg=not ctx.auto_scale
     )
 
 
@@ -145,7 +145,7 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
         min_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
-        wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
+        wrap_svg=not ctx.auto_scale
     )
 
 
@@ -233,7 +233,7 @@ def render_exceeds_max_heavy_atoms(
         min_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
-        wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
+        wrap_svg=not ctx.auto_scale
     )
 
 
@@ -476,6 +476,6 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext) -> str:
         display_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=image_bytes,
-        wrap_svg=ctx.structure_scale != oedepict.OEScale_AutoScale
+        wrap_svg=not ctx.auto_scale
     )
 

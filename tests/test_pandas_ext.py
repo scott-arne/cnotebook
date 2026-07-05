@@ -624,7 +624,8 @@ class TestPandasDataFrameRenderOptions:
 
         result = df.chem.set_render_options(
             "mol",
-            structure_scale=1.5 * oedepict.OEScale_Default,
+            structure_scale=1.5,
+            auto_scale=True,
             width=0,
             height=0,
         )
@@ -632,7 +633,8 @@ class TestPandasDataFrameRenderOptions:
         ctx = df["mol"].array.metadata.get("cnotebook")
         assert result is None
         assert ctx is not None
-        assert ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert ctx.structure_scale == 1.5
+        assert ctx.auto_scale is True
         assert ctx.width == 0
         assert ctx.height == 0
 
@@ -653,14 +655,14 @@ class TestPandasDataFrameRenderOptions:
             "name": ["ethanol"],
         })
 
-        df.chem.set_render_options(structure_scale=1.5 * oedepict.OEScale_Default)
+        df.chem.set_render_options(structure_scale=1.5)
 
         mol_ctx = df["mol"].array.metadata.get("cnotebook")
         query_ctx = df["query"].array.metadata.get("cnotebook")
         assert mol_ctx is not None
         assert query_ctx is not None
-        assert mol_ctx.structure_scale == 1.5 * oedepict.OEScale_Default
-        assert query_ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert mol_ctx.structure_scale == 1.5
+        assert query_ctx.structure_scale == 1.5
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_set_render_options_rejects_non_molecule_column(self):
@@ -668,7 +670,7 @@ class TestPandasDataFrameRenderOptions:
         df = pd.DataFrame({"name": ["ethanol"]})
 
         with pytest.raises(TypeError, match="set_render_options only works on molecule columns"):
-            df.chem.set_render_options("name", structure_scale=1.5 * oedepict.OEScale_Default)
+            df.chem.set_render_options("name", structure_scale=1.5)
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_set_render_options_requires_existing_column(self):
@@ -676,7 +678,7 @@ class TestPandasDataFrameRenderOptions:
         df = pd.DataFrame({"name": ["ethanol"]})
 
         with pytest.raises(ValueError, match="Column mol not found"):
-            df.chem.set_render_options("mol", structure_scale=1.5 * oedepict.OEScale_Default)
+            df.chem.set_render_options("mol", structure_scale=1.5)
 
 
 class TestPandasDataFrameCopyMolecules:
@@ -994,7 +996,7 @@ class TestSeriesRenderOptions:
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
         result = series.chem.set_render_options(
-            structure_scale=1.5 * oedepict.OEScale_Default,
+            structure_scale=1.5,
             image_format="svg",
             max_heavy_atoms=None,
             title=False,
@@ -1003,7 +1005,7 @@ class TestSeriesRenderOptions:
         ctx = series.array.metadata.get("cnotebook")
         assert result is None
         assert ctx is not None
-        assert ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert ctx.structure_scale == 1.5
         assert ctx.image_format == "svg"
         assert ctx.max_heavy_atoms is None
         assert ctx.title is False
@@ -1035,11 +1037,11 @@ class TestSeriesRenderOptions:
         assert oechem.OEParseSmarts(query, "[#6]")
 
         series = pd.Series([query], dtype=oepd.QueryDtype())
-        series.chem.set_render_options(structure_scale=1.5 * oedepict.OEScale_Default)
+        series.chem.set_render_options(structure_scale=1.5)
 
         ctx = series.array.metadata.get("cnotebook")
         assert ctx is not None
-        assert ctx.structure_scale == 1.5 * oedepict.OEScale_Default
+        assert ctx.structure_scale == 1.5
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_set_render_options_non_molecule_raises(self):
@@ -1047,7 +1049,7 @@ class TestSeriesRenderOptions:
         series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
 
         with pytest.raises(TypeError, match="set_render_options only works on molecule columns"):
-            series.chem.set_render_options(structure_scale=1.5 * oedepict.OEScale_Default)
+            series.chem.set_render_options(structure_scale=1.5)
 
 
 class TestSeriesAlignDepictions:

@@ -146,7 +146,7 @@ def test_molgrid_does_not_enlarge_small_molecules_past_grid_scale(simple_mol):
     prepared = grid._prepare_molecule_for_rendering(simple_mol)
     display = grid._create_render_context().create_molecule_display(prepared)
 
-    assert display.GetScale() == pytest.approx(grid.structure_scale)
+    assert display.GetScale() == pytest.approx(grid._baseline_scale)
 
 
 def test_molgrid_compact_molecule_matches_single_molecule_scale_and_bonds():
@@ -299,13 +299,13 @@ def test_molgrid_tightens_margin_to_enlarge_large_molecules():
     default_opts = oedepict.OE2DMolDisplayOptions()
     default_opts.SetWidth(grid.width)
     default_opts.SetHeight(grid.height)
-    default_opts.SetScale(grid.structure_scale)
+    default_opts.SetScale(grid._baseline_scale)
     default_opts.SetTitleLocation(oedepict.OETitleLocation_Hidden)
     default_scale = oedepict.OE2DMolDisplay(prepared, default_opts).GetScale()
 
     # The molecule must shrink below the baseline scale to fit, and the
     # tightened grid margin lets it render larger than the default would.
-    assert display.GetScale() < grid.structure_scale
+    assert display.GetScale() < grid._baseline_scale
     assert display.GetScale() > default_scale
 
 
@@ -317,7 +317,7 @@ def test_molgrid_margin_does_not_enlarge_small_molecules(simple_mol):
     prepared = grid._prepare_molecule_for_rendering(simple_mol)
     display = grid._create_molecule_display(prepared)
 
-    assert display.GetScale() == pytest.approx(grid.structure_scale)
+    assert display.GetScale() == pytest.approx(grid._baseline_scale)
 
 
 def test_molgrid_set_render_options(simple_mol):
@@ -333,7 +333,8 @@ def test_molgrid_set_render_options(simple_mol):
         min_height=160,
         max_width=360,
         max_height=280,
-        structure_scale=1.5 * oedepict.OEScale_Default,
+        structure_scale=1.5,
+        auto_scale=True,
         atom_label_font_scale=1.25,
         title_font_scale=0.9,
         image_format="png",
@@ -349,7 +350,8 @@ def test_molgrid_set_render_options(simple_mol):
     assert grid.min_height == 160
     assert grid.max_width == 360
     assert grid.max_height == 280
-    assert grid.structure_scale == 1.5 * oedepict.OEScale_Default
+    assert grid.structure_scale == 1.5
+    assert grid.auto_scale is True
     assert grid.atom_label_font_scale == 1.25
     assert grid.title_font_scale == 0.9
     assert grid.image_format == "png"

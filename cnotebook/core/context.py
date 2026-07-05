@@ -111,7 +111,8 @@ class CNotebookContext:
             min_height: float | None | _Deferred = 200.0,
             max_width: float | None | _Deferred = None,
             max_height: float | None | _Deferred = None,
-            structure_scale: float | _Deferred = oedepict.OEScale_Default * 0.6,
+            structure_scale: float | _Deferred = 0.6,
+            auto_scale: bool | _Deferred = False,
             atom_label_font_scale: float | _Deferred = 1.15,
             title_font_scale: float | _Deferred = 1.0,
             image_format: str | _Deferred = "png",
@@ -129,7 +130,14 @@ class CNotebookContext:
         :param min_height: Minimum image height in pixels (prevents tiny images).
         :param max_width: Maximum image width in pixels, or None for no limit.
         :param max_height: Maximum image height in pixels, or None for no limit.
-        :param structure_scale: Scale factor for structure rendering.
+        :param structure_scale: Scale factor applied to OpenEye's default
+            structure scale (``oedepict.OEScale_Default``). A value of ``1.0``
+            renders at OpenEye's default; the CNotebook default of ``0.6``
+            renders slightly smaller. Ignored when ``auto_scale`` is ``True``.
+        :param auto_scale: When ``True``, size the structure to fill the image
+            canvas (OpenEye AutoScale) instead of using ``structure_scale``.
+            Enables the min/max width/height enforcement in
+            :meth:`create_molecule_display`. Defaults to ``False``.
         :param atom_label_font_scale: Scale factor for atom labels (0.5 to 2.0).
         :param title_font_scale: Scale factor for title font (0.5 to 2.0).
         :param image_format: Output image format ("png" or "svg").
@@ -150,6 +158,7 @@ class CNotebookContext:
         self._max_width = DeferredValue[float | None]("max_width", max_width)
         self._max_height = DeferredValue[float | None]("max_height", max_height)
         self._structure_scale = DeferredValue[float]("structure_scale", structure_scale)
+        self._auto_scale = DeferredValue[bool]("auto_scale", auto_scale)
         self._atom_label_font_scale = DeferredValue[float]("atom_label_font_scale", atom_label_font_scale)
         self._title_font_scale = DeferredValue[float]("title_font_scale", title_font_scale)
         self._image_format = DeferredValue[str]("image_format", image_format)
@@ -246,6 +255,26 @@ class CNotebookContext:
         self._structure_scale.set(value)
 
     @property
+    def auto_scale(self) -> bool:
+        return self._auto_scale.get()
+
+    @auto_scale.setter
+    def auto_scale(self, value: bool) -> None:
+        self._auto_scale.set(value)
+
+    @property
+    def effective_scale(self) -> float:
+        """Resolved OpenEye display scale for the current settings.
+
+        :returns: ``oedepict.OEScale_AutoScale`` when :attr:`auto_scale` is
+            enabled, otherwise ``structure_scale`` multiplied by OpenEye's
+            default structure scale (``oedepict.OEScale_Default``).
+        """
+        if self.auto_scale:
+            return oedepict.OEScale_AutoScale
+        return self.structure_scale * oedepict.OEScale_Default
+
+    @property
     def atom_label_font_scale(self) -> float:
         return self._atom_label_font_scale.get()
 
@@ -317,7 +346,7 @@ class CNotebookContext:
         opts = oedepict.OE2DMolDisplayOptions()
         opts.SetHeight(self.height)
         opts.SetWidth(self.width)
-        opts.SetScale(self.structure_scale)
+        opts.SetScale(self.effective_scale)
         opts.SetTitleFontScale(self.title_font_scale)
         opts.SetBondWidthScaling(self.bond_width_scaling)
         opts.SetAtomLabelFontScale(self.atom_label_font_scale)
@@ -347,23 +376,23 @@ class CNotebookContext:
         """
         Create a molecule display.
 
-        Min/max width/height are only enforced when ``structure_scale`` is
-        ``OEScale_AutoScale``. In that mode, the canvas determines the scale,
-        so clamping the canvas to min/max bounds is meaningful. In fixed-scale
-        mode, the structure determines the canvas, so clamping would add
-        whitespace padding (for min) or crop (for max) without changing the
-        drawn structure — users who want bounded sizes should use AutoScale.
+        Min/max width/height are only enforced when :attr:`auto_scale` is
+        enabled. In that mode, the canvas determines the scale, so clamping the
+        canvas to min/max bounds is meaningful. In fixed-scale mode, the
+        structure determines the canvas, so clamping would add whitespace
+        padding (for min) or crop (for max) without changing the drawn
+        structure — users who want bounded sizes should enable ``auto_scale``.
 
         :param mol: Molecule
-        :param min_height: Minimum image height (only applied under AutoScale)
-        :param min_width: Minimum image width (only applied under AutoScale)
+        :param min_height: Minimum image height (only applied under auto_scale)
+        :param min_width: Minimum image width (only applied under auto_scale)
         :return: Molecule display
         """
         disp = oedepict.OE2DMolDisplay(mol, self.display_options)
 
-        # Min/max enforcement only applies in AutoScale mode; in fixed-scale
+        # Min/max enforcement only applies in auto_scale mode; in fixed-scale
         # mode the intrinsic canvas matches the drawn structure.
-        if self.structure_scale != oedepict.OEScale_AutoScale:
+        if not self.auto_scale:
             return disp
 
         # If the image was too small, and we're not enforcing a specific image size
@@ -433,6 +462,7 @@ class CNotebookContext:
         self._max_width.reset()
         self._max_height.reset()
         self._structure_scale.reset()
+        self._auto_scale.reset()
         self._atom_label_font_scale.reset()
         self._title_font_scale.reset()
         self._image_format.reset()
@@ -454,6 +484,7 @@ class CNotebookContext:
             max_width=self.max_width,
             max_height=self.max_height,
             structure_scale=self.structure_scale,
+            auto_scale=self.auto_scale,
             atom_label_font_scale=self.atom_label_font_scale,
             title_font_scale=self.title_font_scale,
             title=self.title,
@@ -519,6 +550,7 @@ def create_local_context(
         max_width: float | None | _Deferred = DEFERRED,
         max_height: float | None | _Deferred = DEFERRED,
         structure_scale: float | _Deferred = DEFERRED,
+        auto_scale: bool | _Deferred = DEFERRED,
         title_font_scale: float | _Deferred = DEFERRED,
         image_format: str | _Deferred = DEFERRED,
         bond_width_scaling: bool | _Deferred = DEFERRED,
@@ -533,6 +565,7 @@ def create_local_context(
         max_width=max_width,
         max_height=max_height,
         structure_scale=structure_scale,
+        auto_scale=auto_scale,
         title_font_scale=title_font_scale,
         image_format=image_format,
         bond_width_scaling=bond_width_scaling,

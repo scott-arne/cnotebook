@@ -224,7 +224,7 @@ other objects such DataFrames, keeping rendering uniform. You can also use local
     ctx.width = 300
     ctx.height = 300
     ctx.title_font_scale = 0.25
-    ctx.structure_scale = oedepict.OEScale_AutoScale
+    ctx.auto_scale = True  # size the structure to fill the 300x300 canvas
 
 .. image:: _static/benzene_scaled.png
     :align: center

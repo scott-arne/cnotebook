@@ -517,6 +517,7 @@ def _series_set_render_options(
         max_width=_RENDER_OPTION_UNSET,
         max_height=_RENDER_OPTION_UNSET,
         structure_scale=_RENDER_OPTION_UNSET,
+        auto_scale=_RENDER_OPTION_UNSET,
         atom_label_font_scale=_RENDER_OPTION_UNSET,
         title_font_scale=_RENDER_OPTION_UNSET,
         image_format=_RENDER_OPTION_UNSET,
@@ -533,7 +534,10 @@ def _series_set_render_options(
     :param min_height: Minimum image height in pixels.
     :param max_width: Maximum image width in pixels, or ``None`` for no limit.
     :param max_height: Maximum image height in pixels, or ``None`` for no limit.
-    :param structure_scale: Scale factor for structure rendering.
+    :param structure_scale: Scale factor applied to OpenEye's default structure
+        scale. Ignored when ``auto_scale`` is ``True``.
+    :param auto_scale: When ``True``, size structures to fill the image canvas
+        (OpenEye AutoScale) instead of using ``structure_scale``.
     :param atom_label_font_scale: Scale factor for atom labels.
     :param title_font_scale: Scale factor for title font.
     :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
@@ -555,6 +559,7 @@ def _series_set_render_options(
         max_width=max_width,
         max_height=max_height,
         structure_scale=structure_scale,
+        auto_scale=auto_scale,
         atom_label_font_scale=atom_label_font_scale,
         title_font_scale=title_font_scale,
         image_format=image_format,
@@ -662,6 +667,7 @@ def _dataframe_set_render_options(
         max_width=_RENDER_OPTION_UNSET,
         max_height=_RENDER_OPTION_UNSET,
         structure_scale=_RENDER_OPTION_UNSET,
+        auto_scale=_RENDER_OPTION_UNSET,
         atom_label_font_scale=_RENDER_OPTION_UNSET,
         title_font_scale=_RENDER_OPTION_UNSET,
         image_format=_RENDER_OPTION_UNSET,
@@ -682,7 +688,10 @@ def _dataframe_set_render_options(
     :param min_height: Minimum image height in pixels.
     :param max_width: Maximum image width in pixels, or ``None`` for no limit.
     :param max_height: Maximum image height in pixels, or ``None`` for no limit.
-    :param structure_scale: Scale factor for structure rendering.
+    :param structure_scale: Scale factor applied to OpenEye's default structure
+        scale. Ignored when ``auto_scale`` is ``True``.
+    :param auto_scale: When ``True``, size structures to fill the image canvas
+        (OpenEye AutoScale) instead of using ``structure_scale``.
     :param atom_label_font_scale: Scale factor for atom labels.
     :param title_font_scale: Scale factor for title font.
     :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
@@ -717,6 +726,7 @@ def _dataframe_set_render_options(
         max_width=max_width,
         max_height=max_height,
         structure_scale=structure_scale,
+        auto_scale=auto_scale,
         atom_label_font_scale=atom_label_font_scale,
         title_font_scale=title_font_scale,
         image_format=image_format,

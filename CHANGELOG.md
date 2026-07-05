@@ -5,11 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] - 2026-07-04
 
 ### Added
 - `invoke update-gui` task to build and copy 3dmol-js-gui assets from the vendor submodule
 - 3dmol-js-gui added as a git submodule at `vendor/3dmol-js-gui`
+- `CNotebookContext.auto_scale` (and matching MolGrid / DataFrame render options) to size structures to fill the image canvas instead of using a fixed scale
+- `CNotebookContext.effective_scale` read-only property exposing the resolved OpenEye display scale
+
+### Changed
+- **Breaking:** `structure_scale` is now a factor multiplied by `oedepict.OEScale_Default` (default `0.6`) rather than an absolute OpenEye scale. Autoscaling is now controlled by the new `auto_scale` flag instead of setting `structure_scale = oedepict.OEScale_AutoScale`. The default rendered size is unchanged.
 
 ## [2.2.9] - 2026-03-18
 

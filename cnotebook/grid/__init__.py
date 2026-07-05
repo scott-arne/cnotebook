@@ -22,6 +22,7 @@ def molgrid(
     max_width: Optional[float] = None,
     max_height: Optional[float] = None,
     structure_scale: float = DEFAULT_STRUCTURE_SCALE,
+    auto_scale: bool = False,
     atom_label_font_scale: float = DEFAULT_ATOM_LABEL_FONT_SCALE,
     title_font_scale: float = 1.0,
     image_format: str = "svg",
@@ -50,9 +51,12 @@ def molgrid(
     :param min_height: Minimum image height in pixels.
     :param max_width: Maximum image width in pixels, or None for no limit.
     :param max_height: Maximum image height in pixels, or None for no limit.
-    :param structure_scale: Scale factor for structure rendering. Defaults to
-        the standard CNotebook molecule scale so grid depictions match
-        single-molecule depictions when no shrink-to-fit is needed.
+    :param structure_scale: Scale factor applied to OpenEye's default structure
+        scale. Defaults to the standard CNotebook molecule scale factor so grid
+        depictions match single-molecule depictions when no shrink-to-fit is
+        needed. Ignored when ``auto_scale`` is ``True``.
+    :param auto_scale: When ``True``, size structures to fill each grid card
+        (OpenEye AutoScale) instead of using ``structure_scale``.
     :param atom_label_font_scale: Scale factor for atom labels.
     :param title_font_scale: Scale factor for title font.
     :param image_format: "svg" or "png" (default "svg").
@@ -89,6 +93,7 @@ def molgrid(
         max_width=max_width,
         max_height=max_height,
         structure_scale=structure_scale,
+        auto_scale=auto_scale,
         atom_label_font_scale=atom_label_font_scale,
         title_font_scale=title_font_scale,
         image_format=image_format,

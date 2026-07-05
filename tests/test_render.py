@@ -106,7 +106,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img>test</img>'
 
-        ctx = CNotebookContext(image_format="png", structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png")
 
         # Test that the function exists and can be called
         result = oedisp_to_html(mock_disp, ctx=ctx)
@@ -136,8 +136,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=150, height=150,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=150, height=150)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -162,8 +161,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=150, height=0,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=150, height=0)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -185,8 +183,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=150,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=0, height=150)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -208,8 +205,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=0,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=0, height=0)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -701,7 +697,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img>image</img>'
 
-        ctx = CNotebookContext(image_format="png", structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png")
 
         result = oeimage_to_html(mock_image, ctx=ctx)
 
@@ -725,8 +721,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=200, height=200,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=200, height=200)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -745,8 +740,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=200, height=0,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=200, height=0)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -765,8 +759,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=100,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=0, height=100)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -785,8 +778,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=0,
-                               structure_scale=oedepict.OEScale_Default)
+        ctx = CNotebookContext(image_format="png", width=0, height=0)
 
         oeimage_to_html(mock_image, ctx=ctx)
 

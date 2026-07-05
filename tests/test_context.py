@@ -78,6 +78,9 @@ class TestCNotebookContext:
         assert ctx.min_height == 200.0
         assert ctx.max_width is None
         assert ctx.max_height is None
+        assert ctx.structure_scale == pytest.approx(0.6)
+        assert ctx.auto_scale is False
+        assert ctx.effective_scale == pytest.approx(0.6 * oedepict.OEScale_Default)
         assert ctx.atom_label_font_scale == pytest.approx(1.15)
         assert ctx.image_format == "png"
         assert ctx.bond_width_scaling is False
@@ -125,7 +128,10 @@ class TestCNotebookContext:
         
         ctx.structure_scale = 0.8
         assert ctx.structure_scale == 0.8
-        
+
+        ctx.auto_scale = True
+        assert ctx.auto_scale is True
+
         ctx.image_format = "svg"
         assert ctx.image_format == "svg"
     
@@ -176,11 +182,34 @@ class TestCNotebookContext:
         assert isinstance(opts, oedepict.OE2DMolDisplayOptions)
         assert opts.GetWidth() == 300
         assert opts.GetHeight() == 400
-        assert opts.GetScale() == pytest.approx(0.8)
+        # structure_scale is a factor of OpenEye's default structure scale.
+        assert opts.GetScale() == pytest.approx(0.8 * oedepict.OEScale_Default)
         assert opts.GetAtomLabelFontScale() == pytest.approx(1.4)
         assert opts.GetTitleFontScale() == pytest.approx(1.2)
         assert opts.GetBondWidthScaling() is True
-    
+
+    def test_effective_scale_is_factor_of_default(self):
+        """effective_scale multiplies structure_scale by OpenEye's default scale."""
+        ctx = CNotebookContext(structure_scale=1.0)
+        assert ctx.effective_scale == pytest.approx(oedepict.OEScale_Default)
+
+        ctx.structure_scale = 0.5
+        assert ctx.effective_scale == pytest.approx(0.5 * oedepict.OEScale_Default)
+
+    def test_auto_scale_overrides_structure_scale(self):
+        """auto_scale forces AutoScale regardless of structure_scale."""
+        ctx = CNotebookContext(structure_scale=1.5, auto_scale=True)
+        assert ctx.effective_scale == oedepict.OEScale_AutoScale
+        assert ctx.display_options.GetScale() == oedepict.OEScale_AutoScale
+
+        ctx.auto_scale = False
+        assert ctx.effective_scale == pytest.approx(1.5 * oedepict.OEScale_Default)
+
+    def test_copy_preserves_auto_scale(self):
+        """copy should preserve auto_scale."""
+        assert CNotebookContext(auto_scale=True).copy().auto_scale is True
+        assert CNotebookContext(auto_scale=False).copy().auto_scale is False
+
     def test_add_callback(self):
         """Test adding callbacks"""
         ctx = CNotebookContext()
@@ -462,7 +491,7 @@ class TestCNotebookContextEdgeCases:
 
     def test_create_molecule_display_size_enforcement(self):
         """Test that create_molecule_display respects max_width under AutoScale."""
-        ctx = CNotebookContext(max_width=200, structure_scale=oedepict.OEScale_AutoScale)
+        ctx = CNotebookContext(max_width=200, auto_scale=True)
 
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")  # large molecule
@@ -475,7 +504,7 @@ class TestCNotebookContextEdgeCases:
     def test_create_molecule_display_fixed_scale_skips_min_enforcement(self):
         """Fixed-scale mode must not pad a small structure up to min_width/min_height."""
         ctx = CNotebookContext(min_width=200, min_height=200)
-        assert ctx.structure_scale != oedepict.OEScale_AutoScale
+        assert ctx.auto_scale is False
 
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "CCO")  # intrinsic canvas is far smaller than 200
@@ -489,7 +518,7 @@ class TestCNotebookContextEdgeCases:
         """Fixed-scale mode must not clamp a large structure down to max_width/max_height."""
         reference_ctx = CNotebookContext()
         ctx = CNotebookContext(max_width=150, max_height=150)
-        assert ctx.structure_scale != oedepict.OEScale_AutoScale
+        assert ctx.auto_scale is False
 
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "CCCCCCCCCCCCCCCCCCCC")
@@ -506,7 +535,7 @@ class TestCNotebookContextEdgeCases:
         ctx = CNotebookContext(
             min_width=200,
             min_height=200,
-            structure_scale=oedepict.OEScale_AutoScale,
+            auto_scale=True,
         )
 
         mol = oechem.OEGraphMol()

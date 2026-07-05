@@ -839,6 +839,7 @@ class MolGrid:
         max_width: Optional[float] = None,
         max_height: Optional[float] = None,
         structure_scale: float = DEFAULT_STRUCTURE_SCALE,
+        auto_scale: bool = False,
         atom_label_font_scale: float = DEFAULT_ATOM_LABEL_FONT_SCALE,
         title_font_scale: float = 1.0,
         image_format: str = "svg",
@@ -869,9 +870,13 @@ class MolGrid:
         :param min_height: Minimum image height in pixels.
         :param max_width: Maximum image width in pixels, or None for no limit.
         :param max_height: Maximum image height in pixels, or None for no limit.
-        :param structure_scale: Scale factor for structure rendering. Defaults
-            to the standard CNotebook molecule scale so grid depictions match
-            single-molecule depictions when no shrink-to-fit is needed.
+        :param structure_scale: Scale factor applied to OpenEye's default
+            structure scale. Defaults to the standard CNotebook molecule scale
+            factor so grid depictions match single-molecule depictions when no
+            shrink-to-fit is needed. Ignored when ``auto_scale`` is ``True``.
+        :param auto_scale: When ``True``, size structures to fill each grid
+            card (OpenEye AutoScale) instead of using ``structure_scale``.
+            Defaults to ``False``.
         :param atom_label_font_scale: Scale factor for atom labels.
         :param title_font_scale: Scale factor for title font.
         :param image_format: Image format ("svg" or "png").
@@ -948,6 +953,7 @@ class MolGrid:
         self.max_width = max_width
         self.max_height = max_height
         self.structure_scale = structure_scale
+        self.auto_scale = auto_scale
         self.image_format = image_format
         self.atom_label_font_scale = atom_label_font_scale
         self.title_font_scale = title_font_scale
@@ -1130,6 +1136,7 @@ class MolGrid:
         max_width=_RENDER_OPTION_UNSET,
         max_height=_RENDER_OPTION_UNSET,
         structure_scale=_RENDER_OPTION_UNSET,
+        auto_scale=_RENDER_OPTION_UNSET,
         atom_label_font_scale=_RENDER_OPTION_UNSET,
         title_font_scale=_RENDER_OPTION_UNSET,
         image_format=_RENDER_OPTION_UNSET,
@@ -1151,7 +1158,10 @@ class MolGrid:
         :param min_height: Minimum image height in pixels.
         :param max_width: Maximum image width in pixels, or None for no limit.
         :param max_height: Maximum image height in pixels, or None for no limit.
-        :param structure_scale: Scale factor for structure rendering.
+        :param structure_scale: Scale factor applied to OpenEye's default
+            structure scale. Ignored when ``auto_scale`` is ``True``.
+        :param auto_scale: When ``True``, size structures to fill each grid card
+            (OpenEye AutoScale) instead of using ``structure_scale``.
         :param atom_label_font_scale: Scale factor for atom labels.
         :param title_font_scale: Scale factor for title font.
         :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
@@ -1169,6 +1179,7 @@ class MolGrid:
             max_width=max_width,
             max_height=max_height,
             structure_scale=structure_scale,
+            auto_scale=auto_scale,
             atom_label_font_scale=atom_label_font_scale,
             title_font_scale=title_font_scale,
             image_format=image_format,
@@ -1200,12 +1211,25 @@ class MolGrid:
         oedepict.OEPrepareDepiction(render_mol, opts)
         return render_mol
 
+    @property
+    def _baseline_scale(self) -> float:
+        """Absolute OpenEye scale for this grid's ``structure_scale`` factor.
+
+        ``structure_scale`` is a multiplier of OpenEye's default structure
+        scale, whereas OpenEye display and fitting APIs work in absolute scale
+        units. This resolves the factor to the absolute value used internally
+        for shrink-to-fit comparisons and bond-width scaling.
+
+        :returns: ``structure_scale`` multiplied by ``oedepict.OEScale_Default``.
+        """
+        return self.structure_scale * oedepict.OEScale_Default
+
     def _fitting_scale(self, prepared) -> float:
         """Largest depiction scale that fits ``prepared`` in the grid card.
 
         Uses OpenEye's AutoScale on the grid card dimensions and caps the
-        result at the baseline ``structure_scale`` so molecules small enough to
-        render at full scale are not enlarged past it.
+        result at the baseline scale so molecules small enough to render at
+        full scale are not enlarged past it.
 
         :param prepared: Depiction-prepared molecule.
         :returns: Capped fitting scale for this molecule in the grid card.
@@ -1217,7 +1241,7 @@ class MolGrid:
         opts.SetMargins(_GRID_DEPICTION_MARGIN)
         opts.SetTitleLocation(oedepict.OETitleLocation_Hidden)
         fit = oedepict.OE2DMolDisplay(prepared, opts).GetScale()
-        return min(self.structure_scale, fit)
+        return min(self._baseline_scale, fit)
 
     def _prepare_best_fit(self, mol):
         """Prepare ``mol`` in whichever candidate orientation renders largest.
@@ -1277,6 +1301,7 @@ class MolGrid:
             max_width=self.max_width,
             max_height=self.max_height,
             structure_scale=self.structure_scale,
+            auto_scale=self.auto_scale,
             atom_label_font_scale=self.atom_label_font_scale,
             title_font_scale=self.title_font_scale,
             image_format=self.image_format,
@@ -1346,7 +1371,7 @@ class MolGrid:
         if ctx is None:
             ctx = self._create_render_context()
 
-        if ctx.structure_scale != oedepict.OEScale_AutoScale:
+        if not ctx.auto_scale:
             # Fixed-scale mode (the grid default): replicate the context's
             # display construction but tighten the depiction margin so large
             # molecules that must shrink to fit are drawn a touch larger. The
@@ -1358,7 +1383,7 @@ class MolGrid:
         else:
             disp = ctx.create_molecule_display(mol)
 
-        self._scale_bond_widths_for_display(disp, baseline_scale=self.structure_scale)
+        self._scale_bond_widths_for_display(disp, baseline_scale=self._baseline_scale)
         return disp
 
     def _render_molecule_html(
