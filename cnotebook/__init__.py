@@ -13,7 +13,7 @@ from openeye import oechem, oedepict
 from .context import CNotebookContext, cnotebook_context
 from .helpers import highlight_smarts as highlight_smarts
 
-__version__ = '3.1.0'
+__version__ = '3.1.1'
 
 # Configure logging first
 log = logging.getLogger("cnotebook")
@@ -151,7 +151,7 @@ class CNotebookEnvInfo:
 
     @property
     def c3d_available(self) -> bool:
-        """Whether C3D viewer is available (requires anywidget)."""
+        """Whether the C3D viewer module is available."""
         return self._c3d_available
 
     @property
@@ -199,7 +199,7 @@ def _detect_environment() -> CNotebookEnvInfo:
     except ImportError:
         pass
 
-    # Detect C3D viewer (requires anywidget)
+    # Detect C3D viewer
     try:
         from cnotebook.c3d import C3D
         c3d_available = C3D is not None
@@ -327,6 +327,56 @@ if _env_info.molgrid_available:
 # Export C3D at top level if available
 if _env_info.c3d_available:
     from .c3d import C3D as C3D
+
+
+# Optional top-level exports and the submodule that provides each. These names
+# are bound as module attributes above only when their submodule imports
+# cleanly; otherwise __getattr__ explains why instead of raising a cryptic
+# ``cannot import name`` error. The third value, when set, is the optional
+# third-party dependency whose absence is the usual cause, so the message can
+# tell the user exactly what to install. ``None`` means the export has no
+# optional dependency (e.g. C3D), so a broken import points at the submodule.
+_OPTIONAL_EXPORTS = {
+    "molgrid": ("grid", "anywidget"),
+    "MolGrid": ("grid", "anywidget"),
+    "BEST_FIT_ORIENTATION": ("grid", "anywidget"),
+    "C3D": ("c3d", None),
+}
+
+
+def __getattr__(name: str):
+    """Explain unavailable optional exports instead of a cryptic error (PEP 562).
+
+    Optional exports such as ``molgrid``/``MolGrid`` and ``C3D`` are only bound
+    as module attributes when their submodule imports successfully. When one
+    does not, accessing the name would otherwise raise an opaque
+    ``ImportError: cannot import name '...'``. This intercepts that access to
+    warn with an actionable message — naming the missing optional dependency
+    when there is one, or pointing at the submodule to reveal the real error.
+
+    :param name: Attribute being accessed on the ``cnotebook`` module.
+    :raises ImportError: If an optional export is requested while unavailable.
+    :raises AttributeError: For any other unknown attribute.
+    """
+    export = _OPTIONAL_EXPORTS.get(name)
+    if export is not None:
+        import importlib.util
+
+        submodule, optional_dep = export
+        if optional_dep is not None and importlib.util.find_spec(optional_dep) is None:
+            message = (
+                f"cnotebook.{name} requires the optional '{optional_dep}' package, which is not "
+                f"installed in this environment. Install it, e.g. `uv pip install {optional_dep}`."
+            )
+        else:
+            message = (
+                f"cnotebook.{name} is unavailable: the cnotebook.{submodule} module failed to "
+                f"import. Import `cnotebook.{submodule}` directly to see the underlying error."
+            )
+        log.warning(message)
+        raise ImportError(message)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 ########################################################################################################################

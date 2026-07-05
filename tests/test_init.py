@@ -602,3 +602,77 @@ class TestDisplayHtmlEnvironments:
             result = _display_html("<div>test</div>", env)
             mock_mo.Html.assert_called_once_with("<div>test</div>")
             assert result == "marimo_html"
+
+
+class TestMissingOptionalExport:
+    """Test the module __getattr__ that explains unavailable optional exports."""
+
+    def _unbind_exports(self, *names):
+        """Remove optional exports from the module, simulating a failed import.
+
+        :param names: Module attribute names to remove.
+        :returns: Mapping of removed names to their previous values for restoration.
+        """
+        removed = {}
+        for name in names:
+            if name in cnotebook.__dict__:
+                removed[name] = cnotebook.__dict__.pop(name)
+        return removed
+
+    def test_missing_anywidget_raises_actionable_import_error(self):
+        """Accessing molgrid without anywidget warns and raises with install guidance."""
+        removed = self._unbind_exports("molgrid", "MolGrid", "BEST_FIT_ORIENTATION")
+        try:
+            real_find_spec = importlib.util.find_spec
+
+            def fake_find_spec(name, *args, **kwargs):
+                if name == "anywidget":
+                    return None
+                return real_find_spec(name, *args, **kwargs)
+
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec), \
+                    patch.object(cnotebook.log, "warning") as mock_warn:
+                with pytest.raises(ImportError, match="requires the optional 'anywidget'"):
+                    cnotebook.molgrid
+                mock_warn.assert_called_once()
+                assert "anywidget" in mock_warn.call_args[0][0]
+        finally:
+            cnotebook.__dict__.update(removed)
+
+    def test_present_anywidget_reports_underlying_failure(self):
+        """When anywidget is present but grid still failed, point at cnotebook.grid."""
+        removed = self._unbind_exports("molgrid", "MolGrid", "BEST_FIT_ORIENTATION")
+        try:
+            real_find_spec = importlib.util.find_spec
+            fake_spec = MagicMock()
+
+            def fake_find_spec(name, *args, **kwargs):
+                if name == "anywidget":
+                    return fake_spec
+                return real_find_spec(name, *args, **kwargs)
+
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec), \
+                    patch.object(cnotebook.log, "warning") as mock_warn:
+                with pytest.raises(ImportError, match="cnotebook.grid"):
+                    cnotebook.MolGrid
+                mock_warn.assert_called_once()
+        finally:
+            cnotebook.__dict__.update(removed)
+
+    def test_missing_c3d_reports_underlying_failure(self):
+        """C3D has no optional dependency, so a failed import points at cnotebook.c3d."""
+        removed = self._unbind_exports("C3D")
+        try:
+            with patch.object(cnotebook.log, "warning") as mock_warn:
+                with pytest.raises(ImportError, match="cnotebook.c3d") as exc_info:
+                    cnotebook.C3D
+                # The message must not falsely blame anywidget: C3D does not use it.
+                assert "anywidget" not in str(exc_info.value)
+                mock_warn.assert_called_once()
+        finally:
+            cnotebook.__dict__.update(removed)
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        """Unknown attributes still raise AttributeError, not ImportError."""
+        with pytest.raises(AttributeError, match="does_not_exist"):
+            cnotebook.does_not_exist
