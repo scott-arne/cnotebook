@@ -119,13 +119,20 @@ def _path_html(steps: list[PathStep], terminal: Terminal) -> str:
     for label, answer, detail in steps:
         chip_bg = "#2E7D32" if answer else "#9E9E9E"
         chip = "YES" if answer else "NO"
+        # Only append the "— detail" suffix when there is detail text; otherwise a step
+        # with no extra info would render a dangling em-dash after every line.
+        detail_html = (
+            f"<span style='color:#888;font-size:11px'> — {escape_html(detail)}</span>"
+            if detail
+            else ""
+        )
         rows.append(
             f"<li style='margin:2px 0'>"
             f"<span style='display:inline-block;min-width:34px;padding:1px 6px;"
             f"border-radius:3px;color:#fff;background:{chip_bg};font-size:11px;"
             f"text-align:center'>{chip}</span> "
             f"<span>{escape_html(label)}</span>"
-            f"<span style='color:#888;font-size:11px'> — {escape_html(detail)}</span></li>"
+            f"{detail_html}</li>"
         )
     name, color, description = terminal
     badge = (

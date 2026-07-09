@@ -78,6 +78,18 @@ def test_render_path_html_contains_labels_and_terminal():
     assert "YES" in html and "NO" in html
 
 
+def test_render_path_html_omits_dash_when_no_detail():
+    # A step with no extra detail must not render a dangling "— "; a step WITH detail keeps it.
+    html = render_path(
+        [("No extra info", True, ""), ("Has info", False, "2 matches")],
+        _terminal(),
+        format="html",
+    )
+    assert "No extra info" in html
+    assert "— 2 matches" in html          # the informative step keeps its detail
+    assert html.count("—") == 1      # exactly one em-dash: only the detail-bearing step
+
+
 def test_render_path_png_returns_embeddable_string():
     out = render_path(_steps(), _terminal(), format="png")
     assert isinstance(out, str)
