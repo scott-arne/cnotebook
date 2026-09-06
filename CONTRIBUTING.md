@@ -348,7 +348,7 @@ invoke update-gui
 invoke update-gui --ref v0.3.0
 ```
 
-This requires Node.js and npm to be installed. The task fetches the specified version, runs the Vite build, and copies the output to `cnotebook/c3d/static/`.
+This requires Node.js and npm to be installed. The task fetches the specified version, runs the Vite build, and copies the output to `cnotebook/core/static/`.
 
 ### IDE Setup
 

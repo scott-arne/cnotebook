@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- C3D: updated bundled 3dmol-js-gui to 0.3.4
+  - Zoom, orient, and the initial fit keep the whole selection inside the frame with a margin instead of placing its edge flush against the viewport
+  - UI panel visibility, theme, and background are applied before molecules load, so the viewer no longer flashes the default chrome and dark theme while structures load
+  - Sidebar entries show type glyphs and a unified chevron
+
 ## [3.1.1] - 2026-07-05
 
 ### Fixed
