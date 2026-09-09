@@ -7,8 +7,8 @@ from openeye import oechem, oedepict
 from cnotebook.context import CNotebookContext
 from cnotebook.core.errors import CNotebookWarning
 from cnotebook.pandas_ext import (
-    ColorBondByOverlapScore,
     SMARTS_DELIMITER_RE,
+    ColorBondByOverlapScore,
     create_disp_formatter,
     create_mol_formatter,
     escape_formatter,
@@ -537,13 +537,17 @@ class TestPandasDataFrameHighlight:
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_highlight_with_color(self):
         """highlight() should accept color parameter."""
+        import warnings
+
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
         df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
 
-        # Should not raise
-        df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
+        # Should not raise (may warn if default style incompatible with single color)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CNotebookWarning)
+            df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
 
         arr = df["mol"].array
         ctx = arr.metadata.get("cnotebook")
@@ -1083,9 +1087,8 @@ class TestSeriesAlignDepictions:
         """Align with ref='first' when all mols are None should log warning and return."""
         series = pd.Series([None, None], dtype=oepd.MoleculeDtype())
 
-        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+        with pytest.warns(CNotebookWarning, match="No valid molecule found"):
             series.chem.align_depictions(ref="first")
-            mock_warn.assert_called_once_with("No valid molecule found in series for depiction alignment")
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_ref_molecule(self):
@@ -1264,14 +1267,14 @@ class TestDataFrameRecalculateDepictions:
             "name": ["benzene"],
         })
 
-        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+        with pytest.warns(CNotebookWarning, match="MoleculeDtype"):
             df.chem.recalculate_depiction_coordinates(molecule_columns="name")
-            mock_warn.assert_called_once()
-            assert "MoleculeDtype" in str(mock_warn.call_args)
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_recalculate_missing_column_raises_runtime_error(self):
         """Specifying a missing column triggers a set mutation bug in the source."""
+        import warnings
+
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -1280,8 +1283,11 @@ class TestDataFrameRecalculateDepictions:
         })
 
         # Source removes from set during iteration (line 563), causing RuntimeError
-        with pytest.raises(RuntimeError, match="Set changed size during iteration"):
-            df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
+        # (also warns about missing column before the error)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CNotebookWarning)
+            with pytest.raises(RuntimeError, match="Set changed size during iteration"):
+                df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
 
 
 class TestDataFrameResetDepictions:
@@ -1666,10 +1672,8 @@ class TestDataFrameFingerprintSimilarity:
 
         invalid_ref = oechem.OEGraphMol()  # Empty mol, IsValid() returns False
 
-        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+        with pytest.warns(CNotebookWarning, match="not valid"):
             result = df.chem.fingerprint_similarity("mol", ref=invalid_ref)
-            mock_warn.assert_called_once()
-            assert "not valid" in str(mock_warn.call_args)
 
         assert "fingerprint_tanimoto" not in result.columns
 

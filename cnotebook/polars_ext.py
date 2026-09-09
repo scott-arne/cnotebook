@@ -2,26 +2,27 @@ import logging
 import re
 import typing
 import weakref
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, Literal
 
-import polars as pl
 import oepolars as oeplr  # pyright: ignore
+import polars as pl
 from oepolars.namespaces.dataframe import DataFrameChemNamespace  # pyright: ignore
 from oepolars.namespaces.series import SeriesChemNamespace  # pyright: ignore
-from openeye import oechem, oedepict, oegraphsim, oegrapheme
-from .context import pass_cnotebook_context, get_series_context, create_local_context
-from .core.errors import warn
-from typing import Iterable, Literal
-from .helpers import escape_brackets, create_structure_highlighter
+from openeye import oechem, oedepict, oegrapheme, oegraphsim
+
 from .align import fingerprint_maker
+from .context import create_local_context, get_series_context, pass_cnotebook_context
+from .core.errors import warn
+from .helpers import create_structure_highlighter, escape_brackets
 from .render import (
-    CNotebookContext,  # noqa
-    oemol_to_disp,
+    CNotebookContext,
     oedisp_to_html,
     oedu_to_html,
-    render_invalid_molecule,
+    oemol_to_disp,
     render_empty_molecule,
-    render_exceeds_max_heavy_atoms
+    render_exceeds_max_heavy_atoms,
+    render_invalid_molecule,
 )
 
 get_ipython: Any = None
@@ -223,13 +224,13 @@ def render_polars_dataframe(
                 series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
-                log.warning(f'Overwriting existing formatter for {col} with a molecule formatter')
+                warn(f'Overwriting existing formatter for {col} with a molecule formatter')
 
             formatters[col] = create_mol_formatter(ctx=series_ctx)
 
             # Record the column width
             if col in col_space:
-                log.warning(f'Column spacing for {col} already defined, overwriting with molecule image width')
+                warn(f'Column spacing for {col} already defined, overwriting with molecule image width')
 
             col_space[col] = float(series_ctx.width)
 
@@ -244,7 +245,7 @@ def render_polars_dataframe(
             series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
-                log.warning(f'Overwriting existing formatter for {col} with a display formatter')
+                warn(f'Overwriting existing formatter for {col} with a display formatter')
 
             formatters[col] = create_disp_formatter(ctx=series_ctx)
 
@@ -277,7 +278,7 @@ def render_polars_dataframe(
             series_ctx = ctx if ctx is not None else get_series_context(metadata)
 
             if col in formatters:
-                log.warning(f'Overwriting existing formatter for {col} with a design unit formatter')
+                warn(f'Overwriting existing formatter for {col} with a design unit formatter')
 
             formatters[col] = create_du_formatter(ctx=series_ctx)
             col_space[col] = float(series_ctx.width)
@@ -428,7 +429,7 @@ def _series_highlight(
         if hasattr(self, 'align_depictions'):
             self.align_depictions(ref=ref, method=method)
         else:
-            log.warning("align_depictions not available; ref parameter ignored")
+            warn("align_depictions not available; ref parameter ignored")
 
 
 def _series_reset_depictions(self) -> None:
@@ -524,7 +525,7 @@ def _series_align_depictions(
                 ref = mol.CreateCopy()
                 break
         else:
-            log.warning("No valid molecule found in series for depiction alignment")
+            warn("No valid molecule found in series for depiction alignment")
             return
 
     # Make sure the reference has 2D coordinates
@@ -736,10 +737,10 @@ def _dataframe_recalculate_depiction_coordinates(
                 )
 
             else:
-                log.warning(f'Column {col} does not have a MoleculeType')
+                warn(f'Column {col} does not have a MoleculeType')
 
         else:
-            log.warning(f'{col} not found in DataFrame columns: ({", ".join(self._df.columns)})')
+            warn(f'{col} not found in DataFrame columns: ({", ".join(self._df.columns)})')
 
 
 def _dataframe_highlight(
@@ -943,10 +944,10 @@ def _dataframe_highlight_using_column(
                             substructures.append(p)
 
                     else:
-                        log.warning(f'Do not know how to highlight using: {type(p).__name__}')
+                        warn(f'Do not know how to highlight using: {type(p).__name__}')
 
             elif patterns is not None:
-                log.warning(f'Do not know how to highlight using: {type(patterns).__name__}')
+                warn(f'Do not know how to highlight using: {type(patterns).__name__}')
 
             # Overlay highlighting
             if use_overlay:
@@ -1040,7 +1041,7 @@ def _dataframe_fingerprint_similarity(
                 ref = mol
                 break
         else:
-            log.warning(f'No valid reference molecules to use for alignment in column {molecule_column}')
+            warn(f'No valid reference molecules to use for alignment in column {molecule_column}')
             return df
 
     assert ref is not None
@@ -1064,7 +1065,7 @@ def _dataframe_fingerprint_similarity(
     ref_fp = make_fp(ref)
 
     if not ref_fp.IsValid():
-        log.warning("Fingerprint from reference molecule is invalid")
+        warn("Fingerprint from reference molecule is invalid")
         return df
 
     # Create the display objects and scores
@@ -1224,8 +1225,9 @@ def _polars_dataframe_molgrid(
     :param kwargs: Additional arguments passed to MolGrid.
     :returns: MolGrid instance.
     """
-    from cnotebook import MolGrid
     import pandas as pd
+
+    from cnotebook import MolGrid
 
     df = self._df
     mols = list(df[mol_col].to_list())

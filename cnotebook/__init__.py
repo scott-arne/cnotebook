@@ -11,6 +11,7 @@ from openeye import oechem, oedepict
 
 # Core functionality that doesn't depend on backends
 from .context import CNotebookContext, cnotebook_context
+from .core.errors import warn
 from .helpers import highlight_smarts as highlight_smarts
 
 __version__ = '3.1.3'
@@ -214,8 +215,8 @@ def _detect_environment() -> CNotebookEnvInfo:
     # Detect pandas/oepandas
     try:
         # noinspection PyUnusedImports
-        import pandas as pd
         import oepandas as oepd
+        import pandas as pd
         pandas_version = pd.__version__ if oepd is not None else ""
     except ImportError:
         pass
@@ -223,8 +224,8 @@ def _detect_environment() -> CNotebookEnvInfo:
     # Detect polars/oepolars
     try:
         # noinspection PyUnusedImports
-        import polars as pl
         import oepolars as oeplr  # pyright: ignore[reportMissingImports]
+        import polars as pl
         polars_version = pl.__version__ if oeplr is not None else ""
     except ImportError:
         pass
@@ -292,7 +293,8 @@ def get_env() -> CNotebookEnvInfo:
 # Import and register pandas formatters if available
 if _env_info.pandas_available:
     try:
-        from .pandas_ext import render_dataframe as render_dataframe, register_pandas_formatters
+        from .pandas_ext import register_pandas_formatters
+        from .pandas_ext import render_dataframe as render_dataframe
 
         if _env_info.ipython_available:
             from .ipython_ext import register_ipython_formatters
@@ -300,18 +302,19 @@ if _env_info.pandas_available:
             register_pandas_formatters()
             log.debug("[cnotebook] Registered Pandas formatters for iPython")
     except Exception as e:
-        log.warning(f"[cnotebook] Failed to import/register Pandas extension: {e}")
+        warn(f"[cnotebook] Failed to import/register Pandas extension: {e}")
 
 # Import and register polars formatters if available
 if _env_info.polars_available:
     try:
-        from .polars_ext import render_polars_dataframe as render_polars_dataframe, register_polars_formatters
+        from .polars_ext import register_polars_formatters
+        from .polars_ext import render_polars_dataframe as render_polars_dataframe
 
         if _env_info.ipython_available:
             register_polars_formatters()
             log.debug("[cnotebook] Registered Polars formatters for iPython")
     except Exception as e:
-        log.warning(f"[cnotebook] Failed to import/register Polars extension: {e}")
+        warn(f"[cnotebook] Failed to import/register Polars extension: {e}")
 
 # Import marimo extension if available
 if _env_info.marimo_available:
@@ -319,13 +322,17 @@ if _env_info.marimo_available:
         from . import marimo_ext
         log.debug(f"[cnotebook] Imported Marimo extension: {marimo_ext.__name__}")
     except Exception as e:
-        log.warning(f"[cnotebook] Failed to import Marimo extension: {e}")
+        warn(f"[cnotebook] Failed to import Marimo extension: {e}")
 
 # Export molgrid at top level if available
 if _env_info.molgrid_available:
     from .grid import (
         BEST_FIT_ORIENTATION as BEST_FIT_ORIENTATION,
+    )
+    from .grid import (
         MolGrid as MolGrid,
+    )
+    from .grid import (
         molgrid as molgrid,
     )
 
@@ -378,7 +385,7 @@ def __getattr__(name: str):
                 f"cnotebook.{name} is unavailable: the cnotebook.{submodule} module failed to "
                 f"import. Import `cnotebook.{submodule}` directly to see the underlying error."
             )
-        log.warning(message)
+        warn(message)
         raise ImportError(message)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -422,7 +429,7 @@ def display(obj, ctx: CNotebookContext | None = None):
         ctx.height = 300
         cnotebook.display(mol, ctx=ctx)
     """
-    from .render import oemol_to_html, oedisp_to_html
+    from .render import oedisp_to_html, oemol_to_html
 
     # Get environment info
     env = get_env()
@@ -477,7 +484,8 @@ def _display_html(html: str, env: CNotebookEnvInfo):
 
     # Jupyter/IPython environment
     if env.ipython_available:
-        from IPython.display import HTML, display as ipy_display
+        from IPython.display import HTML
+        from IPython.display import display as ipy_display
         return ipy_display(HTML(html))
 
     # Fallback: just return the HTML string

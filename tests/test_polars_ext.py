@@ -5,15 +5,15 @@ from cnotebook.core.errors import CNotebookWarning
 # Check if polars/oepolars available
 polars_available = False
 try:
-    import polars as pl
     import oepolars as oeplr
+    import polars as pl
     polars_available = True
 except ImportError:
     pass
 
 pytestmark = pytest.mark.skipif(not polars_available, reason="polars/oepolars not available")
 
-import cnotebook.polars_ext as _polars_ext  # noqa: E402,F401
+import cnotebook.polars_ext as _polars_ext  # noqa: F401
 
 
 class TestPolarsDataFrameRendering:
@@ -39,12 +39,13 @@ class TestPolarsDataFrameRendering:
 
     def test_render_empty_dataframe(self):
         """Empty DataFrame should render without error."""
-        from cnotebook.polars_ext import render_polars_dataframe
+        import os
 
         # Create empty DataFrame with molecule column using oepolars read function
         # (oepolars doesn't support direct empty Series creation with MoleculeType)
         import tempfile
-        import os
+
+        from cnotebook.polars_ext import render_polars_dataframe
 
         # Create a temp SMI file with just a header
         with tempfile.NamedTemporaryFile(mode='w', suffix='.smi', delete=False) as f:
@@ -97,8 +98,9 @@ class TestPolarsDataFrameHighlight:
 
     def test_highlight_adds_callback(self):
         """highlight() should add callback to DataFrame column context."""
-        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -114,8 +116,11 @@ class TestPolarsDataFrameHighlight:
 
     def test_highlight_with_color(self):
         """highlight() should accept color parameter."""
-        from cnotebook.polars_ext import get_dataframe_column_context
+        import warnings
+
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -123,8 +128,10 @@ class TestPolarsDataFrameHighlight:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        # Should not raise
-        df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
+        # Should not raise (may warn if default style incompatible with single color)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CNotebookWarning)
+            df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
 
         ctx = get_dataframe_column_context(df, "mol")
         assert ctx is not None
@@ -152,8 +159,9 @@ class TestPolarsDataFrameHighlight:
 
     def test_highlight_with_multiple_patterns(self):
         """highlight() should accept multiple patterns."""
-        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
@@ -171,8 +179,9 @@ class TestPolarsDataFrameHighlight:
 
     def test_clear_formatting_rules_clears_callbacks(self):
         """clear_formatting_rules() should clear DataFrame-level callbacks."""
-        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -198,8 +207,9 @@ class TestPolarsDataFrameHighlight:
 
     def test_clear_formatting_rules_all_columns(self):
         """clear_formatting_rules() with no args should clear all columns."""
-        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -285,8 +295,9 @@ class TestPolarsSeriesMethods:
 
     def test_align_depictions(self):
         """align_depictions() should create an aligner and apply it to molecules."""
-        from openeye import oechem
         from unittest.mock import MagicMock, patch
+
+        from openeye import oechem
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -307,8 +318,9 @@ class TestPolarsSeriesMethods:
 
     def test_recalculate_depiction_coordinates(self):
         """recalculate_depiction_coordinates() should prepare molecule depictions."""
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -346,9 +358,11 @@ class TestPolarsDataFrameMethods:
 
     def test_dataframe_reset_depictions_specific_columns(self):
         """DataFrame reset_depictions() should accept molecule_columns parameter."""
-        import cnotebook.polars_ext
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
+
+        import cnotebook.polars_ext
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -461,8 +475,9 @@ class TestPolarsDataFrameMethods:
 
     def test_recalculate_depiction_coordinates_dataframe(self):
         """DataFrame recalculate_depiction_coordinates() should prepare molecule depictions."""
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -477,8 +492,9 @@ class TestPolarsDataFrameMethods:
 
     def test_recalculate_depiction_coordinates_specific_columns(self):
         """DataFrame recalculate_depiction_coordinates() should process requested columns only."""
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -591,8 +607,9 @@ class TestPolarsDataFrameHighlightExtended:
 
     def test_highlight_smarts_string(self):
         """highlight() with a SMARTS string should store a callback."""
-        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -606,8 +623,9 @@ class TestPolarsDataFrameHighlightExtended:
 
     def test_highlight_iterable_patterns(self):
         """highlight() with an iterable of SMARTS should add one callback per pattern."""
-        from cnotebook.polars_ext import get_dataframe_column_context
         from openeye import oechem
+
+        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
@@ -643,8 +661,9 @@ class TestPolarsSeriesResetClear:
 
     def test_reset_depictions_clears_series_context(self):
         """reset_depictions() should remove cnotebook metadata from the series."""
-        from cnotebook.context import CNotebookContext
         from openeye import oechem
+
+        from cnotebook.context import CNotebookContext
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -659,8 +678,9 @@ class TestPolarsSeriesResetClear:
 
     def test_clear_formatting_rules_clears_series_callbacks(self):
         """clear_formatting_rules() should preserve context and remove callbacks."""
-        from cnotebook.context import CNotebookContext
         from openeye import oechem
+
+        from cnotebook.context import CNotebookContext
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -682,8 +702,9 @@ class TestPolarsDataFrameRecalculateDepictions:
 
     def test_recalculate_all_columns(self):
         """recalculate_depiction_coordinates() with no args should process all molecule columns."""
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -700,8 +721,9 @@ class TestPolarsDataFrameRecalculateDepictions:
 
     def test_recalculate_string_column(self):
         """recalculate_depiction_coordinates() should accept molecule_columns as a string."""
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -718,8 +740,9 @@ class TestPolarsDataFrameRecalculateDepictions:
 
     def test_recalculate_list_column(self):
         """recalculate_depiction_coordinates() should accept molecule_columns as a list."""
-        from openeye import oechem
         from unittest.mock import patch
+
+        from openeye import oechem
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -734,27 +757,19 @@ class TestPolarsDataFrameRecalculateDepictions:
 
         mock_prepare.assert_called_once()
 
-    def test_recalculate_non_molecule_warns(self, caplog):
+    def test_recalculate_non_molecule_warns(self):
         """recalculate_depiction_coordinates() should warn for non-molecule column."""
-        import logging
-
         df = pl.DataFrame({"text": ["hello"]})
 
-        with caplog.at_level(logging.WARNING, logger="cnotebook"):
+        with pytest.warns(CNotebookWarning, match="MoleculeType"):
             df.chem.recalculate_depiction_coordinates(molecule_columns=["text"])
 
-        assert any("MoleculeType" in record.message for record in caplog.records)
-
-    def test_recalculate_missing_column_warns(self, caplog):
+    def test_recalculate_missing_column_warns(self):
         """recalculate_depiction_coordinates() should warn for missing column."""
-        import logging
-
         df = pl.DataFrame({"text": ["hello"]})
 
-        with caplog.at_level(logging.WARNING, logger="cnotebook"):
+        with pytest.warns(CNotebookWarning, match="not found"):
             df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
-
-        assert any("not found" in record.message for record in caplog.records)
 
 
 class TestPolarsHighlightUsingColumnExtended:
@@ -885,6 +900,7 @@ class TestPolarsRegisterFormatters:
     def test_register_formatters_ipython_present(self):
         """register_polars_formatters() should call for_type when IPython is available."""
         from unittest.mock import MagicMock, patch
+
         from cnotebook.polars_ext import render_polars_dataframe
 
         mock_ipython = MagicMock()
@@ -900,8 +916,8 @@ class TestPolarsRegisterFormatters:
 
     def test_register_formatters_no_ipython_instance(self, caplog):
         """register_polars_formatters() should emit debug log when get_ipython() returns None."""
-        from unittest.mock import patch
         import logging
+        from unittest.mock import patch
 
         with patch("cnotebook.polars_ext.get_ipython", return_value=None):
             with caplog.at_level(logging.DEBUG, logger="cnotebook"):
@@ -913,6 +929,7 @@ class TestPolarsRegisterFormatters:
     def test_register_formatters_already_registered(self):
         """register_polars_formatters() should not re-register when render_polars_dataframe is already set."""
         from unittest.mock import MagicMock, patch
+
         from cnotebook.polars_ext import render_polars_dataframe
 
         mock_ipython = MagicMock()
@@ -932,9 +949,10 @@ class TestPolarsCreateDispFormatter:
 
     def test_valid_display_returns_html(self):
         """create_disp_formatter with a valid OE2DMolDisplay should return HTML string."""
-        from cnotebook.polars_ext import create_disp_formatter
-        from cnotebook.context import CNotebookContext
         from openeye import oechem, oedepict
+
+        from cnotebook.context import CNotebookContext
+        from cnotebook.polars_ext import create_disp_formatter
 
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -950,9 +968,10 @@ class TestPolarsCreateDispFormatter:
 
     def test_valid_display_with_callbacks(self):
         """create_disp_formatter with callbacks should apply them."""
-        from cnotebook.polars_ext import create_disp_formatter
-        from cnotebook.context import CNotebookContext
         from openeye import oechem, oedepict
+
+        from cnotebook.context import CNotebookContext
+        from cnotebook.polars_ext import create_disp_formatter
 
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -972,8 +991,8 @@ class TestPolarsCreateDispFormatter:
 
     def test_invalid_display_returns_str(self):
         """create_disp_formatter with non-display input should return str()."""
-        from cnotebook.polars_ext import create_disp_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.polars_ext import create_disp_formatter
 
         ctx = CNotebookContext()
         formatter = create_disp_formatter(ctx=ctx)
@@ -986,8 +1005,8 @@ class TestPolarsCreateDuFormatter:
 
     def test_non_du_returns_str(self):
         """create_du_formatter with a non-DesignUnit should return str()."""
-        from cnotebook.polars_ext import create_du_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.polars_ext import create_du_formatter
 
         ctx = CNotebookContext()
         formatter = create_du_formatter(ctx=ctx)
@@ -1000,8 +1019,9 @@ class TestPolarsRenderWithDisplayColumns:
 
     def test_render_display_column(self):
         """render_polars_dataframe with a DisplayType column should produce HTML."""
-        from cnotebook.polars_ext import render_polars_dataframe
         from openeye import oechem
+
+        from cnotebook.polars_ext import render_polars_dataframe
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -1022,8 +1042,9 @@ class TestPolarsRenderWithDesignUnitColumns:
 
     def test_render_designunit_column(self):
         """render_polars_dataframe with a DesignUnitType column should produce HTML."""
-        from cnotebook.polars_ext import render_polars_dataframe
         from openeye import oechem
+
+        from cnotebook.polars_ext import render_polars_dataframe
 
         du = oechem.OEDesignUnit()
         mol = oechem.OEGraphMol()
@@ -1077,8 +1098,9 @@ class TestPolarsAlignDepictionsEdge:
 
     def test_align_exception_handled(self):
         """align_depictions should catch exceptions gracefully."""
-        from openeye import oechem, oedepict
         from unittest.mock import patch
+
+        from openeye import oechem, oedepict
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -1096,14 +1118,10 @@ class TestPolarsAlignDepictionsEdge:
 
         mock_create_aligner.assert_called_once()
 
-    def test_align_no_valid_mols(self, caplog):
+    def test_align_no_valid_mols(self):
         """align_depictions with ref='first' and all None mols should warn."""
-        import logging
-
         df = pl.DataFrame({"mol": [None, None]}).chem.as_molecule("mol")
         series = df.get_column("mol")
 
-        with caplog.at_level(logging.WARNING, logger="cnotebook"):
+        with pytest.warns(CNotebookWarning, match="No valid molecule"):
             series.chem.align_depictions(ref="first")
-
-        assert any("No valid molecule" in record.message for record in caplog.records)

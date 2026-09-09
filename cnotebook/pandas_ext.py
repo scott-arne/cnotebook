@@ -1,25 +1,27 @@
-import re
 import logging
+import re
 import typing
-import pandas as pd
-import oepandas as oepd
-from collections.abc import Hashable
-from typing import Iterable, Any, Literal
-from openeye import oechem, oedepict, oegraphsim, oegrapheme
+from collections.abc import Hashable, Iterable
 from copy import copy as shallow_copy
-from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor
-from .context import pass_cnotebook_context, get_series_context
-from .core.errors import warn
-from .helpers import escape_brackets, create_structure_highlighter
+from typing import Any, Literal
+
+import oepandas as oepd
+import pandas as pd
+from oepandas.pandas_extensions import OEDataFrameAccessor, OESeriesAccessor
+from openeye import oechem, oedepict, oegrapheme, oegraphsim
+
 from .align import create_aligner, fingerprint_maker
+from .context import get_series_context, pass_cnotebook_context
+from .core.errors import warn
+from .helpers import create_structure_highlighter, escape_brackets
 from .render import (
-    CNotebookContext,  # noqa
-    oemol_to_disp,
+    CNotebookContext,
     oedisp_to_html,
     oedu_to_html,
-    render_invalid_molecule,
+    oemol_to_disp,
     render_empty_molecule,
-    render_exceeds_max_heavy_atoms
+    render_exceeds_max_heavy_atoms,
+    render_invalid_molecule,
 )
 
 get_ipython: Any = None
@@ -259,7 +261,7 @@ def render_dataframe(
 
         # Create the formatter for this column
         if col in formatters:
-            log.warning(f'Overwriting existing formatter for {col} with a molecule formatter')
+            warn(f'Overwriting existing formatter for {col} with a molecule formatter')
 
         arr = _as_depictable_molecule_array(df[col].array)
 
@@ -270,7 +272,7 @@ def render_dataframe(
 
         # Record the column width
         if col in col_space:
-            log.warning(f'Column spacing for {col} already defined by overwriting with molecule image width')
+            warn(f'Column spacing for {col} already defined by overwriting with molecule image width')
 
         col_space[col] = int(series_ctx.width)
 
@@ -321,7 +323,7 @@ def render_dataframe(
 
     for col in designunit_columns:
         if col in formatters:
-            log.warning(f'Overwriting existing formatter for {col} with a design unit formatter')
+            warn(f'Overwriting existing formatter for {col} with a design unit formatter')
 
         arr = df[col].array
         series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
@@ -630,7 +632,7 @@ def _series_align_depictions(
                 ref = mol.CreateCopy()
                 break
         else:
-            log.warning("No valid molecule found in series for depiction alignment")
+            warn("No valid molecule found in series for depiction alignment")
             return
 
     # Suppress alignment warnings (there are lots of needless warnings)
@@ -793,10 +795,10 @@ def _dataframe_recalculate_depiction_coordinates(
                 )
 
             else:
-                log.warning(f'Column {col} does not have a MoleculeDtype or QueryDtype')
+                warn(f'Column {col} does not have a MoleculeDtype or QueryDtype')
 
         else:
-            log.warning(f'{col} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
+            warn(f'{col} not found in DataFrame columns: ({", ".join(self._obj.columns)})')
             molecule_columns.remove(col)
 
 
@@ -1049,10 +1051,10 @@ def _dataframe_highlight_using_column(
                             substructures.append(p)
 
                     else:
-                        log.warning(f'Do not know how to highlight using: {type(p).__name__}')
+                        warn(f'Do not know how to highlight using: {type(p).__name__}')
 
             else:
-                log.warning(f'Do not know how to highlight using: {type(patterns).__name__}')
+                warn(f'Do not know how to highlight using: {type(patterns).__name__}')
 
             # Overlay highlighting
             if use_overlay:
@@ -1174,8 +1176,7 @@ def _dataframe_fingerprint_similarity(
         raise KeyError(f'Molecule column not found in DataFrame: {molecule_column}')
 
     if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
-        raise TypeError("Column {} does not have dtype oepd.MoleculeDtype ({})".format(
-            molecule_column, str(df[molecule_column].dtype)))
+        raise TypeError(f"Column {molecule_column} does not have dtype oepd.MoleculeDtype ({df[molecule_column].dtype!s})")
 
     # Get the context
     arr = self._obj[molecule_column].array
@@ -1189,14 +1190,14 @@ def _dataframe_fingerprint_similarity(
                 ref = mol
                 break
         else:
-            log.warning(f'No valid reference molecules to use for alignment in column {molecule_column}')
+            warn(f'No valid reference molecules to use for alignment in column {molecule_column}')
             return df
 
     assert ref is not None
 
     # Check reference molecule
     if not ref.IsValid():
-        log.warning("Reference molecule is not valid")
+        warn("Reference molecule is not valid")
         return df
 
     # Fingerprint maker
@@ -1213,7 +1214,7 @@ def _dataframe_fingerprint_similarity(
     ref_fp = make_fp(ref)
 
     if not ref_fp.IsValid():
-        log.warning("Fingerprint from reference molecule is invalid")
+        warn("Fingerprint from reference molecule is invalid")
         return df
 
     # Create the display objects

@@ -632,12 +632,10 @@ class TestMissingOptionalExport:
                     return None
                 return real_find_spec(name, *args, **kwargs)
 
-            with patch("importlib.util.find_spec", side_effect=fake_find_spec), \
-                    patch.object(cnotebook.log, "warning") as mock_warn:
-                with pytest.raises(ImportError, match="requires the optional 'anywidget'"):
-                    cnotebook.molgrid
-                mock_warn.assert_called_once()
-                assert "anywidget" in mock_warn.call_args[0][0]
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+                with pytest.warns(CNotebookWarning, match="anywidget"):
+                    with pytest.raises(ImportError, match="requires the optional 'anywidget'"):
+                        cnotebook.molgrid
         finally:
             cnotebook.__dict__.update(removed)
 
@@ -653,11 +651,10 @@ class TestMissingOptionalExport:
                     return fake_spec
                 return real_find_spec(name, *args, **kwargs)
 
-            with patch("importlib.util.find_spec", side_effect=fake_find_spec), \
-                    patch.object(cnotebook.log, "warning") as mock_warn:
-                with pytest.raises(ImportError, match="cnotebook.grid"):
-                    cnotebook.MolGrid
-                mock_warn.assert_called_once()
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+                with pytest.warns(CNotebookWarning):
+                    with pytest.raises(ImportError, match="cnotebook.grid"):
+                        cnotebook.MolGrid
         finally:
             cnotebook.__dict__.update(removed)
 
@@ -665,12 +662,11 @@ class TestMissingOptionalExport:
         """C3D has no optional dependency, so a failed import points at cnotebook.c3d."""
         removed = self._unbind_exports("C3D")
         try:
-            with patch.object(cnotebook.log, "warning") as mock_warn:
+            with pytest.warns(CNotebookWarning):
                 with pytest.raises(ImportError, match="cnotebook.c3d") as exc_info:
                     cnotebook.C3D
-                # The message must not falsely blame anywidget: C3D does not use it.
-                assert "anywidget" not in str(exc_info.value)
-                mock_warn.assert_called_once()
+            # The message must not falsely blame anywidget: C3D does not use it.
+            assert "anywidget" not in str(exc_info.value)
         finally:
             cnotebook.__dict__.update(removed)
 
