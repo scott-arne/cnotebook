@@ -1,5 +1,6 @@
 import importlib.util
 import logging
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -634,7 +635,7 @@ class TestMissingOptionalExport:
 
             with patch("importlib.util.find_spec", side_effect=fake_find_spec):
                 with pytest.warns(CNotebookWarning, match="anywidget"):
-                    with pytest.raises(ImportError, match="requires the optional 'anywidget'"):
+                    with pytest.raises(AttributeError, match="requires the optional 'anywidget'"):
                         cnotebook.molgrid
         finally:
             cnotebook.__dict__.update(removed)
@@ -653,7 +654,7 @@ class TestMissingOptionalExport:
 
             with patch("importlib.util.find_spec", side_effect=fake_find_spec):
                 with pytest.warns(CNotebookWarning):
-                    with pytest.raises(ImportError, match="cnotebook.grid"):
+                    with pytest.raises(AttributeError, match="cnotebook.grid"):
                         cnotebook.MolGrid
         finally:
             cnotebook.__dict__.update(removed)
@@ -663,7 +664,7 @@ class TestMissingOptionalExport:
         removed = self._unbind_exports("C3D")
         try:
             with pytest.warns(CNotebookWarning):
-                with pytest.raises(ImportError, match="cnotebook.c3d") as exc_info:
+                with pytest.raises(AttributeError, match="cnotebook.c3d") as exc_info:
                     cnotebook.C3D
             # The message must not falsely blame anywidget: C3D does not use it.
             assert "anywidget" not in str(exc_info.value)
@@ -694,3 +695,12 @@ def test_no_stream_handler_at_import():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip().endswith("False")
+
+
+def test_hasattr_optional_export(monkeypatch):
+    monkeypatch.delattr(cnotebook, "MolGrid", raising=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CNotebookWarning)
+        assert hasattr(cnotebook, "MolGrid") in (True, False)
+    with pytest.raises(AttributeError):
+        getattr(cnotebook, "no_such_attribute")

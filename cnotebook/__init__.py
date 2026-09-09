@@ -354,6 +354,7 @@ _OPTIONAL_EXPORTS = {
     "BEST_FIT_ORIENTATION": ("grid", "anywidget"),
     "C3D": ("c3d", None),
 }
+_WARNED_EXPORTS: set[str] = set()
 
 
 def __getattr__(name: str):
@@ -367,8 +368,7 @@ def __getattr__(name: str):
     when there is one, or pointing at the submodule to reveal the real error.
 
     :param name: Attribute being accessed on the ``cnotebook`` module.
-    :raises ImportError: If an optional export is requested while unavailable.
-    :raises AttributeError: For any other unknown attribute.
+    :raises AttributeError: If an optional export is requested while unavailable, or the name is unknown.
     """
     export = _OPTIONAL_EXPORTS.get(name)
     if export is not None:
@@ -385,8 +385,10 @@ def __getattr__(name: str):
                 f"cnotebook.{name} is unavailable: the cnotebook.{submodule} module failed to "
                 f"import. Import `cnotebook.{submodule}` directly to see the underlying error."
             )
-        warn(message)
-        raise ImportError(message)
+        if name not in _WARNED_EXPORTS:
+            _WARNED_EXPORTS.add(name)
+            warn(message)
+        raise AttributeError(message)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

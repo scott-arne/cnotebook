@@ -1,13 +1,15 @@
 import logging
+from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
-from typing import Callable, Any, Literal, Generic, TypeVar
+from typing import Callable, Any, Literal, Generic, TypeVar, Iterator
 from collections.abc import Iterable
 # noinspection PyPackageRequirements
 from contextvars import ContextVar
 from openeye import oechem, oedepict
 
 from cnotebook.core.errors import warn
+from cnotebook.core.vocabulary import IMAGE_FORMATS
 
 log = logging.getLogger("cnotebook")
 
@@ -22,6 +24,39 @@ class _Deferred(Enum):
 
 
 DEFERRED = _Deferred.DEFERRED
+
+
+def _validate(name: str, value: Any) -> None:
+    """Raise ``ValueError`` when *value* is not acceptable for option *name*.
+
+    Deferred values are always accepted.
+    """
+    if isinstance(value, _Deferred):
+        return
+    if name == "structure_scale":
+        if not value > 0:
+            raise ValueError(
+                f"structure_scale must be > 0 (got {value!r}). To size structures to the canvas "
+                "use auto_scale=True (OEScale_AutoScale is no longer a valid structure_scale)."
+            )
+    elif name == "image_format":
+        if value not in IMAGE_FORMATS:
+            raise ValueError(f"image_format must be one of {IMAGE_FORMATS} (got {value!r})")
+    elif name in ("width", "height"):
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0 (got {value!r})")
+    elif name in ("min_width", "min_height", "max_width", "max_height"):
+        if value is not None and not value > 0:
+            raise ValueError(f"{name} must be None or > 0 (got {value!r})")
+    elif name == "device_pixel_ratio":
+        if not value >= 1.0:
+            raise ValueError(f"device_pixel_ratio must be >= 1.0 (got {value!r})")
+    elif name in ("atom_label_font_scale", "title_font_scale"):
+        if not value > 0:
+            raise ValueError(f"{name} must be > 0 (got {value!r})")
+    elif name == "max_heavy_atoms":
+        if value is not None and value < 1:
+            raise ValueError(f"max_heavy_atoms must be None or >= 1 (got {value!r})")
 
 
 ########################################################################################################################
@@ -121,8 +156,9 @@ class CNotebookContext:
             bond_width_scaling: bool | _Deferred = False,
             callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None | _Deferred = None,
             scope: Literal["local", "global"] = "global",
-            title: bool = True,
-            max_heavy_atoms: int | None | _Deferred = 100
+            title: bool | _Deferred = True,
+            max_heavy_atoms: int | None | _Deferred = 100,
+            device_pixel_ratio: float | _Deferred = 2.0
     ):
         """Create a rendering context.
 
@@ -153,6 +189,14 @@ class CNotebookContext:
             rendered. Molecules exceeding this limit show a placeholder image instead.
             Set to None to disable the limit.
         """
+        for _name, _value in (
+            ("width", width), ("height", height), ("min_width", min_width), ("min_height", min_height),
+            ("max_width", max_width), ("max_height", max_height), ("structure_scale", structure_scale),
+            ("atom_label_font_scale", atom_label_font_scale), ("title_font_scale", title_font_scale),
+            ("image_format", image_format), ("max_heavy_atoms", max_heavy_atoms),
+            ("device_pixel_ratio", device_pixel_ratio),
+        ):
+            _validate(_name, _value)
         self._width = DeferredValue[float]("width", width)
         self._height = DeferredValue[float]("height", height)
         self._min_height = DeferredValue[float | None]("min_height", min_height)
@@ -167,6 +211,7 @@ class CNotebookContext:
         self._bond_width_scaling = DeferredValue[bool]("bond_width_scaling", bond_width_scaling)
         self._title = DeferredValue[bool]("title", title)
         self._max_heavy_atoms = DeferredValue[int | None]("max_heavy_atoms", max_heavy_atoms)
+        self._device_pixel_ratio = DeferredValue[float]("device_pixel_ratio", device_pixel_ratio)
         self._scope: Literal["local", "global"] = scope
 
         # Set the callbacks (and do some type checking)
@@ -194,6 +239,7 @@ class CNotebookContext:
 
     @width.setter
     def width(self, value: float) -> None:
+        _validate("width", value)
         if self.max_width is not None and value > self.max_width:
             warn(f'Width exceeds max_width: {value} > {self.max_width}')
 
@@ -205,6 +251,7 @@ class CNotebookContext:
 
     @height.setter
     def height(self, value: float) -> None:
+        _validate("height", value)
         if self.max_height is not None and value > self.max_height:
             warn(f'Height exceeds max_height: {value} > {self.max_height}')
 
@@ -216,6 +263,7 @@ class CNotebookContext:
 
     @min_width.setter
     def min_width(self, value: float | None) -> None:
+        _validate("min_width", value)
         self._min_width.set(value)
 
     @property
@@ -224,6 +272,7 @@ class CNotebookContext:
 
     @max_width.setter
     def max_width(self, value: float | None):
+        _validate("max_width", value)
         if value is not None and self.width > value:
             warn(f'Current width exceeds max_width: {self.width} > {value}')
 
@@ -235,6 +284,7 @@ class CNotebookContext:
 
     @max_height.setter
     def max_height(self, value: float | None):
+        _validate("max_height", value)
         if value is not None and self.height > value:
             warn(f'Current height exceeds max_height: {self.height} > {value}')
 
@@ -246,6 +296,7 @@ class CNotebookContext:
 
     @min_height.setter
     def min_height(self, value: float | None) -> None:
+        _validate("min_height", value)
         self._min_height.set(value)
 
     @property
@@ -254,6 +305,7 @@ class CNotebookContext:
 
     @structure_scale.setter
     def structure_scale(self, value: float) -> None:
+        _validate("structure_scale", value)
         self._structure_scale.set(value)
 
     @property
@@ -282,6 +334,7 @@ class CNotebookContext:
 
     @atom_label_font_scale.setter
     def atom_label_font_scale(self, value: float) -> None:
+        _validate("atom_label_font_scale", value)
         self._atom_label_font_scale.set(value)
 
     @property
@@ -290,7 +343,18 @@ class CNotebookContext:
 
     @title_font_scale.setter
     def title_font_scale(self, value: float) -> None:
+        _validate("title_font_scale", value)
         self._title_font_scale.set(value)
+
+    @property
+    def device_pixel_ratio(self) -> float:
+        """Raster oversampling factor for PNG output (CSS size stays logical)."""
+        return self._device_pixel_ratio.get()
+
+    @device_pixel_ratio.setter
+    def device_pixel_ratio(self, value: float) -> None:
+        _validate("device_pixel_ratio", value)
+        self._device_pixel_ratio.set(value)
 
     @property
     def bond_width_scaling(self) -> bool:
@@ -306,6 +370,7 @@ class CNotebookContext:
 
     @image_format.setter
     def image_format(self, value: str) -> None:
+        _validate("image_format", value)
         self._image_format.set(value)
 
     @property
@@ -334,6 +399,7 @@ class CNotebookContext:
 
     @max_heavy_atoms.setter
     def max_heavy_atoms(self, value: int | None) -> None:
+        _validate("max_heavy_atoms", value)
         self._max_heavy_atoms.set(value)
 
     @property
@@ -471,6 +537,7 @@ class CNotebookContext:
         self._bond_width_scaling.reset()
         self._title.reset()
         self._max_heavy_atoms.reset()
+        self._device_pixel_ratio.reset()
         self._callbacks.reset()
 
     def copy(self) -> 'CNotebookContext':
@@ -494,6 +561,7 @@ class CNotebookContext:
             bond_width_scaling=self.bond_width_scaling,
             callbacks=self.callbacks,
             max_heavy_atoms=self.max_heavy_atoms,
+            device_pixel_ratio=self.device_pixel_ratio,
         )
 
 
@@ -553,11 +621,14 @@ def create_local_context(
         max_height: float | None | _Deferred = DEFERRED,
         structure_scale: float | _Deferred = DEFERRED,
         auto_scale: bool | _Deferred = DEFERRED,
+        atom_label_font_scale: float | _Deferred = DEFERRED,
         title_font_scale: float | _Deferred = DEFERRED,
         image_format: str | _Deferred = DEFERRED,
         bond_width_scaling: bool | _Deferred = DEFERRED,
         callbacks: Iterable[Callable[[oedepict.OE2DMolDisplay], None]] | None | _Deferred = DEFERRED,
-        max_heavy_atoms: int | None | _Deferred = DEFERRED
+        title: bool | _Deferred = DEFERRED,
+        max_heavy_atoms: int | None | _Deferred = DEFERRED,
+        device_pixel_ratio: float | _Deferred = DEFERRED
 ) -> CNotebookContext:
     return CNotebookContext(
         width=width,
@@ -568,11 +639,14 @@ def create_local_context(
         max_height=max_height,
         structure_scale=structure_scale,
         auto_scale=auto_scale,
+        atom_label_font_scale=atom_label_font_scale,
         title_font_scale=title_font_scale,
         image_format=image_format,
         bond_width_scaling=bond_width_scaling,
         callbacks=callbacks,
+        title=title,
         max_heavy_atoms=max_heavy_atoms,
+        device_pixel_ratio=device_pixel_ratio,
         scope="local"
     )
 
@@ -602,3 +676,24 @@ def get_series_context(metadata: dict[Any, Any], save: bool = False) -> CNoteboo
 # Server-friendly alias. The HTTP layer constructs explicit RenderContext
 # instances and never relies on the global cnotebook_context ContextVar.
 RenderContext = CNotebookContext
+
+
+@contextmanager
+def render_options(**options: Any) -> Iterator[CNotebookContext]:
+    """Temporarily override global render options for the enclosed block.
+
+    :param options: ``CNotebookContext`` attribute names and values.
+    :returns: The temporary context that is active inside the block.
+    :raises TypeError: If an option name is not a context attribute.
+    """
+    for name in options:
+        if not isinstance(getattr(CNotebookContext, name, None), property):
+            raise TypeError(f"Unknown render option {name!r}")
+    temporary = cnotebook_context.get().copy()
+    for name, value in options.items():
+        setattr(temporary, name, value)
+    token = cnotebook_context.set(temporary)
+    try:
+        yield temporary
+    finally:
+        cnotebook_context.reset(token)

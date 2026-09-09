@@ -1,14 +1,19 @@
+import warnings
+
 import pytest
 from openeye import oechem, oedepict
 
+import cnotebook
 from cnotebook.context import (
     DEFERRED,
     CNotebookContext,
     DeferredValue,
     _Deferred,
+    cnotebook_context,
     create_local_context,
     get_series_context,
     pass_cnotebook_context,
+    render_options,
 )
 from cnotebook.core.errors import CNotebookWarning
 
@@ -536,3 +541,76 @@ class TestCNotebookContextEdgeCases:
         disp = ctx.create_molecule_display(mol)
         assert disp.GetWidth() >= 200
         assert disp.GetHeight() >= 200
+
+
+def test_local_context_defers_title_and_label_scale():
+    g = cnotebook_context.get()
+    saved = (g.title, g.atom_label_font_scale, g.device_pixel_ratio)
+    try:
+        g.title = False
+        g.atom_label_font_scale = 2.0
+        g.device_pixel_ratio = 1.0
+        loc = create_local_context()
+        assert loc.title is False
+        assert loc.atom_label_font_scale == 2.0
+        assert loc.device_pixel_ratio == 1.0
+        assert loc.display_options.GetTitleLocation() == oedepict.OETitleLocation_Hidden
+    finally:
+        g.title, g.atom_label_font_scale, g.device_pixel_ratio = saved
+
+
+@pytest.mark.parametrize("value", [0, -1, -0.5])
+def test_structure_scale_validation(value):
+    ctx = CNotebookContext()
+    with pytest.raises(ValueError, match="auto_scale=True"):
+        ctx.structure_scale = value
+    with pytest.raises(ValueError, match="structure_scale"):
+        CNotebookContext(structure_scale=value)
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("image_format", "gif"),
+        ("width", -1),
+        ("height", -5),
+        ("min_width", 0),
+        ("max_height", -3),
+        ("device_pixel_ratio", 0.5),
+        ("atom_label_font_scale", 0),
+        ("title_font_scale", -1),
+        ("max_heavy_atoms", 0),
+    ],
+)
+def test_option_validation(name, value):
+    ctx = CNotebookContext()
+    with pytest.raises(ValueError, match=name):
+        setattr(ctx, name, value)
+
+
+def test_device_pixel_ratio_default_and_copy():
+    ctx = CNotebookContext()
+    assert ctx.device_pixel_ratio == 2.0
+    ctx.device_pixel_ratio = 1.5
+    assert ctx.copy().device_pixel_ratio == 1.5
+    ctx.reset()
+    assert ctx.device_pixel_ratio == 2.0
+
+
+def test_render_options_restores_global():
+    base = cnotebook_context.get()
+    base_width = base.width
+    with render_options(width=333, image_format="svg") as tmp:
+        assert cnotebook_context.get() is tmp
+        assert tmp.width == 333 and tmp.image_format == "svg"
+        with render_options(width=444):
+            assert cnotebook_context.get().width == 444
+        assert cnotebook_context.get().width == 333
+    assert cnotebook_context.get() is base
+    assert base.width == base_width
+
+
+def test_render_options_rejects_unknown_option():
+    with pytest.raises(TypeError, match="no_such_option"):
+        with render_options(no_such_option=1):
+            pass
