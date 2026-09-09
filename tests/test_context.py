@@ -568,26 +568,6 @@ def test_structure_scale_validation(value):
         CNotebookContext(structure_scale=value)
 
 
-@pytest.mark.parametrize(
-    "name,value",
-    [
-        ("image_format", "gif"),
-        ("width", -1),
-        ("height", -5),
-        ("min_width", 0),
-        ("max_height", -3),
-        ("device_pixel_ratio", 0.5),
-        ("atom_label_font_scale", 0),
-        ("title_font_scale", -1),
-        ("max_heavy_atoms", 0),
-    ],
-)
-def test_option_validation(name, value):
-    ctx = CNotebookContext()
-    with pytest.raises(ValueError, match=name):
-        setattr(ctx, name, value)
-
-
 def test_device_pixel_ratio_default_and_copy():
     ctx = CNotebookContext()
     assert ctx.device_pixel_ratio == 2.0
@@ -613,4 +593,76 @@ def test_render_options_restores_global():
 def test_render_options_rejects_unknown_option():
     with pytest.raises(TypeError, match="no_such_option"):
         with render_options(no_such_option=1):
+            pass
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("width", float("nan")),
+        ("height", float("inf")),
+        ("structure_scale", float("nan")),
+        ("device_pixel_ratio", float("nan")),
+        ("atom_label_font_scale", float("inf")),
+        ("title_font_scale", float("-inf")),
+        ("width", "not a number"),
+        ("height", True),
+        ("structure_scale", [1.0]),
+        ("max_heavy_atoms", 3.14),
+        ("max_heavy_atoms", float("nan")),
+    ],
+)
+def test_option_rejects_non_finite_and_wrong_types(name, value):
+    """Numeric options must reject NaN, inf, bool, non-numeric, and non-integer max_heavy_atoms."""
+    ctx = CNotebookContext()
+    with pytest.raises(ValueError, match=name):
+        setattr(ctx, name, value)
+    with pytest.raises(ValueError, match=name):
+        CNotebookContext(**{name: value})
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("image_format", "gif"),
+        ("width", -1),
+        ("height", -5),
+        ("min_width", 0),
+        ("min_height", 0),
+        ("max_width", -1),
+        ("max_height", -3),
+        ("device_pixel_ratio", 0.5),
+        ("atom_label_font_scale", 0),
+        ("title_font_scale", -1),
+        ("max_heavy_atoms", 0),
+    ],
+)
+def test_option_validation_constructor_and_setter(name, value):
+    """Test that validation works in both constructor and setter."""
+    ctx = CNotebookContext()
+    with pytest.raises(ValueError, match=name):
+        setattr(ctx, name, value)
+    with pytest.raises(ValueError, match=name):
+        CNotebookContext(**{name: value})
+
+
+def test_render_options_applies_callbacks():
+    """render_options must support setting callbacks."""
+    def my_callback(disp):
+        disp.SetWidth(999)
+    
+    original_callbacks = cnotebook_context.get().callbacks
+    try:
+        with render_options(callbacks=[my_callback]) as tmp:
+            assert len(tmp.callbacks) == 1
+            assert tmp.callbacks[0] is my_callback
+        assert cnotebook_context.get().callbacks == original_callbacks
+    finally:
+        cnotebook_context.get().reset_callbacks()
+
+
+def test_render_options_rejects_read_only_property():
+    """render_options must reject genuinely read-only properties like 'scope'."""
+    with pytest.raises(TypeError, match="scope"):
+        with render_options(scope="local"):
             pass

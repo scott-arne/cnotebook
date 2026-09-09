@@ -1,4 +1,5 @@
 import logging
+import math
 from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
@@ -33,7 +34,16 @@ def _validate(name: str, value: Any) -> None:
     """
     if isinstance(value, _Deferred):
         return
+
+    # Reject bool (which is a subclass of int) for numeric options
+    if isinstance(value, bool) and name not in ("title", "auto_scale", "bond_width_scaling"):
+        raise ValueError(f"{name} must be numeric, not bool")
+
     if name == "structure_scale":
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"structure_scale must be numeric (got {type(value).__name__})")
+        if not math.isfinite(value):
+            raise ValueError(f"structure_scale must be finite (got {value!r})")
         if not value > 0:
             raise ValueError(
                 f"structure_scale must be > 0 (got {value!r}). To size structures to the canvas "
@@ -43,20 +53,40 @@ def _validate(name: str, value: Any) -> None:
         if value not in IMAGE_FORMATS:
             raise ValueError(f"image_format must be one of {IMAGE_FORMATS} (got {value!r})")
     elif name in ("width", "height"):
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be numeric (got {type(value).__name__})")
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite (got {value!r})")
         if value < 0:
             raise ValueError(f"{name} must be >= 0 (got {value!r})")
     elif name in ("min_width", "min_height", "max_width", "max_height"):
-        if value is not None and not value > 0:
-            raise ValueError(f"{name} must be None or > 0 (got {value!r})")
+        if value is not None:
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"{name} must be numeric or None (got {type(value).__name__})")
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite (got {value!r})")
+            if not value > 0:
+                raise ValueError(f"{name} must be None or > 0 (got {value!r})")
     elif name == "device_pixel_ratio":
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"device_pixel_ratio must be numeric (got {type(value).__name__})")
+        if not math.isfinite(value):
+            raise ValueError(f"device_pixel_ratio must be finite (got {value!r})")
         if not value >= 1.0:
             raise ValueError(f"device_pixel_ratio must be >= 1.0 (got {value!r})")
     elif name in ("atom_label_font_scale", "title_font_scale"):
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be numeric (got {type(value).__name__})")
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite (got {value!r})")
         if not value > 0:
             raise ValueError(f"{name} must be > 0 (got {value!r})")
     elif name == "max_heavy_atoms":
-        if value is not None and value < 1:
-            raise ValueError(f"max_heavy_atoms must be None or >= 1 (got {value!r})")
+        if value is not None:
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"max_heavy_atoms must be an integer or None (got {type(value).__name__})")
+            if value < 1:
+                raise ValueError(f"max_heavy_atoms must be None or >= 1 (got {value!r})")
 
 
 ########################################################################################################################
@@ -382,6 +412,12 @@ class CNotebookContext:
         # noinspection PyTypeChecker
         return tuple(self._callbacks.get())
 
+    @callbacks.setter
+    def callbacks(self, value: Iterable[Callable[[oedepict.OE2DMolDisplay], None]]) -> None:
+        if not isinstance(value, Iterable):
+            raise TypeError(f"callbacks must be iterable (got {type(value).__name__})")
+        self._callbacks.set(list(value))
+
     def reset_callbacks(self) -> None:
         self._callbacks.set([])
 
@@ -687,8 +723,11 @@ def render_options(**options: Any) -> Iterator[CNotebookContext]:
     :raises TypeError: If an option name is not a context attribute.
     """
     for name in options:
-        if not isinstance(getattr(CNotebookContext, name, None), property):
+        attr = getattr(CNotebookContext, name, None)
+        if not isinstance(attr, property):
             raise TypeError(f"Unknown render option {name!r}")
+        if attr.fset is None:
+            raise TypeError(f"Render option {name!r} is read-only")
     temporary = cnotebook_context.get().copy()
     for name, value in options.items():
         setattr(temporary, name, value)
