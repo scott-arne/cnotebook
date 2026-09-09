@@ -1,15 +1,16 @@
 import pytest
-from unittest.mock import patch
 from openeye import oechem, oedepict
+
 from cnotebook.context import (
-    CNotebookContext, 
-    DeferredValue, 
-    DEFERRED, 
+    DEFERRED,
+    CNotebookContext,
+    DeferredValue,
     _Deferred,
-    pass_cnotebook_context,
     create_local_context,
-    get_series_context
+    get_series_context,
+    pass_cnotebook_context,
 )
+from cnotebook.core.errors import CNotebookWarning
 
 
 class TestDeferredValue:
@@ -138,18 +139,14 @@ class TestCNotebookContext:
     def test_width_max_warning(self):
         """Test warning when width exceeds max_width"""
         ctx = CNotebookContext(max_width=400)
-        with patch('cnotebook.context.log.warning') as mock_warn:
+        with pytest.warns(CNotebookWarning, match="exceeds max_width"):
             ctx.width = 500
-            mock_warn.assert_called_once()
-            assert "Width exceeds max_width" in mock_warn.call_args[0][0]
     
     def test_height_max_warning(self):
         """Test warning when height exceeds max_height"""
         ctx = CNotebookContext(max_height=300)
-        with patch('cnotebook.context.log.warning') as mock_warn:
+        with pytest.warns(CNotebookWarning, match="exceeds max_height"):
             ctx.height = 400
-            mock_warn.assert_called_once()
-            assert "Height exceeds max_height" in mock_warn.call_args[0][0]
     
     def test_image_mime_type(self):
         """Test image MIME type property"""
@@ -417,12 +414,12 @@ class TestGetSeriesContext:
     def test_get_series_context_invalid_type(self):
         """Test getting context when invalid type in metadata"""
         metadata = {"cnotebook": "invalid"}
-        
-        with patch('cnotebook.context.log.warning') as mock_warn:
+
+        with pytest.warns(CNotebookWarning, match="Replacing unexpected object"):
             result = get_series_context(metadata)
-            assert isinstance(result, CNotebookContext)
-            assert result.scope == "local"
-            mock_warn.assert_called_once()
+
+        assert isinstance(result, CNotebookContext)
+        assert result.scope == "local"
     
     def test_get_series_context_save(self):
         """Test saving context to metadata"""
@@ -451,23 +448,17 @@ class TestCNotebookContextEdgeCases:
         with pytest.raises(TypeError, match="Invalid type for display callbacks"):
             CNotebookContext(callbacks=123)
 
-    @patch('cnotebook.context.log.warning')
-    def test_max_width_below_width_warns(self, mock_warning):
+    def test_max_width_below_width_warns(self):
         """Test that setting max_width below current width triggers a warning."""
         ctx = CNotebookContext(width=500)
-        ctx.max_width = 400
-        mock_warning.assert_called_once()
-        warning_msg = mock_warning.call_args[0][0]
-        assert "max_width" in warning_msg
+        with pytest.warns(CNotebookWarning, match="max_width"):
+            ctx.max_width = 400
 
-    @patch('cnotebook.context.log.warning')
-    def test_max_height_below_height_warns(self, mock_warning):
+    def test_max_height_below_height_warns(self):
         """Test that setting max_height below current height triggers a warning."""
         ctx = CNotebookContext(height=500)
-        ctx.max_height = 400
-        mock_warning.assert_called_once()
-        warning_msg = mock_warning.call_args[0][0]
-        assert "max_height" in warning_msg
+        with pytest.warns(CNotebookWarning, match="max_height"):
+            ctx.max_height = 400
 
     def test_setters_coverage(self):
         """Exercise min_height, atom_label_font_scale, title_font_scale,

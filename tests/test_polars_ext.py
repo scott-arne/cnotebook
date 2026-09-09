@@ -1,5 +1,7 @@
 import pytest
 
+from cnotebook.core.errors import CNotebookWarning
+
 # Check if polars/oepolars available
 polars_available = False
 try:
@@ -758,9 +760,8 @@ class TestPolarsDataFrameRecalculateDepictions:
 class TestPolarsHighlightUsingColumnExtended:
     """Extended tests for DataFrame highlight_using_column."""
 
-    def test_highlight_using_column_overlay_single_color_fallback(self, caplog):
+    def test_highlight_using_column_overlay_single_color_fallback(self):
         """highlight_using_column() with OEColor + overlay_default should warn and fallback."""
-        import logging
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -769,12 +770,11 @@ class TestPolarsHighlightUsingColumnExtended:
         df = pl.DataFrame({"mol": [mol], "pattern": ["c1ccccc1"]})
         df = df.chem.as_molecule("mol")
 
-        with caplog.at_level(logging.WARNING, logger="cnotebook"):
+        with pytest.warns(CNotebookWarning, match="Overlay coloring"):
             result = df.chem.highlight_using_column(
                 "mol", "pattern", color=oechem.OERed, style="overlay_default"
             )
 
-        assert any("Overlay coloring" in record.message for record in caplog.records)
         assert "highlighted_substructures" in result.columns
 
     def test_highlight_using_column_traditional(self):
@@ -828,9 +828,8 @@ class TestPolarsHighlightUsingColumnExtended:
 class TestPolarsFingerprintSimilarityExtended:
     """Extended tests for DataFrame fingerprint_similarity."""
 
-    def test_fingerprint_similarity_invalid_ref(self, caplog):
+    def test_fingerprint_similarity_invalid_ref(self):
         """fingerprint_similarity() with an invalid reference molecule should warn and return df unchanged."""
-        import logging
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -842,10 +841,9 @@ class TestPolarsFingerprintSimilarityExtended:
         # An empty (invalid) molecule as reference
         bad_ref = oechem.OEMol()
 
-        with caplog.at_level(logging.WARNING, logger="cnotebook"):
+        with pytest.warns(CNotebookWarning, match="not valid"):
             result = df.chem.fingerprint_similarity("mol", bad_ref)
 
-        assert any("not valid" in record.message for record in caplog.records)
         assert list(result.columns) == list(df.columns)
 
     def test_fingerprint_similarity_with_null_rows(self):

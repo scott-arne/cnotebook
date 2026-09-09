@@ -9,6 +9,7 @@ from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from copy import copy as shallow_copy
 from oepandas.pandas_extensions import OESeriesAccessor, OEDataFrameAccessor
 from .context import pass_cnotebook_context, get_series_context
+from .core.errors import warn
 from .helpers import escape_brackets, create_structure_highlighter
 from .align import create_aligner, fingerprint_maker
 from .render import (
@@ -997,8 +998,7 @@ def _dataframe_highlight_using_column(
 
     # Check if color is compatible with overlay
     if use_overlay and isinstance(color, oechem.OEColor):
-        log.warning(
-            "Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
+        warn("Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
         use_overlay = False
         style = oedepict.OEHighlightStyle_BallAndStick
 

@@ -10,6 +10,7 @@ from oepolars.namespaces.dataframe import DataFrameChemNamespace  # pyright: ign
 from oepolars.namespaces.series import SeriesChemNamespace  # pyright: ignore
 from openeye import oechem, oedepict, oegraphsim, oegrapheme
 from .context import pass_cnotebook_context, get_series_context, create_local_context
+from .core.errors import warn
 from typing import Iterable, Literal
 from .helpers import escape_brackets, create_structure_highlighter
 from .align import fingerprint_maker
@@ -890,8 +891,7 @@ def _dataframe_highlight_using_column(
 
     # Check if color is compatible with overlay
     if use_overlay and isinstance(color, oechem.OEColor):
-        log.warning(
-            "Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
+        warn("Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
         use_overlay = False
         style = oedepict.OEHighlightStyle_BallAndStick
 
@@ -1047,7 +1047,7 @@ def _dataframe_fingerprint_similarity(
 
     # Check reference molecule
     if not ref.IsValid():
-        log.warning("Reference molecule is not valid")
+        warn("Reference molecule is not valid")
         return df
 
     # Fingerprint maker

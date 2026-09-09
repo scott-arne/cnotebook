@@ -44,16 +44,21 @@ class LevelSpecificFormatter(logging.Formatter):
         return logging.Formatter.format(self, record)
 
 
-# Configure handler
-_handler = logging.StreamHandler()
-_handler.setLevel(logging.DEBUG)
-_handler.setFormatter(LevelSpecificFormatter())
-log.addHandler(_handler)
-log.setLevel(logging.INFO)
+# The library never installs an output handler; applications configure logging.
+log.addHandler(logging.NullHandler())
 
 
-def enable_debugging():
-    """Convenience function for enabling the debug log."""
+def enable_debugging() -> None:
+    """Attach a stream handler with the level-specific formatter and enable DEBUG logging.
+
+    Calling this more than once attaches a single handler.
+    """
+    if not any(getattr(h, "_cnotebook_debug", False) for h in log.handlers):
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(LevelSpecificFormatter())
+        handler._cnotebook_debug = True  # type: ignore[attr-defined]
+        log.addHandler(handler)
     log.setLevel(logging.DEBUG)
 
 

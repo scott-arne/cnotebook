@@ -3,6 +3,8 @@ import re
 from typing import Callable, Literal, Sequence, TypeAlias
 from openeye import oechem, oedepict
 
+from cnotebook.core.errors import warn
+
 log = logging.getLogger("cnotebook")
 
 
@@ -84,8 +86,7 @@ def create_structure_highlighter(
 
     # Check if color is compatible with overlay
     if use_overlay and isinstance(color, oechem.OEColor):
-        log.warning(
-            "Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
+        warn("Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
         use_overlay = False
         style = oedepict.OEHighlightStyle_BallAndStick
 

@@ -17,6 +17,7 @@ from openeye import oechem
 
 from cnotebook.core.vocabulary import BINARY_MAP_FORMATS as _BINARY_MAP_FORMATS
 from cnotebook.core.vocabulary import TEXT_MAP_FORMATS as _TEXT_MAP_FORMATS
+from cnotebook.core.errors import warn
 
 log = logging.getLogger("cnotebook")
 
@@ -334,10 +335,7 @@ def _ensure_3d_coords(mol: oechem.OEMolBase) -> oechem.OEMolBase:
     if mol.GetDimension() >= 2:
         return mol
 
-    log.warning(
-        "Molecule '%s' lacks 3D coordinates; generating with OEOmega.",
-        mol.GetTitle() or "untitled",
-    )
+    warn(f"Molecule '{mol.GetTitle() or 'untitled'}' lacks 3D coordinates; generating with OEOmega.")
 
     from openeye import oeomega
 

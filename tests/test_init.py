@@ -1,20 +1,22 @@
 import importlib.util
-
-import pytest
 import logging
 from unittest.mock import MagicMock, patch
+
+import pytest
 from openeye import oechem, oedepict
+
 import cnotebook
 from cnotebook import (
-    __version__,
+    CNotebookEnvInfo,
     LevelSpecificFormatter,
+    __version__,
+    cnotebook_context,
     enable_debugging,
+    get_env,
     log,
     render_dataframe,
-    cnotebook_context,
-    get_env,
-    CNotebookEnvInfo,
 )
+from cnotebook.core.errors import CNotebookWarning
 
 
 class TestVersion:
@@ -304,22 +306,22 @@ class TestLogging:
 
     def test_log_level(self):
         """Test default log level"""
-        assert log.level == logging.INFO
+        assert log.level == logging.NOTSET
 
     def test_log_has_handler(self):
         """Test that logger has handlers configured"""
-        # The module sets up a StreamHandler
+        # The module sets up a NullHandler
         assert len(log.handlers) > 0
-        # Should have at least one StreamHandler
-        stream_handlers = [h for h in log.handlers if isinstance(h, logging.StreamHandler)]
-        assert len(stream_handlers) > 0
+        # Should have at least one NullHandler
+        assert any(isinstance(h, logging.NullHandler) for h in log.handlers)
 
     def test_log_handler_formatter(self):
         """Test that handler uses custom formatter"""
-        stream_handlers = [h for h in log.handlers if isinstance(h, logging.StreamHandler)]
-        if stream_handlers:
-            handler = stream_handlers[0]
-            assert isinstance(handler.formatter, LevelSpecificFormatter)
+        enable_debugging()
+        debug_handlers = [h for h in log.handlers if getattr(h, "_cnotebook_debug", False)]
+        assert len(debug_handlers) > 0
+        handler = debug_handlers[0]
+        assert isinstance(handler.formatter, LevelSpecificFormatter)
 
     def test_enable_debugging(self):
         """Test enable_debugging function"""
@@ -676,3 +678,23 @@ class TestMissingOptionalExport:
         """Unknown attributes still raise AttributeError, not ImportError."""
         with pytest.raises(AttributeError, match="does_not_exist"):
             cnotebook.does_not_exist
+
+
+def test_user_warnings_are_cnotebook_warnings():
+    from cnotebook.core.helpers import create_structure_highlighter
+
+    with pytest.warns(CNotebookWarning, match="Overlay coloring"):
+        create_structure_highlighter("c1ccccc1", color=oechem.OEColor(oechem.OERed), style="overlay_default")
+
+
+def test_no_stream_handler_at_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import logging, cnotebook; "
+        "hs = logging.getLogger('cnotebook').handlers; "
+        "print(any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.NullHandler) for h in hs))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip().endswith("False")

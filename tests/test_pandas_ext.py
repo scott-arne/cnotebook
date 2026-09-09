@@ -1,18 +1,21 @@
-import pytest
-import pandas as pd
 from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
 from openeye import oechem, oedepict
+
+from cnotebook.context import CNotebookContext
+from cnotebook.core.errors import CNotebookWarning
 from cnotebook.pandas_ext import (
-    render_dataframe,
-    create_mol_formatter,
-    create_disp_formatter,
-    escape_formatter,
-    register_pandas_formatters,
     ColorBondByOverlapScore,
     SMARTS_DELIMITER_RE,
-    ipython_present
+    create_disp_formatter,
+    create_mol_formatter,
+    escape_formatter,
+    ipython_present,
+    register_pandas_formatters,
+    render_dataframe,
 )
-from cnotebook.context import CNotebookContext
 
 # Try to import oepandas - might not be available in all environments
 try:
@@ -1473,14 +1476,12 @@ class TestDataFrameHighlightUsingColumn:
             "pattern": ["c1ccccc1"],
         })
 
-        with patch('cnotebook.pandas_ext.log.warning') as mock_warn:
+        with pytest.warns(CNotebookWarning, match="Overlay coloring"):
             result = df.chem.highlight_using_column(
                 "mol", "pattern",
                 color=oechem.OEColor(oechem.OERed),
                 style="overlay_default"
             )
-            mock_warn.assert_called_once()
-            assert "Overlay coloring is not compatible" in str(mock_warn.call_args)
 
         assert "highlighted_substructures" in result.columns
 

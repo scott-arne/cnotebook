@@ -1,14 +1,17 @@
-import pytest
 import re
 from unittest.mock import patch
+
+import pytest
 from openeye import oechem, oedepict
+
+from cnotebook.core.errors import CNotebookWarning
 from cnotebook.helpers import (
-    escape_html,
-    escape_brackets,
-    remove_omega_conformer_id,
+    CONFORMER_ID_REGEX,
     create_structure_highlighter,
+    escape_brackets,
+    escape_html,
     highlight_smarts,
-    CONFORMER_ID_REGEX
+    remove_omega_conformer_id,
 )
 
 
@@ -214,18 +217,15 @@ class TestCreateStructureHighlighterAdvanced:
         opts = oedepict.OE2DMolDisplayOptions()
         return oedepict.OE2DMolDisplay(mol, opts)
 
-    @patch('cnotebook.core.helpers.log')
     @patch("cnotebook.core.helpers.oedepict.OEAddHighlighting")
-    def test_highlighter_overlay_single_color_fallback(self, mock_add_highlighting, mock_log):
+    def test_highlighter_overlay_single_color_fallback(self, mock_add_highlighting):
         """Test that overlay with single OEColor triggers warning and fallback."""
         color = oechem.OEColor(oechem.OELightBlue)
-        highlighter = create_structure_highlighter("c1ccccc1", color=color, style="overlay_default")
+
+        with pytest.warns(CNotebookWarning, match="Overlay coloring"):
+            highlighter = create_structure_highlighter("c1ccccc1", color=color, style="overlay_default")
 
         highlighter(self._make_benzene_display())
-
-        mock_log.warning.assert_called_once()
-        warning_msg = mock_log.warning.call_args[0][0]
-        assert "Overlay coloring is not compatible" in warning_msg
         assert mock_add_highlighting.call_count >= 1
 
 

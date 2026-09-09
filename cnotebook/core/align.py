@@ -3,6 +3,8 @@ from typing import Callable, Literal
 from abc import ABCMeta, abstractmethod
 from openeye import oegraphsim, oechem, oedepict
 
+from cnotebook.core.errors import warn
+
 log = logging.getLogger("cnotebook")
 
 
@@ -367,7 +369,7 @@ class OEFingerprintAligner(Aligner):
             self.fptype = self.reffp.GetFPTypeBase()
 
         else:
-            log.warning("Reference molecule for fingerprint-based alignment is not valid")
+            warn("Reference molecule for fingerprint-based alignment is not valid")
 
     def validate(self, mol: oechem.OEMolBase) -> bool:
         if self.reffp is None:

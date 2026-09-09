@@ -7,6 +7,8 @@ from collections.abc import Iterable
 from contextvars import ContextVar
 from openeye import oechem, oedepict
 
+from cnotebook.core.errors import warn
+
 log = logging.getLogger("cnotebook")
 
 
@@ -193,7 +195,7 @@ class CNotebookContext:
     @width.setter
     def width(self, value: float) -> None:
         if self.max_width is not None and value > self.max_width:
-            log.warning(f'Width exceeds max_width: {value} > {self.max_width}')
+            warn(f'Width exceeds max_width: {value} > {self.max_width}')
 
         self._width.set(value)
 
@@ -204,7 +206,7 @@ class CNotebookContext:
     @height.setter
     def height(self, value: float) -> None:
         if self.max_height is not None and value > self.max_height:
-            log.warning(f'Height exceeds max_height: {value} > {self.max_height}')
+            warn(f'Height exceeds max_height: {value} > {self.max_height}')
 
         self._height.set(value)
 
@@ -223,7 +225,7 @@ class CNotebookContext:
     @max_width.setter
     def max_width(self, value: float | None):
         if value is not None and self.width > value:
-            log.warning(f'Current width exceeds max_width: {self.width} > {value}')
+            warn(f'Current width exceeds max_width: {self.width} > {value}')
 
         self._max_width.set(value)
 
@@ -234,7 +236,7 @@ class CNotebookContext:
     @max_height.setter
     def max_height(self, value: float | None):
         if value is not None and self.height > value:
-            log.warning(f'Current height exceeds max_height: {self.height} > {value}')
+            warn(f'Current height exceeds max_height: {self.height} > {value}')
 
         self._max_height.set(value)
 
@@ -587,10 +589,7 @@ def get_series_context(metadata: dict[Any, Any], save: bool = False) -> CNoteboo
 
     # Make sure context is a valid object
     if not isinstance(ctx, CNotebookContext):
-        log.warning(
-            "Replacing unexpected object of type %s for metadata key 'cnotebook' with a CNotebookLocalContext",
-            type(ctx).__name__
-        )
+        warn(f"Replacing unexpected object of type {type(ctx).__name__} for metadata key 'cnotebook' with a local context")
 
         ctx = create_local_context()
 
