@@ -1024,3 +1024,39 @@ def test_svg_unaffected_by_device_pixel_ratio():
     
     # SVG should be identical regardless of DPR
     assert html1 == html2
+
+
+def test_auto_scaled_svg_respects_max_dimensions():
+    """Auto-scaled SVG should be clamped by max_width and max_height (Finding C)."""
+    import re
+    from cnotebook.core.render import oemol_to_html
+    
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    
+    # Auto-scaled SVG with dimensions that will exceed max limits
+    ctx = CNotebookContext(
+        image_format="svg",
+        auto_scale=True,
+        width=800,
+        height=600,
+        max_width=300,
+        max_height=250,
+        device_pixel_ratio=1.0
+    )
+    html = oemol_to_html(mol, ctx=ctx)
+    
+    # Extract width and height from the HTML
+    width_match = re.search(r"width:(\d+)px", html)
+    height_match = re.search(r"height:(\d+)px", html)
+    
+    assert width_match is not None, "Width should be specified"
+    assert height_match is not None, "Height should be specified for clamped output"
+    
+    width = int(width_match.group(1))
+    height = int(height_match.group(1))
+    
+    # Both dimensions should be clamped
+    assert width == 300, f"Width should be clamped to 300, got {width}"
+    # Height should be scaled proportionally from 600 -> (600 * 300/800) = 225
+    assert height <= 250, f"Height should not exceed max_height, got {height}"

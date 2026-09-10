@@ -86,10 +86,14 @@ def placeholder_size(ctx: CNotebookContext) -> tuple[int, int]:
 def _render_display_image(disp: oedepict.OE2DMolDisplay, ctx: CNotebookContext) -> oedepict.OEImage:
     """Rasterise *disp*, oversampling PNG output by the context's device pixel ratio."""
     scale = ctx.device_pixel_ratio if ctx.image_format == "png" else 1.0
+    logical_width = disp.GetWidth()
+    logical_height = disp.GetHeight()
     image = oedepict.OEImage(
-        max(1, int(disp.GetWidth() * scale)), max(1, int(disp.GetHeight() * scale))
+        max(1, int(logical_width * scale)), max(1, int(logical_height * scale))
     )
     oedepict.OERenderMolecule(image, disp)
+    # Attach logical size for callers that don't explicitly pass it
+    image._cnotebook_logical_size = (logical_width, logical_height)  # type: ignore[attr-defined]
     return image
 
 
@@ -118,7 +122,8 @@ def create_img_tag(
     :return: Image tag
     """
     if image_mime_type == "image/svg+xml":
-        if wrap_svg:
+        # Keep wrapper when explicit dimensions are needed (clamping or explicit sizing)
+        if wrap_svg or explicit_height:
             if explicit_height:
                 return '<div style=\'width:{w}px;height:{h}px;max-width:none\'>\n\t{svg}\n</div>'.format(
                     w=int(width),
@@ -492,6 +497,12 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext, logical_w
     image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
 
     # Resolve display dimensions: prefer ctx when set, else intrinsic
+    # Check for attached logical size first
+    if logical_width is None and logical_height is None:
+        attached_size = getattr(image, "_cnotebook_logical_size", None)
+        if attached_size is not None:
+            logical_width, logical_height = attached_size
+
     intrinsic_w, intrinsic_h = (logical_width or image.GetWidth()), (logical_height or image.GetHeight())
     if ctx.width > 0 and ctx.height > 0:
         display_width, display_height = ctx.width, ctx.height

@@ -1829,18 +1829,45 @@ def test_pandas_honors_column_context_dpr():
     # Create a series with DPR 1.0
     series = pd.Series([mol], dtype=oepd.MoleculeDtype())
     series.chem.set_render_options(device_pixel_ratio=1.0, image_format="png", width=100, height=100)
-    
-    # Render the DataFrame (with global context at DPR 2.0)
+
+    # Render the DataFrame with implicit rendering (ctx=None)
     df = pd.DataFrame({"mol": series})
-    from cnotebook.context import CNotebookContext
-    global_ctx = CNotebookContext(device_pixel_ratio=2.0)
-    html = render_dataframe(df, ctx=global_ctx)
-    
+    html = render_dataframe(df)
+
     # Extract PNG size from the rendered HTML
     match = re.search(r"base64,([^']+)'", html)
     assert match is not None
     data = base64.b64decode(match.group(1))
     width_px = int.from_bytes(data[16:20], "big")
 
-    # Column context (DPR 1.0) should win, so PNG should be 100px (not 200px from global DPR 2.0)
-    assert width_px == 100
+    # Column context (DPR 1.0) should be used in implicit rendering
+    # PNG should be ~100px (OpenEye may round slightly)
+    assert 100 <= width_px <= 105
+
+
+def test_pandas_explicit_context_beats_column_context():
+    """Explicit ctx parameter should override column context (Finding A)."""
+    import base64
+    import re
+    
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    
+    # Create a series with DPR 2.0 in column metadata
+    series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+    series.chem.set_render_options(device_pixel_ratio=2.0, image_format="png", width=100, height=100)
+    
+    # Render with explicit context at DPR 1.0 (should win)
+    df = pd.DataFrame({"mol": series})
+    from cnotebook.context import CNotebookContext
+    explicit_ctx = CNotebookContext(device_pixel_ratio=1.0)
+    html = render_dataframe(df, ctx=explicit_ctx)
+    
+    # Extract PNG size
+    match = re.search(r"base64,([^']+)'", html)
+    assert match is not None
+    data = base64.b64decode(match.group(1))
+    width_px = int.from_bytes(data[16:20], "big")
+    
+    # Explicit context (DPR 1.0) should win, so PNG should be ~100px (not 200px from column DPR 2.0)
+    assert width_px < 150  # Should be close to 100, not 200

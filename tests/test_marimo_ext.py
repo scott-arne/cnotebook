@@ -834,3 +834,96 @@ class TestColumnStyleCell:
         width = _compute_du_column_width([apo, None], ctx)
 
         assert width == int(ctx.min_width)
+
+
+
+def test_marimo_molecule_cell_hidpi():
+    """Marimo molecule cells should honor device_pixel_ratio (Finding B)."""
+    import base64
+    import re
+    from cnotebook.marimo_ext import _display_mol
+    from cnotebook.context import CNotebookContext, cnotebook_context
+    
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    
+    # Set global context with DPR 2.0
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    token = cnotebook_context.set(ctx)
+    try:
+        mime_type, content = _display_mol(mol)
+        
+        assert mime_type == "text/html"
+        # Extract PNG size and CSS width
+        match = re.search(r"base64,([^']+)'", content)
+        assert match is not None
+        data = base64.b64decode(match.group(1))
+        width_px = int.from_bytes(data[16:20], "big")
+        
+        css_match = re.search(r"width:(\d+)px", content)
+        assert css_match is not None
+        css_width = int(css_match.group(1))
+        
+        # PNG should be 2x CSS width at DPR 2.0
+        assert width_px == 2 * css_width
+    finally:
+        cnotebook_context.reset(token)
+
+
+def test_marimo_display_cell_hidpi():
+    """Marimo display cells should honor device_pixel_ratio (Finding B)."""
+    import base64
+    import re
+    from cnotebook.marimo_ext import _display_display
+    from cnotebook.context import CNotebookContext, cnotebook_context
+    from cnotebook.core.render import oemol_to_disp
+    
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    disp = oemol_to_disp(mol, ctx=ctx)
+    
+    # Set global context
+    token = cnotebook_context.set(ctx)
+    try:
+        mime_type, content = _display_display(disp)
+        
+        assert mime_type == "text/html"
+        match = re.search(r"base64,([^']+)'", content)
+        assert match is not None
+        data = base64.b64decode(match.group(1))
+        width_px = int.from_bytes(data[16:20], "big")
+        
+        css_match = re.search(r"width:(\d+)px", content)
+        assert css_match is not None
+        css_width = int(css_match.group(1))
+        
+        assert width_px == 2 * css_width
+    finally:
+        cnotebook_context.reset(token)
+
+
+def test_marimo_svg_unaffected_by_dpr():
+    """Marimo SVG cells should ignore device_pixel_ratio (Finding B)."""
+    from cnotebook.marimo_ext import _display_mol
+    from cnotebook.context import CNotebookContext, cnotebook_context
+    
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    
+    ctx1 = CNotebookContext(image_format="svg", device_pixel_ratio=1.0)
+    token1 = cnotebook_context.set(ctx1)
+    try:
+        _, content1 = _display_mol(mol)
+    finally:
+        cnotebook_context.reset(token1)
+    
+    ctx2 = CNotebookContext(image_format="svg", device_pixel_ratio=2.0)
+    token2 = cnotebook_context.set(ctx2)
+    try:
+        _, content2 = _display_mol(mol)
+    finally:
+        cnotebook_context.reset(token2)
+    
+    # SVG should be identical regardless of DPR
+    assert content1 == content2
