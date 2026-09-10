@@ -67,6 +67,13 @@ def enable_debugging() -> None:
     log.setLevel(logging.DEBUG)
 
 
+from . import config as config
+from .config import configure as configure
+from .config import get_config as get_config
+
+config.apply_render_defaults()
+
+
 ########################################################################################################################
 # Environment Information
 ########################################################################################################################
@@ -401,78 +408,46 @@ def __getattr__(name: str):
 # Unified Display Function
 ########################################################################################################################
 
-def display(obj, ctx: CNotebookContext | None = None):
-    """Display an OpenEye molecule, display object, or DataFrame in the current notebook environment.
+def display(obj, ctx: CNotebookContext | None = None, *, static: bool | None = None):
+    """Display a chemistry object or frame in the current notebook environment.
 
-    This function provides a unified way to display chemistry objects in both Jupyter
-    and Marimo notebooks. It automatically detects the environment and uses the
-    appropriate display mechanism.
-
-    :param obj: Object to display. Can be:
-        - ``oechem.OEMolBase`` - OpenEye molecule
-        - ``oedepict.OE2DMolDisplay`` - OpenEye display object
-        - ``pandas.DataFrame`` - Pandas DataFrame (if pandas available)
-        - ``polars.DataFrame`` - Polars DataFrame (if polars available)
-    :param ctx: Optional rendering context. Only applied to molecules and display
-        objects, not DataFrames. If None, uses the global context.
-    :returns: A displayable object appropriate for the current environment.
+    :param obj: ``OEMolBase``, ``OE2DMolDisplay``, ``OEDesignUnit``, ``OEImage``, a pandas or
+        polars ``DataFrame``, or a C3D / MolGrid instance.
+    :param ctx: Render context for bare objects. For frames ``None`` means "honour the
+        per-column contexts"; an explicit context overrides every column.
+    :param static: For C3D and MolGrid, force static (``True``) or widget (``False``) output.
+    :returns: A displayable object appropriate for the environment.
     :raises TypeError: If the object type is not supported.
-
-    Example::
-
-        import cnotebook
-        from openeye import oechem
-
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, "c1ccccc1")
-
-        # Display with default context
-        cnotebook.display(mol)
-
-        # Display with custom context
-        ctx = cnotebook.cnotebook_context.get().copy()
-        ctx.width = 300
-        ctx.height = 300
-        cnotebook.display(mol, ctx=ctx)
     """
-    from .render import oedisp_to_html, oemol_to_html
+    from .core.render import (
+        oedisp_to_html,
+        oedu_to_html,
+        oeimage_to_html,
+        oemol_to_html,
+    )
 
-    # Get environment info
     env = get_env()
-
-    # Determine the context to use
-    if ctx is None:
-        render_ctx = cnotebook_context.get()
-    else:
-        render_ctx = ctx
-
-    # Handle OpenEye molecules
+    if hasattr(obj, "display") and type(obj).__name__ in ("C3D", "MolGrid"):
+        return obj.display(static=static)
+    render_ctx = ctx if ctx is not None else cnotebook_context.get()
     if isinstance(obj, oechem.OEMolBase):
-        html = oemol_to_html(obj, ctx=render_ctx)
-        return _display_html(html, env)
-
-    # Handle OpenEye display objects
+        return _display_html(oemol_to_html(obj, ctx=render_ctx), env)
     if isinstance(obj, oedepict.OE2DMolDisplay):
-        html = oedisp_to_html(obj, ctx=render_ctx)
-        return _display_html(html, env)
-
-    # Handle Pandas DataFrame (if available)
+        return _display_html(oedisp_to_html(obj, ctx=render_ctx), env)
+    if isinstance(obj, oechem.OEDesignUnit):
+        return _display_html(oedu_to_html(obj, ctx=render_ctx), env)
+    if isinstance(obj, oedepict.OEImage):
+        return _display_html(oeimage_to_html(obj, ctx=render_ctx), env)
     if env.pandas_available:
         import pandas as pd
         if isinstance(obj, pd.DataFrame):
             from .pandas_ext import render_dataframe as _render_dataframe
-            # noinspection PyTypeChecker
-            html = _render_dataframe(obj, ctx=render_ctx)
-            return _display_html(html, env)
-
-    # Handle Polars DataFrame (if available)
+            return _display_html(_render_dataframe(obj, ctx=ctx), env)
     if env.polars_available:
         import polars as pl
         if isinstance(obj, pl.DataFrame):
             from .polars_ext import render_polars_dataframe as _render_polars_dataframe
-            html = _render_polars_dataframe(obj, ctx=render_ctx)
-            return _display_html(html, env)
-
+            return _display_html(_render_polars_dataframe(obj, ctx=ctx), env)
     raise TypeError(f"Cannot display object of type {type(obj).__name__}")
 
 

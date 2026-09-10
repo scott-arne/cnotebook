@@ -704,3 +704,19 @@ def test_hasattr_optional_export(monkeypatch):
         assert hasattr(cnotebook, "MolGrid") in (True, False)
     with pytest.raises(AttributeError):
         getattr(cnotebook, "no_such_attribute")
+
+
+def test_display_honours_column_contexts():
+    pd = pytest.importorskip("pandas")
+    oepd = pytest.importorskip("oepandas")
+    import cnotebook
+    from cnotebook.core.context import get_series_context
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+    calls = []
+    get_series_context(df["mol"].array.metadata, save=True).add_callback(lambda disp: calls.append(1))
+    with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+        cnotebook.display(df)
+    assert calls == [1]
