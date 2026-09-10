@@ -104,3 +104,10 @@ def test_load_molecules_smiles_multi_record():
 def test_load_molecules_smiles_reports_bad_line():
     with pytest.raises(MoleculeParseError, match="line 2"):
         load_molecules("CCO\nnot_a_smiles(\n", "smiles")
+
+
+def test_load_molecule_smiles_first_record_only():
+    """load_molecule should return only the first valid SMILES record and ignore later ones."""
+    # Valid first record, malformed second record
+    mol = load_molecule("CCO ethanol\nnot_a_smiles(\n", "smiles")
+    assert mol.GetTitle() == "ethanol"

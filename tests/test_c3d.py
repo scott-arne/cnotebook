@@ -1650,3 +1650,53 @@ def test_add_molecule_generate_3d_flag(monkeypatch):
     monkeypatch.setattr(c3d_module, "convert_molecule", fake_convert)
     C3D().add_molecule(oechem.OEGraphMol(), generate_3d=False)
     assert seen["generate_3d"] is False
+
+
+def test_add_molecules_forwards_generate_3d_false(monkeypatch):
+    """add_molecules should forward generate_3d=False to all add_molecule calls."""
+    import cnotebook.c3d.c3d as c3d_module
+    from cnotebook.c3d import C3D
+
+    calls = []
+
+    def fake_convert(mol, name=None, disabled=False, *, generate_3d=True):
+        calls.append({"name": name, "disabled": disabled, "generate_3d": generate_3d})
+        from cnotebook.core.convert import MoleculeData
+        return MoleculeData(name=name or "x", data="", format="sdf", source_type="molecule")
+
+    monkeypatch.setattr(c3d_module, "convert_molecule", fake_convert)
+    
+    mol1 = oechem.OEGraphMol()
+    mol1.SetTitle("mol1")
+    mol2 = oechem.OEGraphMol()
+    mol2.SetTitle("mol2")
+    
+    C3D().add_molecules([mol1, mol2], generate_3d=False)
+    
+    assert len(calls) == 2
+    assert all(call["generate_3d"] is False for call in calls)
+
+
+def test_add_molecules_defaults_generate_3d_true(monkeypatch):
+    """add_molecules should default generate_3d=True when not specified."""
+    import cnotebook.c3d.c3d as c3d_module
+    from cnotebook.c3d import C3D
+
+    calls = []
+
+    def fake_convert(mol, name=None, disabled=False, *, generate_3d=True):
+        calls.append({"name": name, "disabled": disabled, "generate_3d": generate_3d})
+        from cnotebook.core.convert import MoleculeData
+        return MoleculeData(name=name or "x", data="", format="sdf", source_type="molecule")
+
+    monkeypatch.setattr(c3d_module, "convert_molecule", fake_convert)
+    
+    mol1 = oechem.OEGraphMol()
+    mol1.SetTitle("mol1")
+    mol2 = oechem.OEGraphMol()
+    mol2.SetTitle("mol2")
+    
+    C3D().add_molecules([mol1, mol2])
+    
+    assert len(calls) == 2
+    assert all(call["generate_3d"] is True for call in calls)

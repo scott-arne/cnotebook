@@ -122,6 +122,23 @@ def load_molecule(data: str, format: str, encoding: str = "utf8") -> oechem.OEGr
 
     :raises MoleculeParseError: As in :func:`load_molecules`.
     """
+    if format not in MOLECULE_FORMATS or format == "oedu":
+        raise MoleculeParseError(f"Unsupported molecule format '{format}'.", format)
+
+    decoded = _decode(data, format, encoding)
+
+    if format == "smiles":
+        # Parse only the first non-blank SMILES record
+        for line in str(decoded).splitlines():
+            if not line.strip():
+                continue
+            mol = oechem.OEGraphMol()
+            if not oechem.OESmilesToMol(mol, line.strip()):
+                raise MoleculeParseError("Could not parse SMILES.", format)
+            return mol
+        raise MoleculeParseError("No molecules found in smiles input.", format)
+
+    # For other formats, use load_molecules and return first
     return load_molecules(data, format, encoding)[0]
 
 
