@@ -31,17 +31,17 @@ except ImportError:
     oepolars_available = False
 
 from .context import cnotebook_context, get_series_context
+from .pandas_ext import _is_depictable_molecule_dtype, render_dataframe
 from .render import (
-    oemol_to_html,
     oedisp_to_html,
+    oedu_to_disp,
     oedu_to_html,
+    oedu_to_image,
     oeimage_to_html,
     oemol_to_disp,
+    oemol_to_html,
     oemol_to_image,
-    oedu_to_disp,
-    oedu_to_image,
 )
-from .pandas_ext import _is_depictable_molecule_dtype, render_dataframe
 
 log = logging.getLogger("cnotebook")
 
@@ -99,7 +99,7 @@ class _CtxBoundImage:
     :param ctx: The per-column context captured from series/array metadata.
     """
 
-    __slots__ = ("_image", "_ctx")
+    __slots__ = ("_ctx", "_image")
 
     def __init__(self, image: oedepict.OEImage, ctx):
         self._image = image
@@ -134,17 +134,14 @@ def _compute_molecule_column_width(mols, ctx) -> int:
         if mol is None or not isinstance(mol, oechem.OEMolBase):
             continue
 
-        if not mol.IsValid() or mol.NumAtoms() == 0:
-            candidate = int(ctx.min_width)
-        elif (ctx.max_heavy_atoms is not None
+        if not mol.IsValid() or mol.NumAtoms() == 0 or (ctx.max_heavy_atoms is not None
               and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
             candidate = int(ctx.min_width)
         else:
             disp = oemol_to_disp(mol, ctx=ctx)
             candidate = int(disp.GetWidth())
 
-        if candidate > max_width:
-            max_width = candidate
+        max_width = max(max_width, candidate)
     return max_width
 
 
@@ -158,8 +155,7 @@ def _compute_display_column_width(displays) -> int:
     for disp in displays:
         if isinstance(disp, oedepict.OE2DMolDisplay) and disp.IsValid():
             w = int(disp.GetWidth())
-            if w > max_width:
-                max_width = w
+            max_width = max(max_width, w)
     return max_width
 
 
@@ -183,11 +179,9 @@ def _compute_du_column_width(dus, ctx) -> int:
         if result is None:
             candidate = int(ctx.min_width)
         else:
-            disp, _lig = result
-            candidate = int(disp.GetWidth())
+            candidate = int(result.display.GetWidth())
 
-        if candidate > max_width:
-            max_width = candidate
+        max_width = max(max_width, candidate)
     return max_width
 
 
@@ -327,6 +321,7 @@ try:
     from marimo._output.formatting import (  # pyright: ignore
         OPINIONATED_FORMATTERS,
     )
+
     # noinspection PyProtectedMember,PyUnusedImports
     from marimo._plugins.ui._impl.table import table  # pyright: ignore
 

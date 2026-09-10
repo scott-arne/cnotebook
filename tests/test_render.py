@@ -1,22 +1,24 @@
 import base64
 from unittest.mock import MagicMock, patch
+
 from openeye import oechem, oedepict
+
+from cnotebook.context import CNotebookContext
 from cnotebook.render import (
+    _create_exceeds_heavy_atoms_image,
     create_img_tag,
     oedisp_to_html,
-    render_empty_molecule,
-    render_invalid_molecule,
-    render_exceeds_max_heavy_atoms,
-    _create_exceeds_heavy_atoms_image,
-    oemol_to_disp,
-    oemol_to_image,
-    oemol_to_html,
     oedu_to_disp,
-    oedu_to_image,
     oedu_to_html,
-    oeimage_to_html
+    oedu_to_image,
+    oeimage_to_html,
+    oemol_to_disp,
+    oemol_to_html,
+    oemol_to_image,
+    render_empty_molecule,
+    render_exceeds_max_heavy_atoms,
+    render_invalid_molecule,
 )
-from cnotebook.context import CNotebookContext
 
 
 class TestCreateImgTag:
@@ -334,40 +336,56 @@ class TestRenderExceedsMaxHeavyAtoms:
 class TestOemolToDisp:
     """Test the oemol_to_disp function - basic functionality"""
 
+    @patch('openeye.oechem.OEGraphMol')
     @patch('openeye.oedepict.OEPrepareDepiction')
-    def test_oemol_to_disp_2d_molecule(self, mock_prepare):
+    def test_oemol_to_disp_2d_molecule(self, mock_prepare, mock_graphmol_cls):
         """Test converting 2D molecule to display"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.GetDimension.return_value = 2
 
+        mock_copy = MagicMock()
+        mock_copy.GetDimension.return_value = 2
+        mock_graphmol_cls.return_value = mock_copy
+
         ctx = MagicMock(spec=CNotebookContext)
         mock_disp = MagicMock()
         ctx.create_molecule_display.return_value = mock_disp
 
         result = oemol_to_disp(mock_mol, ctx=ctx)
 
-        # Should call OEPrepareDepiction with False for 2D molecules
-        mock_prepare.assert_called_once_with(mock_mol, False)
-        # Should call create_molecule_display
-        ctx.create_molecule_display.assert_called_once_with(mock_mol)
+        # Should create a copy
+        mock_graphmol_cls.assert_called_once_with(mock_mol)
+        # Should call OEPrepareDepiction with False for 2D molecules on the copy
+        mock_prepare.assert_called_once()
+        assert mock_prepare.call_args[0][1] is False
+        assert mock_prepare.call_args[0][0] is not mock_mol
+        # Should call create_molecule_display on the copy
         assert result == mock_disp
 
+    @patch('openeye.oechem.OEGraphMol')
     @patch('openeye.oedepict.OEPrepareDepiction')
-    def test_oemol_to_disp_3d_molecule(self, mock_prepare):
+    def test_oemol_to_disp_3d_molecule(self, mock_prepare, mock_graphmol_cls):
         """Test converting 3D molecule to display"""
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.GetDimension.return_value = 3
 
+        mock_copy = MagicMock()
+        mock_copy.GetDimension.return_value = 3
+        mock_graphmol_cls.return_value = mock_copy
+
         ctx = MagicMock(spec=CNotebookContext)
         mock_disp = MagicMock()
         ctx.create_molecule_display.return_value = mock_disp
 
         result = oemol_to_disp(mock_mol, ctx=ctx)
 
-        # Should call OEPrepareDepiction with True for 3D molecules
-        mock_prepare.assert_called_once_with(mock_mol, True)
-        # Should call create_molecule_display
-        ctx.create_molecule_display.assert_called_once_with(mock_mol)
+        # Should create a copy
+        mock_graphmol_cls.assert_called_once_with(mock_mol)
+        # Should call OEPrepareDepiction with True for 3D molecules on the copy
+        mock_prepare.assert_called_once()
+        assert mock_prepare.call_args[0][1] is True
+        assert mock_prepare.call_args[0][0] is not mock_mol
+        # Should call create_molecule_display on the copy
         assert result == mock_disp
 
 
@@ -530,66 +548,6 @@ class TestOemolToHtml:
         assert result == '<img>molecule</img>'
 
 
-class TestOeduToDisp:
-    """Test the oedu_to_disp function"""
-
-    @patch('cnotebook.core.render.oemol_to_disp')
-    @patch('cnotebook.core.render.oechem.OEGraphMol')
-    def test_with_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
-        """Test DU with a ligand returns (display, ligand) tuple"""
-        mock_lig = MagicMock()
-        mock_lig.NumAtoms.return_value = 10
-        mock_graphmol_cls.return_value = mock_lig
-
-        mock_du = MagicMock(spec=oechem.OEDesignUnit)
-
-        mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
-        mock_oemol_to_disp.return_value = mock_disp
-
-        ctx = MagicMock(spec=CNotebookContext)
-
-        result = oedu_to_disp(mock_du, ctx=ctx)
-
-        mock_du.GetLigand.assert_called_once_with(mock_lig)
-        mock_oemol_to_disp.assert_called_once_with(mock_lig, ctx=ctx)
-        assert result == (mock_disp, mock_lig)
-
-    @patch('cnotebook.core.render.oemol_to_disp')
-    @patch('cnotebook.core.render.oechem.OEGraphMol')
-    def test_without_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
-        """Test DU without ligand returns None"""
-        mock_lig = MagicMock()
-        mock_lig.NumAtoms.return_value = 0
-        mock_graphmol_cls.return_value = mock_lig
-
-        mock_du = MagicMock(spec=oechem.OEDesignUnit)
-
-        ctx = MagicMock(spec=CNotebookContext)
-
-        result = oedu_to_disp(mock_du, ctx=ctx)
-
-        mock_du.GetLigand.assert_called_once_with(mock_lig)
-        mock_oemol_to_disp.assert_not_called()
-        assert result is None
-
-    @patch('cnotebook.core.render.oemol_to_disp')
-    @patch('cnotebook.core.render.oechem.OEGraphMol')
-    def test_with_empty_ligand(self, mock_graphmol_cls, mock_oemol_to_disp):
-        """Test DU where GetLigand returns True but ligand has 0 atoms"""
-        mock_lig = MagicMock()
-        mock_lig.NumAtoms.return_value = 0
-        mock_graphmol_cls.return_value = mock_lig
-
-        mock_du = MagicMock(spec=oechem.OEDesignUnit)
-        mock_du.GetLigand.return_value = True
-
-        ctx = MagicMock(spec=CNotebookContext)
-
-        result = oedu_to_disp(mock_du, ctx=ctx)
-
-        mock_oemol_to_disp.assert_not_called()
-        assert result is None
-
 
 class TestOeduToImage:
     """Test the oedu_to_image function"""
@@ -601,12 +559,17 @@ class TestOeduToImage:
     def test_with_ligand(self, mock_oedu_to_disp, mock_oeimage, mock_render,
                          mock_draw_label):
         """Test DU with ligand renders to OEImage with label"""
+        from cnotebook.core.render import Depiction
+
         mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        # Build a real OEGraphMol and a MagicMock display
+        mol = oechem.OEGraphMol()
         mock_disp = MagicMock(spec=oedepict.OE2DMolDisplay)
         mock_disp.GetWidth.return_value = 400.0
         mock_disp.GetHeight.return_value = 300.0
-        mock_lig = MagicMock()
-        mock_oedu_to_disp.return_value = (mock_disp, mock_lig)
+
+        mock_oedu_to_disp.return_value = Depiction(mol, mock_disp)
 
         mock_image = MagicMock()
         mock_oeimage.return_value = mock_image
@@ -797,3 +760,93 @@ class TestIntegrationWithContext:
 
         svg_ctx = CNotebookContext(image_format="svg")
         assert svg_ctx.image_mime_type == "image/svg+xml"
+
+
+def _omega_3d(smiles="CCO"):
+    from openeye import oeomega
+
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, smiles)
+    oechem.OEAddExplicitHydrogens(mol)
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(1)
+    assert omega(mol)
+    return mol
+
+
+def test_oemol_to_html_does_not_mutate_input():
+    mol = _omega_3d()
+    atoms = mol.NumAtoms()
+    oemol_to_html(mol)
+    assert mol.GetDimension() == 3
+    assert mol.NumAtoms() == atoms
+
+
+def test_prepare_depiction_copy_returns_copy_with_2d_coords():
+    from cnotebook.core.render import prepare_depiction_copy
+    mol = _omega_3d()
+    copy = prepare_depiction_copy(mol)
+    assert copy is not mol
+    assert copy.GetDimension() == 2
+    assert mol.GetDimension() == 3
+
+
+def test_prepare_depiction_copy_keeps_existing_2d_coordinates():
+    from cnotebook.core.render import prepare_depiction_copy
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    oedepict.OEPrepareDepiction(mol)
+    before = [mol.GetCoords(a) for a in mol.GetAtoms()]
+    copy = prepare_depiction_copy(mol)
+    after = [copy.GetCoords(a) for a in copy.GetAtoms()]
+    assert [tuple(round(v, 3) for v in c) for c in before] == [tuple(round(v, 3) for v in c) for c in after]
+
+
+def test_make_depiction_attaches_owner():
+    from cnotebook.core.render import Depiction, make_depiction
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    dep = make_depiction(mol, ctx=CNotebookContext())
+    assert isinstance(dep, Depiction)
+    assert dep.display._cnotebook_owner is dep.mol
+    assert dep.mol is not mol
+
+
+def test_oemol_to_disp_keeps_owner_alive():
+    import gc
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    disp = oemol_to_disp(mol, ctx=CNotebookContext())
+    del mol
+    gc.collect()
+    image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
+    oedepict.OERenderMolecule(image, disp)
+    assert len(oedepict.OEWriteImageToString("png", image)) > 0
+
+
+def test_oedu_to_disp_returns_depiction():
+    import os
+
+    import pytest
+
+    from cnotebook.core.render import Depiction
+    
+    _DU_PATH = os.path.join("examples", "assets", "spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
+    if not os.path.exists(_DU_PATH):
+        pytest.skip("design unit asset missing")
+    
+    du = oechem.OEDesignUnit()
+    assert oechem.OEReadDesignUnit(_DU_PATH, du)
+    dep = oedu_to_disp(du, ctx=CNotebookContext())
+    assert isinstance(dep, Depiction)
+    assert dep.display.IsValid()
+    image = oedu_to_image(du, ctx=CNotebookContext())
+    assert image.GetWidth() > 0
+
+
+def test_oedu_to_disp_apo_returns_none():
+    class ApoDU:
+        def GetLigand(self, lig):
+            return False
+
+    assert oedu_to_disp(ApoDU(), ctx=CNotebookContext()) is None

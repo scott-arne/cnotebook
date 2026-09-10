@@ -1,9 +1,75 @@
-import logging
 import base64
-from cnotebook.core.context import CNotebookContext, pass_cnotebook_context
+import logging
+from dataclasses import dataclass
+
 from openeye import oechem, oedepict
 
+from cnotebook.core.context import CNotebookContext, pass_cnotebook_context
+
 log = logging.getLogger("cnotebook")
+
+
+@dataclass
+class Depiction:
+    """A depiction-ready molecule copy and the display built from it.
+
+    The display keeps a reference to ``mol`` through its ``_cnotebook_owner``
+    attribute, so the molecule lives exactly as long as the display.
+    """
+
+    mol: oechem.OEMolBase
+    display: oedepict.OE2DMolDisplay
+
+    def __post_init__(self) -> None:
+        self.display._cnotebook_owner = self.mol  # type: ignore[attr-defined]
+
+    def render_image(self, ctx: CNotebookContext) -> oedepict.OEImage:
+        """Rasterise the display into an image at the display's own size.
+
+        :param ctx: Render context (image format decides nothing here yet; Task 4 adds oversampling).
+        :returns: The rendered image.
+        """
+        image = oedepict.OEImage(self.display.GetWidth(), self.display.GetHeight())
+        oedepict.OERenderMolecule(image, self.display)
+        return image
+
+    def to_html(self, ctx: CNotebookContext) -> str:
+        """Render the display to an HTML image tag.
+
+        :param ctx: Render context.
+        :returns: HTML fragment.
+        """
+        return oedisp_to_html(self.display, ctx=ctx)
+
+
+def prepare_depiction_copy(
+    mol: oechem.OEMolBase, *, clear_coords: bool | None = None
+) -> oechem.OEMolBase:
+    """Return a copy of *mol* with 2D depiction coordinates; *mol* is never modified.
+
+    :param mol: Source molecule (concrete or query).
+    :param clear_coords: Recompute coordinates when ``True``; keep existing ones when
+        ``False``; ``None`` keeps them only when the source already has 2D coordinates.
+    :returns: The prepared copy.
+    """
+    work: oechem.OEMolBase = (
+        oechem.OEQMol(mol) if isinstance(mol, oechem.OEQMolBase) else oechem.OEGraphMol(mol)
+    )
+    if clear_coords is None:
+        clear_coords = work.GetDimension() != 2
+    oedepict.OEPrepareDepiction(work, clear_coords)
+    return work
+
+
+def make_depiction(mol: oechem.OEMolBase, *, ctx: CNotebookContext) -> Depiction:
+    """Prepare a copy of *mol* and build its display with *ctx*.
+
+    :param mol: Source molecule.
+    :param ctx: Render context.
+    :returns: The depiction handle.
+    """
+    work = prepare_depiction_copy(mol)
+    return Depiction(work, ctx.create_molecule_display(work))
 
 
 ########################################################################################################################
@@ -242,20 +308,16 @@ def oemol_to_disp(
         *,
         ctx: CNotebookContext
 ) -> oedepict.OE2DMolDisplay:
-    """
-    Convert a valid OpenEye molecule object to a display object for depiction. Note that it is highly recommended to
-    test that the molecule is valid first before calling this function.
+    """Convert a valid OpenEye molecule object to a display object for depiction.
+
+    The returned display references a prepared copy of *mol*, kept alive through
+    the display's ``_cnotebook_owner`` attribute; *mol* is not modified.
+
     :param ctx: Render context
     :param mol: Molecule to convert
     :return: Display object for depiction
     """
-    # Only recalculate coordinates if we don't have a 2D structure
-    if mol.GetDimension() == 2:
-        oedepict.OEPrepareDepiction(mol, False)
-    else:
-        oedepict.OEPrepareDepiction(mol, True)
-
-    return ctx.create_molecule_display(mol)
+    return make_depiction(mol, ctx=ctx).display
 
 
 def oemol_to_image(
@@ -344,34 +406,18 @@ def _draw_du_label(image: oedepict.OEImageBase) -> None:
     )
 
 
-def oedu_to_disp(
-        du: oechem.OEDesignUnit,
-        *,
-        ctx: CNotebookContext
-) -> tuple[oedepict.OE2DMolDisplay, oechem.OEGraphMol] | None:
-    """Convert an OEDesignUnit to a 2D molecule display.
+def oedu_to_disp(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> Depiction | None:
+    """Depict the ligand of a design unit.
 
-    Extracts the ligand from the design unit and renders it as a 2D display.
-    Returns ``None`` if the design unit has no ligand (apo structure).
-
-    .. important::
-        The returned ligand molecule **must** be kept alive as long as the
-        display is in use. The ``OE2DMolDisplay`` holds an internal C++
-        reference to the molecule; if the molecule is garbage-collected
-        the display will crash when rendered.
-
-    :param du: Design unit to render.
+    :param du: Design unit.
     :param ctx: Render context.
-    :returns: Tuple of (display, ligand), or ``None`` if no ligand.
+    :returns: A :class:`Depiction` of the ligand, or ``None`` for an apo design unit.
     """
     lig = oechem.OEGraphMol()
     du.GetLigand(lig)
-
     if lig.NumAtoms() == 0:
         return None
-
-    disp = oemol_to_disp(lig, ctx=ctx)
-    return disp, lig
+    return make_depiction(lig, ctx=ctx)
 
 
 def oedu_to_image(
@@ -389,13 +435,12 @@ def oedu_to_image(
     :param ctx: Render context.
     :returns: Rendered image.
     """
-    result = oedu_to_disp(du, ctx=ctx)
+    dep = oedu_to_disp(du, ctx=ctx)
 
-    if result is not None:
-        disp, _lig = result  # _lig must stay alive while disp is rendered
-        width, height = disp.GetWidth(), disp.GetHeight()
+    if dep is not None:
+        width, height = dep.display.GetWidth(), dep.display.GetHeight()
         image = oedepict.OEImage(width, height)
-        oedepict.OERenderMolecule(image, disp)
+        oedepict.OERenderMolecule(image, dep.display)
         _draw_du_label(image)
         return image
 
