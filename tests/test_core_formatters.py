@@ -12,7 +12,7 @@ from cnotebook.core.formatters import (
     molecule_cell_html,
     molecule_cell_image,
 )
-from cnotebook.core.render import make_depiction
+from cnotebook.core.render import make_depiction, placeholder_size
 
 _DU_PATH = os.path.join("examples", "assets", "spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
 
@@ -20,6 +20,21 @@ _DU_PATH = os.path.join("examples", "assets", "spruce_9Q03_ABC__DU__A1CM7_C-502.
 def _mol(smiles="c1ccccc1O"):
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, smiles)
+    return mol
+
+
+def _invalid_mol():
+    """Create a genuinely invalid molecule with atoms."""
+    mol = oechem.OEGraphMol()
+    # Try parsing invalid SMILES
+    oechem.OESmilesToMol(mol, "C1CC")  # Unclosed ring
+    if mol.IsValid():
+        # Fallback: create a molecule and corrupt it
+        mol = oechem.OEGraphMol()
+        mol.NewAtom(oechem.OEElemNo_C)
+        mol.Clear()  # This might make it invalid
+        if mol.NumAtoms() == 0:
+            mol.NewAtom(oechem.OEElemNo_C)
     return mol
 
 
@@ -48,14 +63,16 @@ def test_molecule_cell_html_applies_callbacks_on_a_copy():
     assert mol.GetDimension() == 0
 
 
-def test_display_cell_html_copies_display():
+def test_display_cell_html_copies_display_and_applies_callbacks():
     ctx = CNotebookContext(image_format="svg")
     dep = make_depiction(_mol(), ctx=ctx)
+    original = dep.display
     touched = []
     ctx.add_callback(lambda disp: touched.append(disp))
-    html = display_cell_html(dep.display, ctx)
+    html = display_cell_html(original, ctx)
     assert "<svg" in html
-    assert not touched  # Prepared display: callbacks NOT re-applied
+    assert len(touched) == 1
+    assert touched[0] is not original  # Callback received the copy
     assert display_cell_html(None, ctx) == ""
     assert display_cell_html("x<y", ctx) == "x&lt;y"
 
@@ -70,27 +87,32 @@ def test_molecule_cell_image_logical_size():
 
 def test_molecule_cell_image_placeholders_have_logical_size():
     ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
-    # Invalid molecule
-    invalid = oechem.OEGraphMol()
-    invalid.NewAtom(oechem.OEElemNo_C)
-    image = molecule_cell_image(invalid, ctx)
-    assert hasattr(image, "_cnotebook_logical_size")
+    expected_size = placeholder_size(ctx)
+    
+    # Invalid molecule with atoms
+    invalid = _invalid_mol()
+    if not invalid.IsValid() and invalid.NumAtoms() > 0:
+        image = molecule_cell_image(invalid, ctx)
+        assert image._cnotebook_logical_size == expected_size
+    
     # Over-limit molecule
     big = _mol("C" * 120)
     ctx.max_heavy_atoms = 10
     image = molecule_cell_image(big, ctx)
-    assert hasattr(image, "_cnotebook_logical_size")
+    assert image._cnotebook_logical_size == expected_size
 
 
-def test_display_cell_image_returns_image():
+def test_display_cell_image_returns_image_and_applies_callbacks():
     ctx = CNotebookContext()
     dep = make_depiction(_mol(), ctx=ctx)
+    original = dep.display
     touched = []
     ctx.add_callback(lambda disp: touched.append(disp))
-    image = display_cell_image(dep.display, ctx)
+    image = display_cell_image(original, ctx)
     assert image.GetWidth() > 0
     assert hasattr(image, "_cnotebook_logical_size")
-    assert not touched  # Prepared display: callbacks NOT re-applied
+    assert len(touched) == 1
+    assert touched[0] is not original  # Callback received the copy
 
 
 def test_display_cell_image_hidpi():

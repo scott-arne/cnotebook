@@ -1,8 +1,9 @@
 """Cell formatters shared by the pandas, polars and marimo adapters.
 
 Every function is pure with respect to its inputs: molecules are depicted on
-copies, and displays are copied for safety (callbacks are never re-applied to
-prepared displays).
+copies, and displays are copied for safety. Callbacks are applied once per
+render on the copy; stored displays are expected to be created without
+pre-applied column callbacks.
 """
 
 from __future__ import annotations
@@ -57,9 +58,11 @@ def molecule_cell_html(value: Any, ctx: CNotebookContext) -> str:
 
 
 def display_cell_html(value: Any, ctx: CNotebookContext) -> str:
-    """HTML for one display-object cell; the display is copied for safety.
+    """HTML for one display-object cell.
 
-    Prepared displays already had callbacks applied when created; they are rendered as-is.
+    Copies the display, preserves the original's ``_cnotebook_owner``, applies
+    context callbacks once per render on the copy, then renders. Stored displays
+    are expected to be created without pre-applied column callbacks.
 
     :param value: ``OE2DMolDisplay``, ``None`` or any other object.
     :param ctx: Column render context.
@@ -72,6 +75,8 @@ def display_cell_html(value: Any, ctx: CNotebookContext) -> str:
     owner = getattr(value, "_cnotebook_owner", None)
     copy = oedepict.OE2DMolDisplay(value)
     copy._cnotebook_owner = owner  # type: ignore[attr-defined]
+    for callback in ctx.callbacks:
+        callback(copy)
     return oeimage_to_html(
         _render_display_image(copy, ctx), ctx=ctx,
         logical_width=copy.GetWidth(), logical_height=copy.GetHeight(),
@@ -113,13 +118,17 @@ def molecule_cell_image(value: Any, ctx: CNotebookContext) -> oedepict.OEImage |
 def display_cell_image(value: Any, ctx: CNotebookContext) -> oedepict.OEImage | None:
     """Image for one display cell (marimo path).
 
-    Prepared displays already had callbacks applied when created; they are rendered as-is.
+    Copies the display, preserves ``_cnotebook_owner``, applies context callbacks
+    once per render on the copy, then renders. Stored displays are expected to
+    be created without pre-applied column callbacks.
     """
     if value is None or not isinstance(value, oedepict.OE2DMolDisplay) or not value.IsValid():
         return None
     owner = getattr(value, "_cnotebook_owner", None)
     copy = oedepict.OE2DMolDisplay(value)
     copy._cnotebook_owner = owner  # type: ignore[attr-defined]
+    for callback in ctx.callbacks:
+        callback(copy)
     return _tag(_render_display_image(copy, ctx), copy.GetWidth(), copy.GetHeight())
 
 
