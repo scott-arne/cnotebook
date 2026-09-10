@@ -1137,17 +1137,16 @@ def test_render_molecule_applies_callbacks():
     assert isinstance(invoked[0], oedepict.OE2DMolDisplay), "Callback should receive a display"
 
 
+
+
 def test_render_design_unit_applies_callbacks_to_ligand():
     """Callbacks should be applied to design unit ligand displays."""
-    pytest.importorskip("oespruce")
     du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
     if not du_path.exists():
         pytest.skip("Design unit fixture not available")
     
-    from openeye import oespruce
-    du = oespruce.OEDesignUnit()
-    ifs = oechem.oemolistream(str(du_path))
-    oespruce.OEReadDesignUnit(ifs, du)
+    du = oechem.OEDesignUnit()
+    assert oechem.OEReadDesignUnit(str(du_path), du)
     
     invoked = []
     
@@ -1163,15 +1162,12 @@ def test_render_design_unit_applies_callbacks_to_ligand():
 
 def test_render_design_unit_respects_heavy_atom_limit():
     """Design units with over-limit ligands should yield placeholder."""
-    pytest.importorskip("oespruce")
     du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
     if not du_path.exists():
         pytest.skip("Design unit fixture not available")
     
-    from openeye import oespruce
-    du = oespruce.OEDesignUnit()
-    ifs = oechem.oemolistream(str(du_path))
-    oespruce.OEReadDesignUnit(ifs, du)
+    du = oechem.OEDesignUnit()
+    assert oechem.OEReadDesignUnit(str(du_path), du)
     
     # Set a very low limit
     ctx = CNotebookContext(max_heavy_atoms=1)
@@ -1184,10 +1180,7 @@ def test_render_design_unit_respects_heavy_atom_limit():
 def test_render_design_unit_apo():
     """Apo design units (no ligand) should render placeholder."""
     # Create a minimal apo design unit
-    pytest.importorskip("oespruce")
-    from openeye import oespruce
-    
-    du = oespruce.OEDesignUnit()
+    du = oechem.OEDesignUnit()
     # Empty design unit has no ligand
     
     result = render_design_unit(du, format="svg")
@@ -1196,15 +1189,12 @@ def test_render_design_unit_apo():
 
 def test_save_image_design_unit_ligand(tmp_path: Path):
     """save_image should handle design units with ligands."""
-    pytest.importorskip("oespruce")
     du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
     if not du_path.exists():
         pytest.skip("Design unit fixture not available")
     
-    from openeye import oespruce
-    du = oespruce.OEDesignUnit()
-    ifs = oechem.oemolistream(str(du_path))
-    oespruce.OEReadDesignUnit(ifs, du)
+    du = oechem.OEDesignUnit()
+    assert oechem.OEReadDesignUnit(str(du_path), du)
     
     out = save_image(du, tmp_path / "du_ligand.png")
     assert out.exists() and out.read_bytes()[:4] == b"\x89PNG"
@@ -1212,10 +1202,7 @@ def test_save_image_design_unit_ligand(tmp_path: Path):
 
 def test_save_image_design_unit_apo(tmp_path: Path):
     """save_image should handle apo design units."""
-    pytest.importorskip("oespruce")
-    from openeye import oespruce
-    
-    du = oespruce.OEDesignUnit()
+    du = oechem.OEDesignUnit()
     out = save_image(du, tmp_path / "du_apo.svg")
     assert out.exists() and b"<svg" in out.read_bytes()
 
