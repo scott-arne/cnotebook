@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import math
+import re
 import secrets
 from collections.abc import Hashable
 from dataclasses import dataclass
@@ -34,7 +35,10 @@ class CellTokens:
 
     def __init__(self) -> None:
         self._nonce = secrets.token_hex(8)
-        self._cells: dict[str, str] = {}
+        self._cells: list[str] = []
+        # Matches only this registry's own token grammar, so tokens minted by
+        # another render (a different nonce) are left alone as ordinary text.
+        self._token_re = re.compile(rf"@@CN-{re.escape(self._nonce)}-([1-9][0-9]*)@@")
 
     def token_for(self, cell_html: str) -> str:
         """Register *cell_html* and return its token.
@@ -42,23 +46,38 @@ class CellTokens:
         :param cell_html: Trusted depiction HTML.
         :returns: Token of the form ``@@CN-<nonce>-<n>@@``.
         """
-        token = f"@@CN-{self._nonce}-{len(self._cells) + 1}@@"
-        self._cells[token] = cell_html
-        return token
+        self._cells.append(cell_html)
+        return f"@@CN-{self._nonce}-{len(self._cells)}@@"
 
     def substitute(self, document: str) -> str:
-        """Replace every registered token in *document*.
+        """Replace every registered token in *document* in a single pass.
+
+        The caller must render exactly the rows it tokenized: every registered
+        token has to occur in *document* exactly once, so a writer that drops,
+        repeats or reorders a tokenized row fails closed instead of emitting a
+        document with a stray token or a missing cell.
 
         :param document: HTML produced by a backend writer.
         :returns: The document with tokens replaced.
-        :raises CNotebookError: If any token does not occur exactly once.
+        :raises CNotebookError: If a token carries an unregistered index, or if
+            any registered token does not occur exactly once.
         """
-        for token, cell in self._cells.items():
-            count = document.count(token)
+        seen = [0] * len(self._cells)
+
+        def replace(match: re.Match[str]) -> str:
+            index = int(match.group(1))
+            if index > len(self._cells):
+                raise CNotebookError(f"Cell token {index} is not registered")
+            seen[index - 1] += 1
+            # Returned from a callback rather than used as a template, so
+            # backslashes and group references in the cell HTML stay literal.
+            return self._cells[index - 1]
+
+        substituted = self._token_re.sub(replace, document)
+        for index, count in enumerate(seen, start=1):
             if count != 1:
-                raise CNotebookError(f"Cell token {token} occurred {count} times; expected exactly once")
-            document = document.replace(token, cell)
-        return document
+                raise CNotebookError(f"Cell token {index} occurred {count} times; expected exactly once")
+        return substituted
 
 
 @dataclass
@@ -89,7 +108,14 @@ class FrameAdapter(Protocol):
 
 
 def cell_html(kind: ColumnKind, value: Any, ctx: CNotebookContext) -> str:
-    """Dispatch one cell to the shared formatters (OTHER cells are escaped text)."""
+    """Dispatch one cell to the shared formatters.
+
+    :param kind: Column kind deciding which formatter renders the cell.
+    :param value: Cell value; the formatters escape values of the wrong type.
+    :param ctx: Column render context.
+    :returns: Trusted depiction HTML for the molecule-like kinds, otherwise the
+        HTML-escaped text of *value* (``""`` for ``None``).
+    """
     if kind in (ColumnKind.MOLECULE, ColumnKind.QUERY):
         return formatters.molecule_cell_html(value, ctx)
     if kind is ColumnKind.DISPLAY:
