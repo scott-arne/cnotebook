@@ -1,12 +1,18 @@
-from cnotebook.core.convert import convert_molecule
-from cnotebook.core import viewer3d
+import warnings
+
 from openeye import oechem
+
+from cnotebook.core import viewer3d
+from cnotebook.core.convert import convert_molecule
+from cnotebook.core.errors import CNotebookWarning
 
 
 def _benzene():
     mol = oechem.OEMol()
     oechem.OESmilesToMol(mol, "c1ccccc1")
-    return convert_molecule(mol, name="benzene")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CNotebookWarning)
+        return convert_molecule(mol, name="benzene")
 
 
 def test_build_init_payload_single_molecule_smart_ui():
@@ -38,7 +44,9 @@ def test_render_html_escapes_script_breakout():
     # A molecule name containing </script> must not break out of the inline script.
     mol = oechem.OEMol()
     oechem.OESmilesToMol(mol, "c1ccccc1")
-    md = convert_molecule(mol, name="</script><script>alert(1)</script>")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CNotebookWarning)
+        md = convert_molecule(mol, name="</script><script>alert(1)</script>")
     payload = viewer3d.build_init_payload(
         [md], [], ui=None, ui_explicit=False,
         theme="auto", background=None, zoom_to=None, orient=None,

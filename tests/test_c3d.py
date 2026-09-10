@@ -6,7 +6,6 @@ import sys
 import pytest
 from openeye import oechem
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -813,8 +812,9 @@ class TestC3DMapConversion:
 
     def test_convert_map_oescalar_grid_uses_title(self):
         """OEScalarGrid inputs should be written as embedded CCP4 data."""
-        from cnotebook.c3d.convert import convert_map
         from openeye import oegrid
+
+        from cnotebook.c3d.convert import convert_map
 
         grid = oegrid.OEScalarGrid()
         assert grid.SetDim(2, 2, 2)
@@ -1278,6 +1278,7 @@ class TestIsMarimo:
     def test_is_marimo_not_in_modules(self):
         """_is_marimo() should return False when marimo is not in sys.modules."""
         from unittest.mock import patch
+
         from cnotebook.c3d.c3d import _is_marimo
 
         mods = dict(sys.modules)
@@ -1287,7 +1288,8 @@ class TestIsMarimo:
 
     def test_is_marimo_import_error(self):
         """_is_marimo() should return False when running_in_notebook raises."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from cnotebook.c3d.c3d import _is_marimo
 
         mock_marimo = MagicMock()
@@ -1308,6 +1310,7 @@ class TestC3DDisplay:
     def test_display_returns_jupyter_iframe(self, ethanol_3d):
         """display() should return a _JupyterIFrame when not in marimo."""
         from unittest.mock import patch
+
         from cnotebook.c3d import C3D
         from cnotebook.c3d.c3d import _JupyterIFrame
 
@@ -1321,7 +1324,8 @@ class TestC3DDisplay:
 
     def test_display_returns_marimo_html(self, ethanol_3d):
         """display() should return marimo.Html when running in marimo."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from cnotebook.c3d import C3D
 
         mock_mo = MagicMock()
@@ -1440,8 +1444,9 @@ class TestC3DAddMolecules:
 
     def test_prefix_with_untitled_molecule(self):
         """Untitled molecules with prefix should get 1-based index names."""
-        from cnotebook.c3d import C3D
         from openeye import oechem, oeomega
+
+        from cnotebook.c3d import C3D
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "C")
@@ -1469,8 +1474,9 @@ class TestC3DAddMolecules:
 
     def test_no_prefix_untitled_molecule(self):
         """Without prefix and no title, delegate falls back to 'molecule'."""
-        from cnotebook.c3d import C3D
         from openeye import oechem, oeomega
+
+        from cnotebook.c3d import C3D
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "C")
@@ -1578,7 +1584,8 @@ class TestC3DAddDesignUnits:
 
     def test_delegates_to_add_design_unit(self):
         """add_design_units should call add_design_unit for each item."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from cnotebook.c3d import C3D
 
         viewer = C3D()
@@ -1596,7 +1603,8 @@ class TestC3DAddDesignUnits:
 
     def test_enable_first_with_delegation(self):
         """enable='first' should pass disabled=False for first, True for rest."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from cnotebook.c3d import C3D
 
         viewer = C3D()
@@ -1614,7 +1622,8 @@ class TestC3DAddDesignUnits:
 
     def test_no_prefix_passes_none_name(self):
         """Without prefix, name=None should be passed to add_design_unit."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from cnotebook.c3d import C3D
 
         viewer = C3D()
@@ -1625,3 +1634,19 @@ class TestC3DAddDesignUnits:
             viewer.add_design_units([du], enable="all")
 
         mock_add.assert_called_once_with(du, name=None, disabled=False)
+
+
+def test_add_molecule_generate_3d_flag(monkeypatch):
+    import cnotebook.c3d.c3d as c3d_module
+    from cnotebook.c3d import C3D
+
+    seen = {}
+
+    def fake_convert(mol, name=None, disabled=False, *, generate_3d=True):
+        seen["generate_3d"] = generate_3d
+        from cnotebook.core.convert import MoleculeData
+        return MoleculeData(name="x", data="", format="sdf", source_type="molecule")
+
+    monkeypatch.setattr(c3d_module, "convert_molecule", fake_convert)
+    C3D().add_molecule(oechem.OEGraphMol(), generate_3d=False)
+    assert seen["generate_3d"] is False

@@ -81,10 +81,17 @@ def load_molecules(data: str, format: str, encoding: str = "utf8") -> list[oeche
     decoded = _decode(data, format, encoding)
 
     if format == "smiles":
-        mol = oechem.OEGraphMol()
-        if not oechem.OESmilesToMol(mol, str(decoded).strip()):
-            raise MoleculeParseError("Could not parse SMILES.", format)
-        return [mol]
+        mols: list[oechem.OEGraphMol] = []
+        for number, line in enumerate(str(decoded).splitlines(), start=1):
+            if not line.strip():
+                continue
+            mol = oechem.OEGraphMol()
+            if not oechem.OESmilesToMol(mol, line.strip()):
+                raise MoleculeParseError(f"Could not parse SMILES on line {number}.", format)
+            mols.append(mol)
+        if not mols:
+            raise MoleculeParseError("No molecules found in smiles input.", format)
+        return mols
 
     if format == "inchi":
         mol = oechem.OEGraphMol()
@@ -102,7 +109,7 @@ def load_molecules(data: str, format: str, encoding: str = "utf8") -> list[oeche
         if not ims.openstring(decoded.encode("utf-8")):
             raise MoleculeParseError(f"Could not open {format} input stream.", format)
 
-    mols: list[oechem.OEGraphMol] = []
+    mols = []
     for mol in ims.GetOEGraphMols():
         mols.append(oechem.OEGraphMol(mol))
     if not mols:

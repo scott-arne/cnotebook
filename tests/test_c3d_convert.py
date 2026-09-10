@@ -109,7 +109,8 @@ class TestConvertMolecule:
 
     def test_2d_mol_generates_coords(self, mol_2d):
         """A 2D molecule should trigger Omega and still produce valid SDF."""
-        result = convert_molecule(mol_2d)
+        with pytest.warns(CNotebookWarning, match="lacks 3D coordinates"):
+            result = convert_molecule(mol_2d)
 
         assert result.format == "sdf"
         assert "$$$$" in result.data
@@ -195,7 +196,8 @@ class TestEnsure3DCoords:
         oechem.OESmilesToMol(mol, "CCO")
         assert mol.GetDimension() == 0
 
-        result = _ensure_3d_coords(mol)
+        with pytest.warns(CNotebookWarning, match="lacks 3D coordinates"):
+            result = _ensure_3d_coords(mol)
         # Omega should have produced a molecule with dimension >= 2
         assert result.GetDimension() >= 2
 
@@ -205,3 +207,44 @@ class TestEnsure3DCoords:
 
         result = _ensure_3d_coords(mol_3d)
         assert result is mol_3d
+
+
+import warnings
+
+from openeye import oechem
+
+from cnotebook.core.errors import CNotebookWarning
+
+
+def _two_d_molecule():
+    ifs = oechem.oemolistream("examples/assets/two_series.sdf")
+    mol = oechem.OEGraphMol()
+    assert oechem.OEReadMolecule(ifs, mol)
+    ifs.close()
+    assert mol.GetDimension() == 2
+    return mol
+
+
+def _has_nonzero_z(sdf: str) -> bool:
+    for line in sdf.splitlines()[4:]:
+        parts = line.split()
+        if len(parts) >= 4 and parts[3].isalpha() and abs(float(parts[2])) > 1e-6:
+            return True
+    return False
+
+
+def test_2d_molecule_gets_3d_coordinates():
+    mol = _two_d_molecule()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        data = convert_molecule(mol)
+    assert any(issubclass(w.category, CNotebookWarning) for w in caught)
+    assert _has_nonzero_z(data.data)
+    assert mol.GetDimension() == 2
+
+
+def test_generate_3d_false_keeps_2d():
+    mol = _two_d_molecule()
+    data = convert_molecule(mol, generate_3d=False)
+    assert not _has_nonzero_z(data.data)
+    assert data.frames is False

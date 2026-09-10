@@ -94,3 +94,13 @@ def _benzene_sdf() -> str:
     oms.openstring()
     oechem.OEWriteMolecule(oms, mol)
     return oms.GetString().decode("utf-8")
+
+
+def test_load_molecules_smiles_multi_record():
+    mols = load_molecules("CCO ethanol\n\nc1ccccc1 benzene\n", "smiles")
+    assert [m.GetTitle() for m in mols] == ["ethanol", "benzene"]
+
+
+def test_load_molecules_smiles_reports_bad_line():
+    with pytest.raises(MoleculeParseError, match="line 2"):
+        load_molecules("CCO\nnot_a_smiles(\n", "smiles")

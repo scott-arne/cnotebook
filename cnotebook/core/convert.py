@@ -15,9 +15,9 @@ from typing import Any
 
 from openeye import oechem
 
+from cnotebook.core.errors import warn
 from cnotebook.core.vocabulary import BINARY_MAP_FORMATS as _BINARY_MAP_FORMATS
 from cnotebook.core.vocabulary import TEXT_MAP_FORMATS as _TEXT_MAP_FORMATS
-from cnotebook.core.errors import warn
 
 log = logging.getLogger("cnotebook")
 
@@ -40,6 +40,7 @@ class MoleculeData:
     source_type: str
     num_atoms: int = 0
     disabled: bool = False
+    frames: bool = False
 
 
 @dataclass
@@ -61,7 +62,7 @@ class MapData:
 _SUPPORTED_MAP_FORMATS = _BINARY_MAP_FORMATS | _TEXT_MAP_FORMATS
 
 
-def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: bool = False) -> MoleculeData:
+def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: bool = False, *, generate_3d: bool = True) -> MoleculeData:
     """Convert an OpenEye molecule to SDF string data for 3Dmol.js.
 
     If the molecule lacks 3D coordinates, conformer generation is
@@ -71,6 +72,9 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
     :param mol: OpenEye molecule to convert.
     :param name: Optional display name. Falls back to the molecule title,
         then to ``"molecule"``.
+    :param generate_3d: Generate 3D coordinates with Omega when the molecule
+        has fewer than three dimensions; pass False to send the coordinates
+        as they are.
     :returns: :class:`MoleculeData` with ``format="sdf"`` and
         ``source_type="molecule"``.
     :raises TypeError: If *mol* is not an :class:`oechem.OEMolBase`.
@@ -88,7 +92,7 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
             f"Expected OEMolBase, got {type(mol).__name__}"
         )
 
-    mol = _ensure_3d_coords(mol)
+    mol = _ensure_3d_coords(mol, generate_3d=generate_3d)
 
     resolved_name = name or mol.GetTitle() or "molecule"
 
@@ -320,7 +324,7 @@ def _mol_to_pdb_string(mol: oechem.OEMolBase) -> str:
     return val
 
 
-def _ensure_3d_coords(mol: oechem.OEMolBase) -> oechem.OEMolBase:
+def _ensure_3d_coords(mol: oechem.OEMolBase, *, generate_3d: bool = True) -> oechem.OEMolBase:
     """Ensure the molecule has 3D coordinates.
 
     If the molecule dimension is not 3, Omega is used to generate a
@@ -328,11 +332,11 @@ def _ensure_3d_coords(mol: oechem.OEMolBase) -> oechem.OEMolBase:
     (as :class:`oechem.OEMol`) is returned when generation is needed.
 
     :param mol: Input molecule (may be 2D or lacking coordinates).
+    :param generate_3d: If False, skip 3D generation and return the molecule as-is.
     :returns: Molecule with 3D coordinates (may be a new OEMol copy).
     :raises ValueError: If Omega conformer generation fails.
     """
-    # 2D and 3D are OK
-    if mol.GetDimension() >= 2:
+    if mol.GetDimension() >= 3 or not generate_3d:
         return mol
 
     warn(f"Molecule '{mol.GetTitle() or 'untitled'}' lacks 3D coordinates; generating with OEOmega.")

@@ -3,18 +3,31 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable, Sequence
 from html import escape
 from pathlib import Path
-from collections.abc import Iterable, Sequence
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-from cnotebook.core.convert import MoleculeData, convert_design_unit, convert_map, convert_molecule
 from cnotebook.core import viewer3d
+from cnotebook.core.convert import (
+    MoleculeData,
+    convert_design_unit,
+    convert_map,
+    convert_molecule,
+)
 from cnotebook.core.vocabulary import (
     ISOSURFACE_REPRESENTATIONS as _ISOSURFACE_REPRESENTATION_TUPLE,
+)
+from cnotebook.core.vocabulary import (
     STYLE_PRESETS as _STYLE_PRESETS,
+)
+from cnotebook.core.vocabulary import (
     SURFACE_MODES as _SURFACE_MODE_TUPLE,
+)
+from cnotebook.core.vocabulary import (
     SURFACE_TYPES as _SURFACE_TYPE_TUPLE,
+)
+from cnotebook.core.vocabulary import (
     VIEW_PRESETS as _VIEW_PRESET_TUPLE,
 )
 
@@ -91,27 +104,27 @@ class C3D:
             )
         self._width = width
         self._height = height
-        self._molecules: List[MoleculeData] = []
-        self._operations: List[Dict[str, Any]] = []
+        self._molecules: list[MoleculeData] = []
+        self._operations: list[dict[str, Any]] = []
         self._active_maps: set[str] = set()
-        self._ui: Dict[str, bool] = {
+        self._ui: dict[str, bool] = {
             "sidebar": True,
             "menubar": True,
             "console": True,
         }
         self._ui_explicit = False
-        self._background: Optional[str] = None
+        self._background: str | None = None
         self._background_explicit = False
         self._theme: str = theme
-        self._zoom_to: Optional[Union[str, Dict[str, Any]]] = None
-        self._orient: Optional[Union[bool, str, Dict[str, Any]]] = None
+        self._zoom_to: str | dict[str, Any] | None = None
+        self._orient: bool | str | dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # Builder methods
     # ------------------------------------------------------------------
 
     def add_molecule(
-        self, mol: Any, name: str | None = None, disabled: bool = False
+        self, mol: Any, name: str | None = None, disabled: bool = False, *, generate_3d: bool = True
     ) -> C3D:
         """Add an OpenEye molecule to the viewer.
 
@@ -123,10 +136,11 @@ class C3D:
         :param name: Optional display name for the molecule.
         :param disabled: If True, the molecule is hidden when the viewer
             starts. It can be made visible later via the sidebar.
+        :param generate_3d: If False, skip automatic 3D coordinate generation.
         :returns: Self, for method chaining.
         :raises TypeError: If *mol* is not an ``OEMolBase``.
         """
-        mol_data = convert_molecule(mol, name=name, disabled=disabled)
+        mol_data = convert_molecule(mol, name=name, disabled=disabled, generate_3d=generate_3d)
         self._molecules.append(mol_data)
         return self
 
@@ -211,6 +225,8 @@ class C3D:
         mols: Iterable,
         prefix: str | None = None,
         enable: str | Sequence[bool] = "first",
+        *,
+        generate_3d: bool = True,
     ) -> C3D:
         """Add multiple OpenEye molecules to the viewer.
 
@@ -222,6 +238,7 @@ class C3D:
             (default), or a ``Sequence[bool]`` where ``True`` means enabled.
             If the sequence is shorter than *mols*, remaining entries are
             disabled.
+        :param generate_3d: If False, skip automatic 3D coordinate generation.
         :returns: Self, for method chaining.
         :raises ValueError: If *enable* is an unrecognized string.
         :raises TypeError: If *enable* is not a string or ``Sequence``.
@@ -231,7 +248,7 @@ class C3D:
         for i, mol in enumerate(items):
             disabled = self._resolve_disabled(enable, i)
             name = self._resolve_batch_name(mol.GetTitle(), prefix, i) if prefix is not None else None
-            self.add_molecule(mol, name=name, disabled=disabled)
+            self.add_molecule(mol, name=name, disabled=disabled, generate_3d=generate_3d)
         return self
 
     def add_design_units(
@@ -264,8 +281,8 @@ class C3D:
 
     def add_style(
         self,
-        style: Union[str, Dict[str, Any]],
-        selection: Union[str, Dict[str, Any], None] = None,
+        style: str | dict[str, Any],
+        selection: str | dict[str, Any] | None = None,
         color: str | None = None,
     ) -> C3D:
         """Add a visual style to apply to selected atoms.
@@ -310,8 +327,8 @@ class C3D:
 
     def remove_style(
         self,
-        style: Union[str, Dict[str, Any]],
-        selection: Union[str, Dict[str, Any], None] = None,
+        style: str | dict[str, Any],
+        selection: str | dict[str, Any] | None = None,
     ) -> C3D:
         """Remove a visual style from selected atoms.
 
@@ -343,8 +360,8 @@ class C3D:
 
     def show_style(
         self,
-        style: Union[str, Dict[str, Any]],
-        selection: Union[str, Dict[str, Any], None] = None,
+        style: str | dict[str, Any],
+        selection: str | dict[str, Any] | None = None,
         color: str | None = None,
     ) -> C3D:
         """Synonym for :meth:`add_style`.
@@ -358,8 +375,8 @@ class C3D:
 
     def hide_style(
         self,
-        style: Union[str, Dict[str, Any]],
-        selection: Union[str, Dict[str, Any], None] = None,
+        style: str | dict[str, Any],
+        selection: str | dict[str, Any] | None = None,
     ) -> C3D:
         """Synonym for :meth:`remove_style`.
 
@@ -369,7 +386,7 @@ class C3D:
         """
         return self.remove_style(style, selection=selection)
 
-    def show_polar_hydrogens(self, rep: Union[str, Dict[str, Any]]) -> C3D:
+    def show_polar_hydrogens(self, rep: str | dict[str, Any]) -> C3D:
         """Show a representation for polar hydrogens.
 
         :param rep: Style preset or raw 3Dmol.js style dict to add.
@@ -379,7 +396,7 @@ class C3D:
 
     def hide_nonpolar_hydrogens(
         self,
-        rep: Union[str, Dict[str, Any], None] = None,
+        rep: str | dict[str, Any] | None = None,
     ) -> C3D:
         """Hide a representation for nonpolar hydrogens.
 
@@ -394,7 +411,7 @@ class C3D:
 
     def add_surface(
         self,
-        selection: Union[str, Dict[str, Any]],
+        selection: str | dict[str, Any],
         name: str | None = None,
         type: str = "molecular",
         color: str = "#FFFFFF",
@@ -452,7 +469,7 @@ class C3D:
 
     def add_map(
         self,
-        path_or_grid: Union[str, Path, Any],
+        path_or_grid: str | Path | Any,
         name: str | None = None,
         format: str | None = None,
         color: str = "#38BDF8",
@@ -505,7 +522,7 @@ class C3D:
         map_name: str,
         name: str | None = None,
         level: float | None = None,
-        selection: Union[str, Dict[str, Any], None] = None,
+        selection: str | dict[str, Any] | None = None,
         buffer: float | None = None,
         carve: float | None = None,
         representation: str = "mesh",
@@ -565,10 +582,10 @@ class C3D:
 
     @staticmethod
     def _normalize_style(
-        style: Union[str, Dict[str, Any]],
+        style: str | dict[str, Any],
         color: str | None = None,
         allow_everything: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Convert a C3D style preset or raw style dict to a style dict.
 
         :param style: Style preset or raw 3Dmol.js style dict.
@@ -586,7 +603,7 @@ class C3D:
                     f"Unknown style preset '{style}'. "
                     f"Choose from: {', '.join(sorted(_STYLE_PRESETS))}"
                 )
-            style_spec: Dict[str, Any] = {}
+            style_spec: dict[str, Any] = {}
             if color is not None:
                 style_spec["color"] = color
             style_dict = {_STYLE_PRESETS[style]: style_spec}
@@ -596,7 +613,7 @@ class C3D:
 
     def set_color(
         self,
-        selection: Union[str, Dict[str, Any]],
+        selection: str | dict[str, Any],
         color: str,
         hets: bool = True,
     ) -> C3D:
@@ -679,7 +696,7 @@ class C3D:
         self._theme = theme
         return self
 
-    def zoom_to(self, selection: Union[str, Dict[str, Any], None] = None) -> C3D:
+    def zoom_to(self, selection: str | dict[str, Any] | None = None) -> C3D:
         """Set the zoom target after loading.
 
         :param selection: Selection to zoom into. Can be a selection
@@ -692,7 +709,7 @@ class C3D:
         return self
 
     def orient(
-        self, selection: Union[bool, str, Dict[str, Any]] = True
+        self, selection: bool | str | dict[str, Any] = True
     ) -> C3D:
         """Orient the view by aligning principal axes with the screen.
 
@@ -742,7 +759,7 @@ class C3D:
     # Payload & HTML generation
     # ------------------------------------------------------------------
 
-    def _build_init_payload(self) -> Dict[str, Any]:
+    def _build_init_payload(self) -> dict[str, Any]:
         """Build the JSON-serializable initialization payload (see core.viewer3d)."""
         return viewer3d.build_init_payload(
             self._molecules,
