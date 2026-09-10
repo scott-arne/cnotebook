@@ -246,6 +246,7 @@ def test_non_utf8_config_warns_and_imports(tmp_path, monkeypatch):
 import pytest
 
 
+@pytest.mark.filterwarnings("ignore::cnotebook.core.errors.CNotebookWarning")
 @pytest.mark.parametrize("option,valid_value,invalid_value", [
     ("width", 500, "not a number"),
     ("height", 400, "not a number"),
@@ -292,12 +293,15 @@ def test_render_option_validation(fresh_config, tmp_path, monkeypatch, option, v
     monkeypatch.setenv("CNOTEBOOK_CONFIG", str(path2))
     fresh_config._CONFIG = None
     
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        cfg = fresh_config.load_config()
+    # Use warnings.catch_warnings to prevent warnings from escaping to pytest's summary
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=CNotebookWarning)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", category=CNotebookWarning)
+            cfg = fresh_config.load_config()
     
-    config_warnings = [w for w in caught if issubclass(w.category, CNotebookWarning)]
-    assert len(config_warnings) >= 1, f"Invalid {option}={invalid_value} did not warn"
+    config_warnings = [w for w in caught if issubclass(w.category, CNotebookWarning) and option in str(w.message)]
+    assert len(config_warnings) >= 1, f"Invalid {option}={invalid_value} did not warn about {option}"
     
     # Test valid value through configure()
     fresh_config._CONFIG = None
