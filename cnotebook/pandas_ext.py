@@ -11,7 +11,11 @@ import numpy as np
 import oepandas as oepd
 import pandas as pd
 from openeye import oechem, oedepict, oegraphsim
-from packaging.version import Version
+
+try:
+    from pandas.util.version import InvalidVersion, Version
+except ImportError:
+    from packaging.version import InvalidVersion, Version
 
 from .context import get_series_context, pass_cnotebook_context
 from .core import columnops
@@ -571,7 +575,14 @@ def _series_recalculate_depiction_coordinates(self, *, clear_coords=True, add_de
 
 
 def _molecule_columns(df: pd.DataFrame, molecule_columns, method: str) -> list[int]:
-    """Find column positions, handling duplicate labels. Returns positions not labels."""
+    """Find molecule column positions, handling duplicate labels.
+
+    :param df: DataFrame to search.
+    :param molecule_columns: Column name(s) or ``None`` for all molecule columns.
+    :param method: Caller method name for diagnostics.
+    :returns: List of column positions (not labels).
+    :raises TypeError: If a specified column is not a molecule column.
+    """
     if molecule_columns is None:
         # All molecule columns by position
         return [pos for pos in range(len(df.columns)) if _is_depictable_molecule_dtype(df.dtypes.iloc[pos])]
@@ -590,13 +601,22 @@ def _molecule_columns(df: pd.DataFrame, molecule_columns, method: str) -> list[i
     return positions
 
 
-def _unique_column_label(df: pd.DataFrame, label: Hashable, method: str) -> int:
-    """Find the single position for a label, raising ValueError if not unique."""
+def _unique_column_label(df: pd.DataFrame, label: Hashable, method: str, *, missing: type[Exception] = KeyError) -> int:
+    """Find the single position for a label, raising an exception if missing or duplicate.
+
+    :param df: DataFrame to search.
+    :param label: Column label to locate.
+    :param method: Caller method name for diagnostics.
+    :param missing: Exception type to raise when the label is not found.
+    :returns: Column position.
+    :raises missing: When the label is not found in the DataFrame.
+    :raises ValueError: When the label is not unique.
+    """
     matches = [pos for pos in range(len(df.columns)) if df.columns[pos] == label]
     if len(matches) == 0:
-        raise KeyError(f"{label!r} not found in DataFrame columns")
+        raise missing(f"{method}: {label!r} not found in DataFrame columns")
     if len(matches) > 1:
-        raise ValueError(f"Column label {label!r} is not unique; rename the columns or select one")
+        raise ValueError(f"{method}: column label {label!r} is not unique; rename the columns or select one")
     return matches[0]
 
 
@@ -665,22 +685,15 @@ def _dataframe_copy_molecules(self, source_column, dest_column) -> pd.DataFrame:
     :returns: The DataFrame with the new column.
     :raises ValueError: If *source_column* is not unique.
     """
-    pos = _unique_column_label(self._obj, source_column, "copy_molecules")
+    pos = _unique_column_label(self._obj, source_column, "copy_molecules", missing=ValueError)
     if not isinstance(self._obj.dtypes.iloc[pos], oepd.MoleculeDtype):
         raise TypeError(f"copy_molecules only works on molecule columns; {source_column!r} has dtype {self._obj.dtypes.iloc[pos]}")
-    # Access the column by label to avoid iloc index alignment issues with extension arrays
     source_series = self._obj[source_column]
-    # Copy molecules manually to preserve index and context
-    copied_mols = [columnops._copy(m) if m is not None else None for m in source_series.array]
-    copied_array = oepd.MoleculeArray(copied_mols)
-    # Create Series without index param (pandas+oepandas bug: passing index can null molecules)
-    copied_series = pd.Series(copied_array, dtype=oepd.MoleculeDtype())
-    # Align to frame's index after creation
-    copied_series.index = self._obj.index
-    self._obj[dest_column] = copied_series
+    copied = source_series.chem.copy_molecules()
+    self._obj[dest_column] = pd.Series(copied.array, index=self._obj.index)
     # Copy the context so the copy has independent rendering state
-    if "cnotebook" in source_series.array.metadata:
-        ctx = source_series.array.metadata["cnotebook"]
+    if "cnotebook" in copied.array.metadata:
+        ctx = copied.array.metadata["cnotebook"]
         if isinstance(ctx, CNotebookContext):
             self._obj[dest_column].array.metadata["cnotebook"] = ctx.copy()
     return self._obj
@@ -805,7 +818,7 @@ def _attach() -> None:
         if Version(oepd.__version__) < Version(_MIN_OEPANDAS):
             raise ImportError(f"oepandas {oepd.__version__} is older than {_MIN_OEPANDAS}")
         from oepandas.pandas_extensions import OEDataFrameAccessor, OESeriesAccessor
-    except (ImportError, AttributeError, ValueError) as exc:
+    except (ImportError, AttributeError, ValueError, InvalidVersion) as exc:
         warn(f"cnotebook pandas integration disabled: {exc}")
         return
     for name, func in {

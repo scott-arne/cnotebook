@@ -742,7 +742,7 @@ class TestPandasDataFrameCopyMolecules:
 
         df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
 
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError):
             df.chem.copy_molecules("nonexistent", "copy")
 
 
@@ -2307,10 +2307,12 @@ def test_copy_molecules_preserves_integer_index():
     mol2 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol2, "c1ccccc1")
 
-    # Create Series with custom index first to avoid pandas/oepandas index alignment bug
-    series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
-    series.index = [10, 20]
-    df = pd.DataFrame({"mol": series})
+    df = pd.DataFrame({"mol": pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())})
+    df.index = [10, 20]
+
+    # Assert source column is non-None before copy
+    assert df["mol"][10] is not None
+    assert df["mol"][20] is not None
 
     result = df.chem.copy_molecules("mol", "copy")
     assert result["copy"][10] is not None
@@ -2323,10 +2325,11 @@ def test_copy_molecules_preserves_string_index():
     mol1 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol1, "CCO")
 
-    # Create Series with custom index first to avoid pandas/oepandas index alignment bug
-    series = pd.Series([mol1], dtype=oepd.MoleculeDtype())
-    series.index = ["a"]
-    df = pd.DataFrame({"mol": series})
+    df = pd.DataFrame({"mol": pd.Series([mol1], dtype=oepd.MoleculeDtype())})
+    df.index = ["a"]
+
+    # Assert source column is non-None before copy
+    assert df["mol"]["a"] is not None
 
     result = df.chem.copy_molecules("mol", "copy")
     assert result["copy"]["a"] is not None
@@ -2339,10 +2342,11 @@ def test_copy_molecules_preserves_duplicate_index():
     mol2 = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol2, "c1ccccc1")
 
-    # Create Series with custom index first to avoid pandas/oepandas index alignment bug
-    series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
-    series.index = ["a", "a"]
-    df = pd.DataFrame({"mol": series})
+    df = pd.DataFrame({"mol": pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())})
+    df.index = ["a", "a"]
+
+    # Assert source column is non-None before copy
+    assert all(m is not None for m in df["mol"])
 
     result = df.chem.copy_molecules("mol", "copy")
     assert all(m is not None for m in result["copy"])
@@ -2471,10 +2475,6 @@ def test_attach_with_dev_version(monkeypatch):
     with pytest.warns(CNotebookWarning, match="pandas integration disabled"):
         pe._attach()
 
-    monkeypatch.setattr(pe, "_ATTACHED", False)
-    monkeypatch.setattr(oepd, "__version__", oepd.__version__)
-    pe._attach()
-
 
 def test_attach_with_local_version(monkeypatch):
     """_attach should accept local versions like 3.3.0+corp."""
@@ -2486,7 +2486,5 @@ def test_attach_with_local_version(monkeypatch):
     # Should attach successfully
     from oepandas.pandas_extensions import OESeriesAccessor
     assert hasattr(OESeriesAccessor, "highlight")
-
-    monkeypatch.setattr(pe, "_ATTACHED", False)
     monkeypatch.setattr(oepd, "__version__", oepd.__version__)
     pe._attach()
