@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from cnotebook.core.context import CNotebookContext, cnotebook_context
+from cnotebook.core.context import (
+    CNotebookContext,
+    cnotebook_context,
+    create_local_context,
+)
 from cnotebook.core.errors import warn
 from cnotebook.core.vocabulary import IMAGE_FORMATS
 
@@ -18,18 +23,19 @@ UNSET: Any = object()
 _THEMES = ("auto", "light", "dark")
 _DISPLAY_MODES = ("widget", "static")
 
-# Writable render options with type validators
-_RENDER_OPTIONS: dict[str, Any] = {
-    "image_format": lambda v: v in IMAGE_FORMATS,
-    "width": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
-    "height": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
-    "device_pixel_ratio": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0,
-    "atom_stereo_style": lambda v: True,  # Accepts any value, validated by context setter
-    "bond_stereo_style": lambda v: True,
-    "depiction_style": lambda v: True,
-    "resolution": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0,
-    "callback": lambda v: callable(v) or v is None,
-}
+
+def _derive_render_options() -> set[str]:
+    """Derive writable render options from the CNotebookContext contract.
+
+    Returns the set of create_local_context parameter names, which correspond
+    to the writable properties of CNotebookContext.
+    """
+    sig = inspect.signature(create_local_context)
+    return {param_name for param_name in sig.parameters}
+
+
+# Derive render options from the actual context contract
+_RENDER_OPTIONS: set[str] = _derive_render_options()
 
 # section -> key -> (default, validator returning True when acceptable)
 DEFAULTS: dict[str, dict[str, tuple[Any, Any]]] = {
@@ -98,6 +104,7 @@ def _section(raw: Any, name: str, source: str) -> dict[str, Any]:
 
 
 def _render_section(raw: Any, source: str) -> dict[str, Any]:
+    """Validate render section against writable CNotebookContext properties."""
     if not isinstance(raw, dict):
         warn(f"{source}: section 'render' must be a mapping, not {type(raw).__name__}")
         return {}
@@ -106,11 +113,11 @@ def _render_section(raw: Any, source: str) -> dict[str, Any]:
         if key not in _RENDER_OPTIONS:
             warn(f"{source}: unknown key 'render.{key}' ignored")
             continue
-        validator = _RENDER_OPTIONS[key]
-        if not validator(value):
-            warn(f"{source}: invalid value {value!r} for 'render.{key}'")
+        # TOML cannot express callables; reject callbacks in config files
+        if key == "callbacks":
+            warn(f"{source}: 'render.callbacks' cannot be set from a config file")
             continue
-        # Try setting on a probe context to catch any remaining validation errors
+        # Validate by setting on a probe context; the context's own setters decide
         probe = CNotebookContext()
         try:
             setattr(probe, key, value)
@@ -136,8 +143,11 @@ def load_config(path: Path | None = None) -> Config:
     if target is not None:
         source = str(target)
         try:
-            raw = tomllib.loads(target.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError) as exc:
+            # Read as bytes and decode inside the try block to catch UnicodeDecodeError
+            raw_bytes = target.read_bytes()
+            raw_text = raw_bytes.decode("utf-8")
+            raw = tomllib.loads(raw_text)
+        except (OSError, UnicodeDecodeError, ValueError, tomllib.TOMLDecodeError) as exc:
             warn(f"Could not read cnotebook config {source}: {exc}")
             raw = {}
         for name in raw:
@@ -206,15 +216,13 @@ def configure(
                 raise ValueError(f"Invalid value {value!r} for {name}.{key}")
             validated_updates[name][key] = value
 
-    # Validate render options
+    # Validate render options by setting on a probe context
     validated_render: dict[str, Any] = {}
     probe = CNotebookContext()
     for key, value in render_options.items():
         if key not in _RENDER_OPTIONS:
             raise KeyError(f"Unknown render option {key!r}")
-        if not _RENDER_OPTIONS[key](value):
-            raise ValueError(f"Invalid value {value!r} for render option {key!r}")
-        # Try setting on probe to catch any remaining issues
+        # Try setting on probe to let the context's own setters validate
         try:
             setattr(probe, key, value)
             validated_render[key] = value

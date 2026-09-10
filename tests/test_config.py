@@ -227,3 +227,85 @@ def test_configure_wrong_type_render_option_raises(fresh_config):
         fresh_config.configure(width="not a number")
 
     assert cnotebook_context.get().width == original_width
+
+
+def test_non_utf8_config_warns_and_imports(tmp_path, monkeypatch):
+    """Test that non-UTF-8 config files warn but don't prevent import."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "bad.toml"
+    path.write_bytes(b"\xff\xfe[render]\n")
+    code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=False)
+    assert result.returncode == 0
+    assert "OK" in result.stdout
+    assert str(path.name) in result.stderr or "Could not read" in result.stderr or "UTF-8" in result.stderr or "UnicodeDecodeError" in result.stderr
+
+
+import pytest
+
+
+@pytest.mark.parametrize("option,valid_value,invalid_value", [
+    ("width", 500, "not a number"),
+    ("height", 400, "not a number"),
+    ("min_width", 100, "not a number"),
+    ("min_height", 100, "not a number"),
+    ("max_width", 1000, "not a number"),
+    ("max_height", 800, "not a number"),
+    ("structure_scale", 1.5, "not a number"),
+    ("atom_label_font_scale", 1.2, "not a number"),
+    ("title_font_scale", 1.1, "not a number"),
+    ("image_format", "png", "invalid_format"),
+    ("max_heavy_atoms", 100, "not a number"),
+    ("device_pixel_ratio", 2.0, "not a number"),
+])
+def test_render_option_validation(fresh_config, tmp_path, monkeypatch, option, valid_value, invalid_value):
+    """Test that render options validate correctly through both file and configure()."""
+    import warnings
+    
+    # Test valid value through file
+    path = tmp_path / "valid.toml"
+    if isinstance(valid_value, bool):
+        path.write_text(f'[render]\n{option} = {"true" if valid_value else "false"}\n')
+    elif isinstance(valid_value, str):
+        path.write_text(f'[render]\n{option} = "{valid_value}"\n')
+    else:
+        path.write_text(f'[render]\n{option} = {valid_value}\n')
+    monkeypatch.setenv("CNOTEBOOK_CONFIG", str(path))
+    
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = fresh_config.load_config()
+    
+    # Should not warn for valid values
+    config_warnings = [w for w in caught if issubclass(w.category, CNotebookWarning)]
+    assert len(config_warnings) == 0, f"Valid {option}={valid_value} produced warnings: {[str(w.message) for w in config_warnings]}"
+    assert option in cfg.render
+    
+    # Test invalid value through file
+    path2 = tmp_path / "invalid.toml"
+    if isinstance(invalid_value, str):
+        path2.write_text(f'[render]\n{option} = "{invalid_value}"\n')
+    else:
+        path2.write_text(f'[render]\n{option} = {invalid_value}\n')
+    monkeypatch.setenv("CNOTEBOOK_CONFIG", str(path2))
+    fresh_config._CONFIG = None
+    
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = fresh_config.load_config()
+    
+    config_warnings = [w for w in caught if issubclass(w.category, CNotebookWarning)]
+    assert len(config_warnings) >= 1, f"Invalid {option}={invalid_value} did not warn"
+    
+    # Test valid value through configure()
+    fresh_config._CONFIG = None
+    fresh_config.get_config()
+    fresh_config.configure(**{option: valid_value})
+    from cnotebook.core.context import cnotebook_context
+    assert getattr(cnotebook_context.get(), option) == valid_value
+    
+    # Test invalid value through configure()
+    with pytest.raises((ValueError, TypeError, KeyError)):
+        fresh_config.configure(**{option: invalid_value})
