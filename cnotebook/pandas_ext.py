@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 import typing
@@ -12,17 +13,17 @@ from openeye import oechem, oedepict, oegrapheme, oegraphsim
 
 from .align import create_aligner, fingerprint_maker
 from .context import get_series_context, pass_cnotebook_context
+from .core import formatters as _fmt
 from .core.errors import warn
-from .helpers import create_structure_highlighter, escape_brackets
-from .render import (
-    CNotebookContext,
-    oedisp_to_html,
-    oedu_to_html,
-    oemol_to_disp,
-    render_empty_molecule,
-    render_exceeds_max_heavy_atoms,
-    render_invalid_molecule,
+from .core.table import (
+    CellTokens,
+    ColumnKind,
+    RowWindow,
+    cell_html,
+    pandas_max_rows_argument,
 )
+from .helpers import create_structure_highlighter
+from .render import CNotebookContext, oemol_to_disp
 
 get_ipython: Any = None
 
@@ -110,39 +111,140 @@ def _apply_render_options(ctx: CNotebookContext, options: dict[str, Any]) -> Non
         setattr(ctx, name, value)
 
 
-def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEMolBase], str]:
+def classify_dtype(dtype: Any) -> ColumnKind:
     """
-    Closure that creates a function that renders an OEMol to HTML
-    :param ctx: CNotebook rendering context
-    :return: Function that renders molecules to HTML
+    Map a Pandas dtype to the kind of cell rendering it needs.
+
+    :param dtype: Pandas dtype of a column.
+    :returns: Column kind; ``ColumnKind.OTHER`` for every dtype Pandas renders itself.
     """
-    def _oemol_to_html(mol: oechem.OEMolBase):
-        if isinstance(mol, oechem.OEMolBase):
+    if isinstance(dtype, _oepandas_types("MoleculeDtype")):
+        return ColumnKind.MOLECULE
+    if isinstance(dtype, _oepandas_types("QueryDtype")):
+        return ColumnKind.QUERY
+    if isinstance(dtype, _oepandas_types("DisplayDtype")):
+        return ColumnKind.DISPLAY
+    if isinstance(dtype, _oepandas_types("DesignUnitDtype")):
+        return ColumnKind.DESIGN_UNIT
+    return ColumnKind.OTHER
 
-            # Render valid molecules
-            if mol.IsValid():
-                # Check heavy atom count
-                if (ctx.max_heavy_atoms is not None
-                        and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
-                    return render_exceeds_max_heavy_atoms(mol, ctx=ctx)
 
-                # Create the display object (callbacks applied by make_depiction)
-                disp = oemol_to_disp(mol, ctx=ctx)
+class PandasFrameAdapter:
+    """
+    Frame adapter over a Pandas DataFrame (positional column access).
 
-                # Render into the string stream
-                return oedisp_to_html(disp, ctx=ctx)
+    Columns are addressed by position, not by label, so that a frame with
+    duplicate column labels keeps one kind and one render context per column.
+    """
 
-            # Empty molecule
-            elif mol.NumAtoms() == 0:
-                return render_empty_molecule(ctx=ctx)
+    def __init__(self, df: pd.DataFrame, *, ctx: CNotebookContext | None = None):
+        """
+        Wrap a DataFrame for rendering.
 
-            # Invalid molecule
-            else:
-                return render_invalid_molecule(ctx=ctx)
+        :param df: Frame to render; never modified.
+        :param ctx: Context overriding every column context, or ``None`` to use
+            the context stored on each column.
+        """
+        self.df = df
+        self._ctx = ctx
+        self._labels: list[Hashable] = list(df.columns)
+        self._kinds = [classify_dtype(dtype) for dtype in df.dtypes]
 
-        return str(mol)
+    def columns(self) -> list[Hashable]:
+        """
+        :returns: Column labels in positional order.
+        """
+        return list(self._labels)
 
-    return _oemol_to_html
+    def kind(self, pos: int) -> ColumnKind:
+        """
+        :param pos: Column position.
+        :returns: How the column's cells are rendered.
+        """
+        return self._kinds[pos]
+
+    def nrows(self) -> int:
+        """
+        :returns: Number of rows in the frame.
+        """
+        return len(self.df)
+
+    def context(self, pos: int) -> CNotebookContext:
+        """
+        Render context of one column.
+
+        :param pos: Column position.
+        :returns: The adapter's context when it was given one, else the context
+            stored on the column, else a local context deferring to the global one.
+        """
+        if self._ctx is not None:
+            return self._ctx
+        metadata = getattr(self.df.iloc[:, pos].array, "metadata", None) or {}
+        return get_series_context(metadata)
+
+    def row_budget(self, max_rows: int | None) -> int | None:
+        """
+        Row budget for this frame.
+
+        :param max_rows: Caller argument; see :func:`pandas_max_rows_argument`.
+        :returns: Value to pass as ``DataFrame.to_html(max_rows=...)``.
+        """
+        return pandas_max_rows_argument(
+            len(self.df), max_rows, pd.get_option("display.max_rows"), pd.get_option("display.min_rows")
+        )
+
+    def window(self, max_rows: int | None) -> RowWindow:
+        """
+        Rows a generic writer should render for *max_rows*.
+
+        :param max_rows: Caller argument; see :func:`pandas_max_rows_argument`.
+        :returns: The row window. :func:`render_dataframe` does not use it: Pandas'
+            own writer splits head and tail itself.
+        """
+        budget = self.row_budget(max_rows)
+        if budget is None or len(self.df) <= budget:
+            return RowWindow(list(range(len(self.df))), [], len(self.df))
+        head = -(-budget // 2)
+        return RowWindow(list(range(head)), list(range(len(self.df) - (budget - head), len(self.df))), len(self.df))
+
+    def cell(self, row: int, pos: int) -> Any:
+        """
+        :param row: Row position.
+        :param pos: Column position.
+        :returns: The cell value.
+        """
+        return self.df.iloc[row, pos]
+
+    def other_cell_text(self, row: int, pos: int) -> str:
+        """
+        :param row: Row position.
+        :param pos: Column position.
+        :returns: Unescaped text of an ordinary (not depicted) cell.
+        """
+        return str(self.df.iloc[row, pos])
+
+    def index_text(self, row: int) -> str | None:
+        """
+        :param row: Row position.
+        :returns: Text of the row's index label.
+        """
+        return str(self.df.index[row])
+
+    def header_extra_rows(self) -> list[list[str]]:
+        """
+        :returns: Extra header rows; Pandas frames have none.
+        """
+        return []
+
+
+def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[Any], str]:
+    """
+    Create a formatter rendering molecule cells with *ctx*.
+
+    :param ctx: CNotebook rendering context.
+    :returns: Function that renders molecules to HTML.
+    """
+    return lambda value: _fmt.molecule_cell_html(value, ctx)
 
 
 @pass_cnotebook_context
@@ -150,49 +252,41 @@ def create_disp_formatter(
         *,
         callbacks: list[typing.Callable[[oedepict.OE2DMolDisplay], None]] | None = None,
         ctx: CNotebookContext
-) -> typing.Callable[[oedepict.OE2DMolDisplay], str]:
+) -> typing.Callable[[Any], str]:
     """
-    Closure that creates a function that renders an OEMol to HTML
-    :param ctx: Render context
-    :param callbacks: List of callbacks to modify the rendering of the molecule
-    :return: Function that renders molecules to HTML
+    Create a formatter rendering display cells with *ctx*.
+
+    :param callbacks: Callbacks replacing the context's own callbacks, or ``None``
+        to keep them.
+    :param ctx: CNotebook rendering context.
+    :returns: Function that renders display objects to HTML.
     """
-
-    def _oedisp_to_html(disp: oedepict.OE2DMolDisplay) -> str:
-
-        if isinstance(disp, oedepict.OE2DMolDisplay) and disp.IsValid():
-            # Copy the display, as not to modify the original with callbacks
-            # TODO: Update with ctx
-            disp_to_render = oedepict.OE2DMolDisplay(disp)
-
-            # Apply display callbacks
-            if callbacks is not None:
-                for callback in callbacks:
-                    callback(disp_to_render)
-
-            return oedisp_to_html(disp_to_render, ctx=ctx)
-        return str(disp)
-
-    return _oedisp_to_html
+    if callbacks is not None:
+        ctx = ctx.copy()
+        ctx.reset_callbacks()
+        for callback in callbacks:
+            ctx.add_callback(callback)
+    return lambda value: _fmt.display_cell_html(value, ctx)
 
 
-def create_du_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEDesignUnit], str]:
+def create_du_formatter(*, ctx: CNotebookContext) -> typing.Callable[[Any], str]:
     """
-    Closure that creates a function that renders an OEDesignUnit to HTML.
+    Create a formatter rendering design unit cells with *ctx*.
 
     :param ctx: CNotebook rendering context.
     :returns: Function that renders design units to HTML.
     """
-    def _oedu_to_html(du: oechem.OEDesignUnit):
-        if isinstance(du, oechem.OEDesignUnit):
-            return oedu_to_html(du, ctx=ctx)
-        return str(du)
-
-    return _oedu_to_html
+    return lambda value: _fmt.design_unit_cell_html(value, ctx)
 
 
 def escape_formatter(obj: Any) -> str:
-    return escape_brackets(str(obj))
+    """
+    Escape a plain value for HTML.
+
+    :param obj: Value to escape; ``None`` becomes an empty cell.
+    :returns: Escaped text.
+    """
+    return html.escape("" if obj is None else str(obj))
 
 
 def render_dataframe(
@@ -200,157 +294,68 @@ def render_dataframe(
         formatters: dict | None = None,
         col_space: dict[Hashable, str | int] | None = None,
         ctx: CNotebookContext | None = None,
-        **kwargs
+        max_rows: int | None = None,
+        **kwargs: Any
 ) -> str:
     """
-    Render a DataFrame with molecules
-    :param df: DataFrame to render
-    :param formatters: Custom formatters for displaying columns
-    :param col_space: Custom column spacing
-    :param ctx: Local rendering context (optional)
-    :param kwargs: Additional keyword arguments for DataFrame.to_html
-    :return: HTML of rendered DataFrame
+    Render a DataFrame with molecule-aware cells through Pandas' own HTML writer.
+
+    Depiction cells are rendered into per-render nonce tokens that Pandas carries
+    through its writer untouched, so every other value is escaped by Pandas and
+    only the depiction HTML is substituted back in raw. Cells are depicted lazily
+    by the Pandas formatters, so only the rows Pandas actually renders are drawn.
+
+    :param df: Frame to render (never modified).
+    :param formatters: Extra Pandas formatters for ordinary columns (copied, never mutated).
+    :param col_space: Extra Pandas ``col_space`` entries (copied, never mutated).
+    :param ctx: Overrides every column context when given; ``None`` honours column contexts.
+    :param max_rows: ``None`` for the Pandas display rule, ``<= 0`` for all rows, else the row budget.
+    :param kwargs: Forwarded to ``DataFrame.to_html``; ``escape`` is ignored with a warning.
+    :returns: HTML table.
     """
-    # Defaults are empty dictionaries for these
-    formatters = formatters or {}
-    col_space = col_space or {}
+    kwargs = dict(kwargs)
+    if "escape" in kwargs:
+        kwargs.pop("escape")
+        warn("render_dataframe always escapes ordinary cells; the escape argument is ignored")
 
-    # Render columns with molecule-like dtypes
-    molecule_columns = set()
+    # to_html applies its own "columns" argument after the formatters are bound, which
+    # would misalign the positional formatter list; select the columns up front instead.
+    columns = kwargs.pop("columns", None)
+    if columns is not None:
+        df = df[columns]
 
-    # Capture metadata from ORIGINAL DataFrame BEFORE copying
-    # (df.copy() may not preserve array metadata)
-    original_metadata_by_col = {}
-    original_dtype_by_col = {}
+    adapter = PandasFrameAdapter(df, ctx=ctx)
+    tokens = CellTokens()
+    labels = adapter.columns()
+    caller_formatters = dict(formatters or {})
+    # Pandas applies a list of formatters by position, which keeps duplicate and non-string labels distinct.
+    positional_formatters: list[Any] = [caller_formatters.get(label) for label in labels]
+    widths: dict[Hashable, str | int] = dict(col_space or {})
 
-    for col in df.columns:
-        if _is_depictable_molecule_dtype(df.dtypes[col]):
-            molecule_columns.add(col)
-            original_dtype_by_col[col] = df.dtypes[col]
-            # Get metadata from the original array before any copying
-            arr = df[col].array
-            metadata = getattr(arr, "metadata", None)
-            if metadata:
-                original_metadata_by_col[col] = metadata.copy()
+    for pos, label in enumerate(labels):
+        kind = adapter.kind(pos)
+        if kind is ColumnKind.OTHER:
+            continue
+        if positional_formatters[pos] is not None:
+            warn(f"Overwriting the formatter for column {label!r} with the molecule formatter")
+        column_ctx = adapter.context(pos)
+        positional_formatters[pos] = (
+            lambda value, _kind=kind, _ctx=column_ctx: tokens.token_for(cell_html(_kind, value, _ctx))
+        )
+        if column_ctx.width > 0:
+            # col_space is keyed by label in Pandas, so duplicate labels share the widest image.
+            previous = widths.get(label)
+            widths[label] = max(int(column_ctx.width), previous) if isinstance(previous, int) else int(column_ctx.width)
 
-    # We need to copy both the DataFrame and the molecules, because we modify them in-place to render them
-    df = df.copy()
-
-    for col in molecule_columns:
-        arr = _as_depictable_molecule_array(df[col].array)
-        # Use preserved metadata from original DataFrame (not the copy which may have lost it)
-        original_metadata = original_metadata_by_col.get(col, {})
-        new_arr = arr.deepcopy()
-        new_arr.metadata.update(original_metadata)
-        df[col] = pd.Series(new_arr, index=df[col].index, dtype=original_dtype_by_col[col])
-
-    # ---------------------------------------------------
-    # Molecule columns
-    # ---------------------------------------------------
-
-    if len(molecule_columns) > 0:
-        log.debug(f'Detected molecule columns: {", ".join(molecule_columns)}')
-
-    # Create formatters for each column
-    for col in molecule_columns:
-
-        # Create the formatter for this column
-        if col in formatters:
-            warn(f'Overwriting existing formatter for {col} with a molecule formatter')
-
-        arr = _as_depictable_molecule_array(df[col].array)
-
-        # Get the cnotebook options for this column
-        series_ctx = get_series_context(arr.metadata)
-        # Prefer explicit ctx over column context
-        if ctx is not None:
-            series_ctx = ctx
-
-        formatters[col] = create_mol_formatter(ctx=series_ctx)
-
-        # Record the column width
-        if col in col_space:
-            warn(f'Column spacing for {col} already defined by overwriting with molecule image width')
-
-        col_space[col] = int(series_ctx.width)
-
-    # ---------------------------------------------------
-    # Display columns
-    # ---------------------------------------------------
-
-    # Render columns with DisplayDtype
-    display_columns = set()
-
-    for col in df.columns:
-        if isinstance(df.dtypes[col], oepd.DisplayDtype):
-            display_columns.add(col)
-
-    if len(display_columns) > 0:
-        log.debug(f'Detected display columns: {", ".join(display_columns)}')
-
-    for col in display_columns:
-
-        # Get the underlying display array
-        # Direct assignment to help IDE understand this is a DisplayArray
-        arr = df[col].array
-        assert isinstance(arr, oepd.DisplayArray)
-
-        # Get column metadata
-        series_ctx = get_series_context(arr.metadata)
-        # Prefer explicit ctx over column context
-        if ctx is not None:
-            series_ctx = ctx
-
-        formatters[col] = create_disp_formatter(ctx=series_ctx)
-
-        if len(arr) > 0:
-            col_space[col] = int(max(disp.GetWidth() for disp in arr if isinstance(disp, oedepict.OE2DMolDisplay)))
-            col_space[col] = max(0, col_space[col])
-        else:
-            col_space[col] = 0
-
-    # ---------------------------------------------------
-    # Design Unit columns
-    # ---------------------------------------------------
-
-    designunit_columns = set()
-
-    for col in df.columns:
-        if isinstance(df.dtypes[col], oepd.DesignUnitDtype):
-            designunit_columns.add(col)
-
-    if len(designunit_columns) > 0:
-        log.debug(f'Detected design unit columns: {", ".join(designunit_columns)}')
-
-    for col in designunit_columns:
-        if col in formatters:
-            warn(f'Overwriting existing formatter for {col} with a design unit formatter')
-
-        arr = df[col].array
-        # Get column metadata
-        series_ctx = get_series_context(arr.metadata)
-        # Prefer explicit ctx over column context
-        if ctx is not None:
-            series_ctx = ctx
-        formatters[col] = create_du_formatter(ctx=series_ctx)
-        col_space[col] = int(series_ctx.width)
-
-    # ---------------------------------------------------
-    # All other columns
-    # ---------------------------------------------------
-
-    for col in df.columns:
-        if col not in display_columns and col not in molecule_columns and col not in designunit_columns:
-            formatters[col] = escape_formatter
-
-    html = df.to_html(  # pyright: ignore[reportCallIssue]
-        escape=False,
-        formatters=formatters,
-        col_space=col_space,  # pyright: ignore[reportArgumentType]
+    html_out = df.to_html(  # pyright: ignore[reportCallIssue]
+        escape=True,
+        formatters=positional_formatters if any(f is not None for f in positional_formatters) else None,
+        col_space=widths or None,  # pyright: ignore[reportArgumentType]
+        max_rows=adapter.row_budget(max_rows),
         **kwargs
     )
-    assert html is not None
-    return html
+    assert html_out is not None
+    return tokens.substitute(html_out)
 
 
 ########################################################################################################################

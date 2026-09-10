@@ -9,6 +9,7 @@ from cnotebook.core.errors import CNotebookWarning
 from cnotebook.pandas_ext import (
     SMARTS_DELIMITER_RE,
     ColorBondByOverlapScore,
+    PandasFrameAdapter,
     create_disp_formatter,
     create_mol_formatter,
     escape_formatter,
@@ -73,14 +74,13 @@ class TestRenderDataframe:
             "query": pd.Series([query], dtype=oepd.QueryDtype()),
         })
 
-        with patch("cnotebook.pandas_ext.oechem.OECount", return_value=1), \
-             patch("cnotebook.pandas_ext.oemol_to_disp") as mock_to_disp, \
-             patch("cnotebook.pandas_ext.oedisp_to_html", return_value="<img>query</img>"):
+        with patch("cnotebook.core.formatters.make_depiction") as mock_depict:
+            mock_depict.return_value.to_html.return_value = "<img>query</img>"
             result = render_dataframe(df)
 
         assert "<img>query</img>" in result
-        mock_to_disp.assert_called_once()
-        assert isinstance(mock_to_disp.call_args.args[0], oechem.OEQMol)
+        mock_depict.assert_called_once()
+        assert isinstance(mock_depict.call_args.args[0], oechem.OEQMol)
     
     def test_render_dataframe_custom_formatters(self):
         """Test rendering with custom formatters"""
@@ -137,19 +137,16 @@ class TestCreateMolFormatter:
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         mock_mol.IsValid.return_value = True
 
-        with patch('cnotebook.pandas_ext.oechem.OECount', return_value=10):
-            with patch('cnotebook.pandas_ext.oemol_to_disp') as mock_to_disp:
-                with patch('cnotebook.pandas_ext.oedisp_to_html') as mock_to_html:
-                    mock_disp = MagicMock()
-                    mock_to_disp.return_value = mock_disp
-                    mock_to_html.return_value = '<img>valid_mol</img>'
+        with patch('cnotebook.core.formatters.oechem.OECount', return_value=10), \
+             patch('cnotebook.core.formatters.make_depiction') as mock_depict:
+            mock_depict.return_value.to_html.return_value = '<img>valid_mol</img>'
 
-                    formatter = create_mol_formatter(ctx=ctx)
-                    result = formatter(mock_mol)
+            formatter = create_mol_formatter(ctx=ctx)
+            result = formatter(mock_mol)
 
-                    assert result == '<img>valid_mol</img>'
-                    mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
-                    mock_to_html.assert_called_once_with(mock_disp, ctx=ctx)
+            assert result == '<img>valid_mol</img>'
+            mock_depict.assert_called_once_with(mock_mol, ctx=ctx, apply_callbacks=False)
+            mock_depict.return_value.to_html.assert_called_once_with(ctx)
     
     def test_create_mol_formatter_empty_molecule(self):
         """Test formatter with empty molecule"""
@@ -159,7 +156,7 @@ class TestCreateMolFormatter:
         mock_mol.IsValid.return_value = False
         mock_mol.NumAtoms.return_value = 0
         
-        with patch('cnotebook.pandas_ext.render_empty_molecule') as mock_render_empty:
+        with patch('cnotebook.core.formatters.render_empty_molecule') as mock_render_empty:
             mock_render_empty.return_value = '<img>empty</img>'
             
             formatter = create_mol_formatter(ctx=ctx)
@@ -176,7 +173,7 @@ class TestCreateMolFormatter:
         mock_mol.IsValid.return_value = False
         mock_mol.NumAtoms.return_value = 5
         
-        with patch('cnotebook.pandas_ext.render_invalid_molecule') as mock_render_invalid:
+        with patch('cnotebook.core.formatters.render_invalid_molecule') as mock_render_invalid:
             mock_render_invalid.return_value = '<img>invalid</img>'
             
             formatter = create_mol_formatter(ctx=ctx)
@@ -261,8 +258,8 @@ class TestCreateDispFormatter:
         
         formatter = create_disp_formatter(ctx=ctx)
         result = formatter(mock_disp)
-        
-        assert result == str(mock_disp)
+
+        assert result == escape_formatter(mock_disp)
     
     def test_create_disp_formatter_non_display(self):
         """Test formatter with non-display object"""
@@ -280,7 +277,7 @@ class TestEscapeFormatter:
     def test_escape_formatter_string(self):
         """Test escaping string with HTML characters"""
         result = escape_formatter("<script>alert('test')</script>")
-        assert result == "&lt;script&gt;alert('test')&lt;/script&gt;"
+        assert result == "&lt;script&gt;alert(&#x27;test&#x27;)&lt;/script&gt;"
     
     def test_escape_formatter_non_string(self):
         """Test with non-string object"""
@@ -290,7 +287,7 @@ class TestEscapeFormatter:
     def test_escape_formatter_none(self):
         """Test with None"""
         result = escape_formatter(None)
-        assert result == "None"
+        assert result == ""
 
 
 class TestSmartsDelimiterRegex:
@@ -1870,3 +1867,156 @@ def test_pandas_explicit_context_beats_column_context():
     
     # Explicit context (DPR 1.0) should win, so PNG should be ~100px (not 200px from column DPR 2.0)
     assert width_px < 150  # Should be close to 100, not 200
+
+
+########################################################################################################################
+# Frame rendering through pandas' own HTML writer
+########################################################################################################################
+
+
+def _mols(n, smiles="c1ccccc1O"):
+    out = []
+    for i in range(n):
+        m = oechem.OEGraphMol()
+        oechem.OESmilesToMol(m, smiles)
+        m.SetTitle(f"m{i}")
+        out.append(m)
+    return out
+
+
+def _frame(n=3, **extra):
+    data = {"mol": pd.Series(_mols(n), dtype=oepd.MoleculeDtype())}
+    data.update(extra)
+    return pd.DataFrame(data)
+
+
+def test_render_dataframe_truncates_like_pandas():
+    df = pd.DataFrame({"a": range(5000)})
+    html = render_dataframe(df)
+    assert html.count("<tr") == pd.DataFrame({"a": range(5000)})._repr_html_().count("<tr")
+    assert render_dataframe(df, max_rows=0).count("<tr") == 5001
+    assert render_dataframe(df, max_rows=4).count("<tr") == 1 + 4 + 1
+
+
+def test_render_dataframe_copies_only_window(monkeypatch):
+    df = _frame(200)
+    calls = []
+    import cnotebook.pandas_ext as pe
+
+    original = pe.cell_html
+
+    def counting(kind, value, ctx):
+        calls.append(1)
+        return original(kind, value, ctx)
+
+    monkeypatch.setattr(pe, "cell_html", counting)
+    with pd.option_context("display.max_rows", 20, "display.min_rows", 10):
+        render_dataframe(df)
+    assert len(calls) == 10
+
+
+def test_column_render_options_affect_html():
+    df = _frame(1)
+    df["mol"].chem.set_render_options(image_format="svg", width=123)
+    html = render_dataframe(df)
+    assert "<svg" in html and "min-width: 123px" in html
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0)
+    assert "data:image/png" in render_dataframe(df, ctx=ctx)
+
+
+def test_render_dataframe_does_not_mutate_caller_dicts():
+    df = _frame(1, x=[1])
+    formatters = {"x": lambda v: f"[{v}]"}
+    col_space = {"x": 50}
+    html = render_dataframe(df, formatters=formatters, col_space=col_space)
+    assert formatters == {"x": formatters["x"]} and list(formatters) == ["x"] and col_space == {"x": 50}
+    assert "[1]" in html
+
+
+def test_render_dataframe_does_not_mutate_frame_or_molecules():
+    df = _frame(1)
+    array_before = df["mol"].array
+    mol_before = df["mol"][0]
+    coords_before = oechem.OEFloatArray(mol_before.GetMaxAtomIdx() * 3)
+    mol_before.GetCoords(coords_before)
+
+    render_dataframe(df)
+
+    assert df["mol"].array is array_before and df["mol"][0] is mol_before
+    coords_after = oechem.OEFloatArray(mol_before.GetMaxAtomIdx() * 3)
+    mol_before.GetCoords(coords_after)
+    assert list(coords_after) == list(coords_before)
+
+
+def test_render_dataframe_ignores_escape_kwarg_with_warning():
+    df = _frame(1, s=["a&b"])
+    with pytest.warns(CNotebookWarning, match="escape"):
+        html = render_dataframe(df, escape=False)
+    assert "a&amp;b" in html
+
+
+def test_other_cells_escaped():
+    df = _frame(1, s=["a&b<c"], f=[1 / 3])
+    html = render_dataframe(df)
+    assert "a&amp;b&lt;c" in html and "0.333333" in html and "0.3333333333" not in html
+
+
+def test_all_none_display_column_renders():
+    df = pd.DataFrame({"d": pd.Series([None, None], dtype=oepd.DisplayDtype())})
+    html = render_dataframe(df)
+    assert html.count("<tr") == 3
+
+
+def test_token_like_values_survive_in_ordinary_cells():
+    df = _frame(1, note=["@@CN-0000000000000000-1@@"], **{"@@CN-x@@": ["h"]})
+    df.index = ["@@CN-idx@@"]
+    html = render_dataframe(df)
+    assert html.count("@@CN-0000000000000000-1@@") == 1 and "@@CN-x@@" in html and "@@CN-idx@@" in html
+
+
+def test_render_dataframe_survives_a_small_display_max_colwidth():
+    """Cell tokens are longer than a narrow ``display.max_colwidth``; pandas must not trim them."""
+    df = _frame(1)
+    with pd.option_context("display.max_colwidth", 4):
+        html = render_dataframe(df)
+    assert "data:image/png" in html and "@@CN-" not in html
+
+
+def test_none_and_invalid_molecule_cells():
+    df = pd.DataFrame({"mol": pd.Series([None, oechem.OEGraphMol(), *_mols(1)], dtype=oepd.MoleculeDtype())})
+    html = render_dataframe(df, ctx=CNotebookContext(image_format="svg"))
+    assert "Empty Molecule" in html and html.count("<tr") == 4
+
+
+def test_frame_adapter_classification():
+    df = _frame(1, x=[1])
+    adapter = PandasFrameAdapter(df)
+    assert [k.name for k in (adapter.kind(0), adapter.kind(1))] == ["MOLECULE", "OTHER"]
+    assert adapter.columns() == ["mol", "x"]
+
+
+def test_frame_adapter_rows_and_window():
+    df = _frame(2, x=["a", "b"])
+    df.index = ["first", "second"]
+    adapter = PandasFrameAdapter(df)
+    assert adapter.nrows() == 2 and adapter.index_text(1) == "second"
+    assert adapter.other_cell_text(0, 1) == "a" and adapter.cell(0, 0) is df["mol"].iloc[0]
+    assert adapter.header_extra_rows() == []
+
+    full = adapter.window(None)
+    assert (full.head, full.tail, full.truncated) == ([0, 1], [], False)
+    truncated = PandasFrameAdapter(_frame(5)).window(3)
+    assert (truncated.head, truncated.tail, truncated.total) == ([0, 1], [4], 5)
+
+
+def test_duplicate_column_labels_keep_their_own_kinds_and_contexts():
+    left = pd.DataFrame({"mol": pd.Series(_mols(1), dtype=oepd.MoleculeDtype())})
+    right = pd.DataFrame({"mol": ["plain text"]})
+    df = pd.concat([left, right], axis=1)  # two columns labelled "mol": one molecule, one text
+    html = render_dataframe(df)
+    assert html.count("<img") + html.count("<svg") == 1 and "plain text" in html
+    both = pd.concat([left, left.copy()], axis=1)
+    both.iloc[:, 0].array.metadata["cnotebook"] = CNotebookContext(image_format="svg")
+    both.iloc[:, 1].array.metadata["cnotebook"] = CNotebookContext(image_format="png", device_pixel_ratio=1.0)
+    html = render_dataframe(both)
+    assert "<svg" in html and "data:image/png" in html
