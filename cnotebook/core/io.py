@@ -66,6 +66,22 @@ def _decode(data: str, format: str, encoding: str) -> bytes | str:
     raise MoleculeParseError(f"Unknown encoding '{encoding}'.", format)
 
 
+def _parse_smiles_record(line: str, line_number: int) -> oechem.OEGraphMol | None:
+    """Parse a single SMILES record line.
+
+    :param line: SMILES string (may include whitespace or title).
+    :param line_number: Line number for error reporting.
+    :returns: Parsed molecule with title, or None if the line is blank.
+    :raises MoleculeParseError: If the SMILES cannot be parsed.
+    """
+    if not line.strip():
+        return None
+    mol = oechem.OEGraphMol()
+    if not oechem.OESmilesToMol(mol, line.strip()):
+        raise MoleculeParseError(f"Could not parse SMILES on line {line_number}.", "smiles")
+    return mol
+
+
 def load_molecules(data: str, format: str, encoding: str = "utf8") -> list[oechem.OEGraphMol]:
     """Parse every record in *data* into OE molecules.
 
@@ -83,12 +99,9 @@ def load_molecules(data: str, format: str, encoding: str = "utf8") -> list[oeche
     if format == "smiles":
         mols: list[oechem.OEGraphMol] = []
         for number, line in enumerate(str(decoded).splitlines(), start=1):
-            if not line.strip():
-                continue
-            mol = oechem.OEGraphMol()
-            if not oechem.OESmilesToMol(mol, line.strip()):
-                raise MoleculeParseError(f"Could not parse SMILES on line {number}.", format)
-            mols.append(mol)
+            mol = _parse_smiles_record(line, number)
+            if mol is not None:
+                mols.append(mol)
         if not mols:
             raise MoleculeParseError("No molecules found in smiles input.", format)
         return mols
@@ -129,13 +142,10 @@ def load_molecule(data: str, format: str, encoding: str = "utf8") -> oechem.OEGr
 
     if format == "smiles":
         # Parse only the first non-blank SMILES record
-        for line in str(decoded).splitlines():
-            if not line.strip():
-                continue
-            mol = oechem.OEGraphMol()
-            if not oechem.OESmilesToMol(mol, line.strip()):
-                raise MoleculeParseError("Could not parse SMILES.", format)
-            return mol
+        for number, line in enumerate(str(decoded).splitlines(), start=1):
+            mol = _parse_smiles_record(line, number)
+            if mol is not None:
+                return mol
         raise MoleculeParseError("No molecules found in smiles input.", format)
 
     # For other formats, use load_molecules and return first
