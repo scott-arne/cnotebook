@@ -1,18 +1,21 @@
 import pytest
 from unittest.mock import MagicMock, patch
+
 from openeye import oechem, oedepict, oegraphsim
+
 from cnotebook.align import (
+    Aligner,
+    OEFingerprintAligner,
+    OEMCSSearchAligner,
+    OESubSearchAligner,
+    atom_fp_typemap,
+    bond_fp_typemap,
+    create_aligner,
+    fingerprint_maker,
     get_atom_mask,
     get_bond_mask,
-    fingerprint_maker,
-    Aligner,
-    OESubSearchAligner,
-    OEMCSSearchAligner,
-    OEFingerprintAligner,
-    create_aligner,
-    atom_fp_typemap,
-    bond_fp_typemap
 )
+from cnotebook.core.columnops import AlignmentReport, SimilarityResult
 
 
 class _RecordingMCS:
@@ -406,7 +409,8 @@ class TestOEFingerprintAligner:
         invalid_mol = oechem.OEGraphMol()
         # Don't add any atoms - this makes it invalid
 
-        aligner = OEFingerprintAligner(invalid_mol)
+        with pytest.warns(match="Reference molecule for fingerprint-based alignment is not valid"):
+            aligner = OEFingerprintAligner(invalid_mol)
 
         assert aligner.reffp is None
         assert aligner.fptype is None
@@ -829,3 +833,61 @@ class TestOEFingerprintAlignerAlign:
 
         result = aligner.align(target)
         assert isinstance(result, bool)
+
+
+def _mol(smiles):
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, smiles)
+    return mol
+
+
+def test_mcss_aligner_aligns_real_molecules_without_single_match():
+    ref = _mol("c1ccccc1O")
+    target = _mol("c1ccccc1OC")
+    aligner = create_aligner(ref, method="mcss")
+    assert aligner(target) is True
+    assert target.GetDimension() == 2
+
+
+def test_smarts_aligner_aligns():
+    target = _mol("c1ccccc1O")
+    aligner = create_aligner("c1ccccc1")
+    assert aligner.ss.GetPattern().GetDimension() == 2
+    assert aligner(target) is True
+    assert target.GetDimension() == 2
+
+
+def test_subsearch_object_reference_gets_coordinates():
+    ss = oechem.OESubSearch("c1ccccc1")
+    aligner = OESubSearchAligner(ss)
+    assert aligner.ss.GetPattern().GetDimension() == 2
+    assert aligner(_mol("c1ccccc1N")) is True
+
+
+def test_aligner_does_not_mutate_reference():
+    ref = _mol("c1ccccc1O")
+    assert ref.GetDimension() == 0
+    create_aligner(ref, method="substructure")(_mol("c1ccccc1OC"))
+    OEMCSSearchAligner(ref)(_mol("c1ccccc1OC"))
+    create_aligner(ref)(_mol("c1ccccc1OC"))
+    assert ref.GetDimension() == 0
+
+
+def test_aligner_handles_none_and_invalid():
+    aligner = create_aligner(_mol("c1ccccc1O"))
+    assert aligner(None) is False
+    assert aligner(oechem.OEGraphMol()) is False
+
+
+def test_create_aligner_forwards_kwargs():
+    fp = create_aligner(_mol("c1ccccc1O"), method="fp", threshold=0.9)
+    assert fp.threshold == 0.9
+    mcs = create_aligner(_mol("c1ccccc1O"), method="mcss", min_atoms=4)
+    assert mcs.mcss.GetMinAtoms() == 4
+
+
+def test_report_dataclasses():
+    report = AlignmentReport(total=3, aligned=1, skipped_none=1, skipped_invalid=0, failed=[2])
+    assert report.failed == [2]
+    result = SimilarityResult(tanimotos=[1.0, None], reference=[None, None], target=[None, None])
+    assert result.tanimotos[1] is None

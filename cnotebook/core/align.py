@@ -145,9 +145,12 @@ class Aligner(metaclass=ABCMeta):
     """
 
     def __call__(self, mol_or_disp: oechem.OEMolBase | oedepict.OE2DMolDisplay) -> bool:
-
-        # Get the molecule
+        if mol_or_disp is None:
+            return False
         mol = mol_or_disp if isinstance(mol_or_disp, oechem.OEMolBase) else mol_or_disp.GetMolecule()
+        if mol is None or not mol.IsValid():
+            log.debug("Aligner skipped a None or invalid molecule")
+            return False
 
         try:
             log.debug("Aligner called for molecule: %s", oechem.OEMolToSmiles(mol) if mol else "None")
@@ -202,7 +205,7 @@ class OESubSearchAligner(Aligner):
 
         if isinstance(ref, (oechem.OESubSearch, oechem.OEQMolBase, str)):
             self.ss = oechem.OESubSearch(ref)
-
+            oedepict.OEPrepareDepiction(self.ss.GetPattern())
         else:
             self.refmol = oechem.OEGraphMol(ref)
             # Ensure the reference molecule has proper 2D depiction coordinates
@@ -216,6 +219,8 @@ class OESubSearchAligner(Aligner):
         :param mol: Molecule to search.
         :returns: True if there is a match to this substructure search.
         """
+        if self.ss.GetPattern().GetDimension() != 2:
+            return False
         oechem.OEPrepareSearch(mol, self.ss)
         return self.ss.SingleMatch(mol)
 
@@ -265,9 +270,10 @@ class OEMCSSearchAligner(Aligner):
 
         if isinstance(ref, oechem.OEMCSSearch):
             self.mcss = oechem.OEMCSSearch(ref)
+            self.mcss.SetMinAtoms(min_atoms)
 
         else:
-            self.refmol = ref.CreateCopy()
+            self.refmol = oechem.OEGraphMol(ref)
             # Ensure the reference molecule has proper 2D depiction coordinates
             oedepict.OEPrepareDepiction(self.refmol, False)
 
@@ -296,7 +302,7 @@ class OEMCSSearchAligner(Aligner):
         :param mol: Molecule to search.
         :returns: True if the molecule contains the maximum common substructure.
         """
-        return self.mcss.SingleMatch(mol)
+        return next(iter(self.mcss.Match(mol, True)), None) is not None
 
     def align(self, mol: oechem.OEMolBase) -> bool:
         """
