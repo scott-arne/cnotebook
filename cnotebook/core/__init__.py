@@ -27,11 +27,23 @@ from cnotebook.core.io import (
     load_molecule,
     load_molecules,
 )
-from cnotebook.core.render import oedu_to_image, oeimage_to_html, oemol_to_image
+from cnotebook.core.render import (
+    Depiction,
+    make_depiction,
+    oedu_to_image,
+    oeimage_to_html,
+    oemol_to_image,
+    prepare_depiction_copy,
+    render_design_unit,
+    render_display,
+    render_molecule,
+    save_image,
+)
 
 __all__ = [
     "AlertGroup",
     "CNotebookContext",
+    "Depiction",
     "RenderContext",
     "MapData",
     "MoleculeData",
@@ -45,11 +57,17 @@ __all__ = [
     "load_design_unit",
     "load_molecule",
     "load_molecules",
+    "make_depiction",
     "oedu_to_image",
     "oeimage_to_html",
     "oemol_to_image",
+    "prepare_depiction_copy",
+    "render_design_unit",
+    "render_display",
+    "render_molecule",
     "render_path",
     "render_summary",
+    "save_image",
     "summary_image",
     "viewer3d",
     "vocabulary",

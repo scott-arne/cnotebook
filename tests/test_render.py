@@ -1060,3 +1060,52 @@ def test_auto_scaled_svg_respects_max_dimensions():
     assert width == 300, f"Width should be clamped to 300, got {width}"
     # Height should be scaled proportionally from 600 -> (600 * 300/800) = 225
     assert height <= 250, f"Height should not exceed max_height, got {height}"
+
+
+# Task 5: Public headless rendering API
+
+from pathlib import Path
+
+from cnotebook.core.render import make_depiction, render_display, render_molecule, save_image
+
+
+def _phenol():
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    return mol
+
+
+def test_render_molecule_png_and_svg_bytes():
+    png = render_molecule(_phenol())
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    svg = render_molecule(_phenol(), format="svg")
+    assert b"<svg" in svg
+
+
+def test_render_molecule_options_do_not_touch_global_context():
+    from cnotebook.core.context import cnotebook_context
+
+    before = cnotebook_context.get().width
+    render_molecule(_phenol(), width=123, height=99)
+    assert cnotebook_context.get().width == before
+
+
+def test_render_molecule_rejects_bad_format_and_option():
+    with pytest.raises(ValueError, match="format"):
+        render_molecule(_phenol(), format="gif")
+    with pytest.raises(TypeError, match="no_such"):
+        render_molecule(_phenol(), no_such=1)
+
+
+def test_render_display_bytes():
+    dep = make_depiction(_phenol(), ctx=CNotebookContext())
+    assert render_display(dep.display, format="svg").startswith(b"<?xml") or b"<svg" in render_display(dep.display, format="svg")
+
+
+def test_save_image_infers_format_from_suffix(tmp_path: Path):
+    out = save_image(_phenol(), tmp_path / "phenol.svg")
+    assert out.exists() and b"<svg" in out.read_bytes()
+    out_png = save_image(_phenol(), tmp_path / "phenol.png")
+    assert out_png.read_bytes()[:4] == b"\x89PNG"
+    with pytest.raises(ValueError, match="format"):
+        save_image(_phenol(), tmp_path / "phenol.bmp")

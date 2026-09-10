@@ -1,13 +1,16 @@
 import base64
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from openeye import oechem, oedepict
 
-from cnotebook.core.context import CNotebookContext, pass_cnotebook_context
+from cnotebook.core.context import CNotebookContext, cnotebook_context, pass_cnotebook_context
+from cnotebook.core.vocabulary import IMAGE_FORMATS
 
 log = logging.getLogger("cnotebook")
-
 
 @dataclass
 class Depiction:
@@ -540,3 +543,105 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext, logical_w
         explicit_height=explicit_height
     )
 
+
+
+def _check_format(fmt: str) -> None:
+    if fmt not in IMAGE_FORMATS:
+        raise ValueError(f"format must be one of {IMAGE_FORMATS} (got {fmt!r})")
+
+
+def _options_context(ctx: CNotebookContext | None, fmt: str, options: dict[str, Any]) -> CNotebookContext:
+    """Copy *ctx* (or the global context), apply *options* and *fmt*."""
+    resolved = (ctx if ctx is not None else cnotebook_context.get()).copy()
+    for name, value in options.items():
+        if not isinstance(getattr(CNotebookContext, name, None), property):
+            raise TypeError(f"Unknown render option {name!r}")
+        setattr(resolved, name, value)
+    resolved.image_format = fmt
+    return resolved
+
+
+def render_molecule(
+    mol: oechem.OEMolBase, *, format: str = "png", ctx: CNotebookContext | None = None, **options: Any
+) -> bytes:
+    """Render a molecule to image bytes without touching the notebook display machinery.
+
+    :param mol: Molecule (not modified).
+    :param format: ``"png"`` or ``"svg"``.
+    :param ctx: Base render context; the global context when ``None``.
+    :param options: Context attributes applied on a copy of the base context.
+    :returns: Encoded image bytes.
+    :raises ValueError: If *format* is not supported.
+    :raises TypeError: If an option name is not a context attribute.
+    """
+    _check_format(format)
+    resolved = _options_context(ctx, format, options)
+    if mol.IsValid() and (
+        resolved.max_heavy_atoms is None
+        or oechem.OECount(mol, oechem.OEIsHeavy()) <= resolved.max_heavy_atoms
+    ):
+        image = make_depiction(mol, ctx=resolved).render_image(resolved)
+    else:
+        image = oemol_to_image(mol, ctx=resolved)
+    return bytes(oedepict.OEWriteImageToString(format, image))
+
+
+def render_display(
+    disp: oedepict.OE2DMolDisplay, *, format: str = "png", ctx: CNotebookContext | None = None
+) -> bytes:
+    """Render an existing display object to image bytes.
+
+    :param disp: Display to render.
+    :param format: ``"png"`` or ``"svg"``.
+    :param ctx: Render context used for oversampling; the global context when ``None``.
+    :returns: Encoded image bytes.
+    """
+    _check_format(format)
+    resolved = _options_context(ctx, format, {})
+    return bytes(oedepict.OEWriteImageToString(format, _render_display_image(disp, resolved)))
+
+
+def render_design_unit(
+    du: oechem.OEDesignUnit, *, format: str = "png", ctx: CNotebookContext | None = None, **options: Any
+) -> bytes:
+    """Render a design unit's ligand (or the apo placeholder) to image bytes.
+
+    :param du: Design unit.
+    :param format: ``"png"`` or ``"svg"``.
+    :param ctx: Base render context.
+    :param options: Context attributes applied on a copy.
+    :returns: Encoded image bytes.
+    """
+    _check_format(format)
+    resolved = _options_context(ctx, format, options)
+    return bytes(oedepict.OEWriteImageToString(format, oedu_to_image(du, ctx=resolved)))
+
+
+def save_image(
+    obj: Any, path: str | os.PathLike[str], *, format: str | None = None,
+    ctx: CNotebookContext | None = None, **options: Any,
+) -> Path:
+    """Write a molecule, display or design unit image to *path*.
+
+    :param obj: ``OEMolBase``, ``OE2DMolDisplay`` or ``OEDesignUnit``.
+    :param path: Destination; the suffix selects the format when *format* is ``None``.
+    :param format: Explicit image format.
+    :param ctx: Base render context.
+    :param options: Context attributes applied on a copy for molecules and design units; a prepared ``OE2DMolDisplay`` carries its own settings and ignores them.
+    :returns: The written path.
+    :raises ValueError: If the format cannot be determined or is unsupported.
+    :raises TypeError: If *obj* is not a renderable type.
+    """
+    target = Path(path)
+    fmt = format or target.suffix.lstrip(".").lower()
+    _check_format(fmt)
+    if isinstance(obj, oedepict.OE2DMolDisplay):
+        data = render_display(obj, format=fmt, ctx=ctx)
+    elif isinstance(obj, oechem.OEDesignUnit):
+        data = render_design_unit(obj, format=fmt, ctx=ctx, **options)
+    elif isinstance(obj, oechem.OEMolBase):
+        data = render_molecule(obj, format=fmt, ctx=ctx, **options)
+    else:
+        raise TypeError(f"Cannot render object of type {type(obj).__name__}")
+    target.write_bytes(data)
+    return target
