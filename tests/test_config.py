@@ -144,6 +144,7 @@ def test_readonly_render_property_warns_and_imports(tmp_path, monkeypatch):
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0
     assert "OK" in result.stdout
+    assert "svg_data" in result.stderr and ("unknown" in result.stderr.lower() or "ignored" in result.stderr.lower())
 
 
 def test_wrong_type_render_option_warns_and_imports(tmp_path, monkeypatch):
