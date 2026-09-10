@@ -138,7 +138,7 @@ def _compute_molecule_column_width(mols, ctx) -> int:
               and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
             candidate = int(ctx.min_width)
         else:
-            disp = oemol_to_disp(mol, ctx=ctx)
+            disp = oemol_to_disp(mol, ctx=ctx, apply_callbacks=False)
             candidate = int(disp.GetWidth())
 
         max_width = max(max_width, candidate)
@@ -175,7 +175,7 @@ def _compute_du_column_width(dus, ctx) -> int:
         if du is None or not isinstance(du, oechem.OEDesignUnit):
             continue
 
-        result = oedu_to_disp(du, ctx=ctx)
+        result = oedu_to_disp(du, ctx=ctx, apply_callbacks=False)
         if result is None:
             candidate = int(ctx.min_width)
         else:

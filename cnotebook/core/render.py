@@ -66,19 +66,21 @@ def prepare_depiction_copy(
     return work
 
 
-def make_depiction(mol: oechem.OEMolBase, *, ctx: CNotebookContext) -> Depiction:
+def make_depiction(mol: oechem.OEMolBase, *, ctx: CNotebookContext, apply_callbacks: bool = True) -> Depiction:
     """Prepare a copy of *mol* and build its display with *ctx*.
 
     :param mol: Source molecule.
     :param ctx: Render context.
+    :param apply_callbacks: Whether to apply context callbacks to the display. Set to ``False`` for sizing passes that measure without rendering.
     :returns: The depiction handle.
     """
     work = prepare_depiction_copy(mol)
     disp = ctx.create_molecule_display(work)
 
-    # Apply context callbacks to the display before rendering
-    for callback in ctx.callbacks:
-        callback(disp)
+    # Apply context callbacks to the display before rendering (unless this is a sizing pass)
+    if apply_callbacks:
+        for callback in ctx.callbacks:
+            callback(disp)
 
     return Depiction(work, disp)
 
@@ -306,7 +308,8 @@ def render_exceeds_max_heavy_atoms(
 def oemol_to_disp(
         mol: oechem.OEMolBase,
         *,
-        ctx: CNotebookContext
+        ctx: CNotebookContext,
+        apply_callbacks: bool = True
 ) -> oedepict.OE2DMolDisplay:
     """Convert a valid OpenEye molecule object to a display object for depiction.
 
@@ -315,9 +318,10 @@ def oemol_to_disp(
 
     :param ctx: Render context
     :param mol: Molecule to convert
+    :param apply_callbacks: Whether to apply context callbacks. Set to ``False`` for sizing passes.
     :return: Display object for depiction
     """
-    return make_depiction(mol, ctx=ctx).display
+    return make_depiction(mol, ctx=ctx, apply_callbacks=apply_callbacks).display
 
 
 def oemol_to_image(
@@ -401,11 +405,12 @@ def _draw_du_label(image: oedepict.OEImageBase, scale: float = 1.0) -> None:
     )
 
 
-def oedu_to_disp(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> Depiction | None:
+def oedu_to_disp(du: oechem.OEDesignUnit, *, ctx: CNotebookContext, apply_callbacks: bool = True) -> Depiction | None:
     """Depict the ligand of a design unit.
 
     :param du: Design unit.
     :param ctx: Render context.
+    :param apply_callbacks: Whether to apply context callbacks. Set to ``False`` for sizing passes.
     :returns: A :class:`Depiction` of the ligand, or ``None`` for an apo design unit or over-limit ligand.
     """
     lig = oechem.OEGraphMol()
@@ -416,13 +421,14 @@ def oedu_to_disp(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> Depiction
     if (lig.IsValid() and ctx.max_heavy_atoms is not None
             and oechem.OECount(lig, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
         return None
-    return make_depiction(lig, ctx=ctx)
+    return make_depiction(lig, ctx=ctx, apply_callbacks=apply_callbacks)
 
 
 def oedu_to_image(
         du: oechem.OEDesignUnit,
         *,
-        ctx: CNotebookContext
+        ctx: CNotebookContext,
+        dep: Depiction | None = None
 ) -> oedepict.OEImage:
     """Convert an OEDesignUnit to an OEImage.
 
@@ -433,6 +439,7 @@ def oedu_to_image(
 
     :param du: Design unit to render.
     :param ctx: Render context.
+    :param dep: Pre-built depiction to reuse (avoids duplicate callback invocations).
     :returns: Rendered image.
     """
     # Extract ligand to check for apo vs. over-limit
@@ -442,7 +449,9 @@ def oedu_to_image(
     is_over_limit = (not is_apo and lig.IsValid() and ctx.max_heavy_atoms is not None
                      and oechem.OECount(lig, oechem.OEIsHeavy()) > ctx.max_heavy_atoms)
 
-    dep = oedu_to_disp(du, ctx=ctx)
+    # Use provided depiction or create one
+    if dep is None:
+        dep = oedu_to_disp(du, ctx=ctx)
 
     if dep is not None:
         # Render with DPR oversampling
@@ -505,11 +514,12 @@ def oedu_to_html(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> str:
     """
     dep = oedu_to_disp(du, ctx=ctx)
     if dep is not None:
-        # Ligand case: use logical dimensions from display
-        return oeimage_to_html(oedu_to_image(du, ctx=ctx), ctx=ctx, logical_width=dep.display.GetWidth(), logical_height=dep.display.GetHeight())
+        # Ligand case: reuse the depiction to avoid duplicate callback invocations
+        image = oedu_to_image(du, ctx=ctx, dep=dep)
+        return oeimage_to_html(image, ctx=ctx, logical_width=dep.display.GetWidth(), logical_height=dep.display.GetHeight())
     else:
         # Apo case: placeholder (not oversampled)
-        return oeimage_to_html(oedu_to_image(du, ctx=ctx), ctx=ctx)
+        return oeimage_to_html(oedu_to_image(du, ctx=ctx, dep=dep), ctx=ctx)
 
 
 @pass_cnotebook_context
@@ -678,9 +688,12 @@ def save_image(
     temp_fd, temp_path = tempfile.mkstemp(dir=target_dir, suffix=".tmp")
     temp_file = Path(temp_path)
     try:
-        os.write(temp_fd, data)
-        os.close(temp_fd)
-        # Atomic replacement
+        # Write through a context-managed file object to ensure all bytes are written
+        with os.fdopen(temp_fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Atomic replacement (only after write block completed)
         os.replace(temp_path, target)
         return target
     except BaseException:

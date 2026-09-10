@@ -628,9 +628,13 @@ class TestOeduToHtml:
 
     @patch('cnotebook.core.render.oeimage_to_html')
     @patch('cnotebook.core.render.oedu_to_image')
-    def test_oedu_to_html_delegates(self, mock_to_image, mock_image_to_html):
+    @patch('cnotebook.core.render.oedu_to_disp')
+    def test_oedu_to_html_delegates(self, mock_to_disp, mock_to_image, mock_image_to_html):
         """Test that oedu_to_html delegates to oedu_to_image + oeimage_to_html"""
         mock_du = MagicMock(spec=oechem.OEDesignUnit)
+
+        # Mock oedu_to_disp to return None (apo case)
+        mock_to_disp.return_value = None
 
         mock_image = MagicMock()
         mock_to_image.return_value = mock_image
@@ -640,7 +644,10 @@ class TestOeduToHtml:
 
         result = oedu_to_html(mock_du, ctx=ctx)
 
-        mock_to_image.assert_called_once_with(mock_du, ctx=ctx)
+        # oedu_to_disp should be called first
+        mock_to_disp.assert_called_once_with(mock_du, ctx=ctx)
+        # oedu_to_image should be called with the depiction (None in this case)
+        mock_to_image.assert_called_once_with(mock_du, ctx=ctx, dep=None)
         mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx)
         assert result == '<img>design_unit</img>'
 
@@ -1347,3 +1354,212 @@ def test_public_api_imports_from_cnotebook_core():
     assert callable(render_display)
     assert callable(render_design_unit)
     assert callable(save_image)
+
+
+# Fix Round 2: Finding A - Short writes and fault injection tests
+
+def test_save_image_handles_write_failure_preserves_original(tmp_path: Path):
+    """Write failure should leave original destination untouched (Finding A)."""
+    import io
+    from unittest.mock import patch
+
+    dest = tmp_path / "existing.png"
+    original_content = b"ORIGINAL_CONTENT"
+    dest.write_bytes(original_content)
+
+    mol = _phenol()
+
+    # Mock os.fdopen to return a file object whose write raises
+    class FailingWriter(io.BytesIO):
+        def write(self, data):
+            raise OSError("Simulated write failure")
+
+    with patch('os.fdopen', return_value=FailingWriter()):
+        try:
+            save_image(mol, dest)
+            assert False, "Should have raised OSError"
+        except OSError:
+            pass
+
+    # Original file should be unchanged
+    assert dest.read_bytes() == original_content
+    # No temp files should remain
+    assert len(list(tmp_path.glob("*.tmp"))) == 0
+
+
+def test_save_image_handles_replace_failure_preserves_original(tmp_path: Path):
+    """Replace failure should leave original destination untouched (Finding A)."""
+    from unittest.mock import patch
+
+    dest = tmp_path / "existing.png"
+    original_content = b"ORIGINAL_CONTENT"
+    dest.write_bytes(original_content)
+
+    mol = _phenol()
+
+    # Mock os.replace to raise
+    def failing_replace(src, dst):
+        raise OSError("Simulated replace failure")
+
+    with patch('os.replace', side_effect=failing_replace):
+        try:
+            save_image(mol, dest)
+            assert False, "Should have raised OSError"
+        except OSError:
+            pass
+
+    # Original file should be unchanged
+    assert dest.read_bytes() == original_content
+    # No temp files should remain
+    assert len(list(tmp_path.glob("*.tmp"))) == 0
+
+
+def test_save_image_writes_complete_file(tmp_path: Path):
+    """Successful save should write complete file matching rendered bytes (Finding A)."""
+    mol = _phenol()
+    dest = tmp_path / "test.png"
+
+    # Render directly to get expected bytes
+    expected_bytes = render_molecule(mol, format="png")
+
+    # Save to file
+    save_image(mol, dest)
+
+    # File should exist and match exactly
+    assert dest.exists()
+    actual_bytes = dest.read_bytes()
+    assert len(actual_bytes) == len(expected_bytes)
+    assert actual_bytes == expected_bytes
+
+
+# Fix Round 2: Finding B - Callback invocation count tests
+
+def test_render_molecule_invokes_callback_exactly_once():
+    """render_molecule should invoke callbacks exactly once (Finding B)."""
+    invocations = []
+
+    def counting_callback(disp):
+        invocations.append(disp)
+
+    ctx = CNotebookContext(callbacks=[counting_callback])
+    render_molecule(_phenol(), ctx=ctx)
+
+    assert len(invocations) == 1, f"Expected 1 callback invocation, got {len(invocations)}"
+
+
+def test_oemol_to_html_invokes_callback_exactly_once():
+    """oemol_to_html should invoke callbacks exactly once (Finding B)."""
+    from cnotebook.core.render import oemol_to_html
+
+    invocations = []
+
+    def counting_callback(disp):
+        invocations.append(disp)
+
+    ctx = CNotebookContext(callbacks=[counting_callback])
+    oemol_to_html(_phenol(), ctx=ctx)
+
+    assert len(invocations) == 1, f"Expected 1 callback invocation, got {len(invocations)}"
+
+
+def test_oedu_to_html_invokes_callback_exactly_once():
+    """oedu_to_html should invoke callbacks exactly once for ligand DU (Finding B)."""
+    from cnotebook.core.render import oedu_to_html
+
+    du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
+    if not du_path.exists():
+        pytest.skip("Design unit fixture not available")
+
+    du = oechem.OEDesignUnit()
+    assert oechem.OEReadDesignUnit(str(du_path), du)
+
+    invocations = []
+
+    def counting_callback(disp):
+        invocations.append(disp)
+
+    ctx = CNotebookContext(callbacks=[counting_callback])
+    oedu_to_html(du, ctx=ctx)
+
+    assert len(invocations) == 1, f"Expected 1 callback invocation, got {len(invocations)}"
+
+
+def test_pandas_render_dataframe_invokes_callbacks_once_per_molecule():
+    """Pandas rendering should invoke callbacks once per molecule (Finding B)."""
+    pytest.importorskip("pandas")
+    oepd = pytest.importorskip("oepandas")
+    import pandas
+
+    from cnotebook.pandas_ext import render_dataframe
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    # Create proper MoleculeArray column
+    arr = oepd.MoleculeArray([mol1, mol2])
+    df = pandas.DataFrame({"mol": arr})
+
+    invocations = []
+
+    def counting_callback(disp):
+        invocations.append(disp)
+
+    ctx = CNotebookContext(callbacks=[counting_callback])
+    render_dataframe(df, ctx=ctx)
+
+    assert len(invocations) == 2, f"Expected 2 callback invocations (one per molecule), got {len(invocations)}"
+
+
+def test_polars_render_dataframe_invokes_callbacks_once_per_molecule():
+    """Polars rendering should invoke callbacks once per molecule (Finding B)."""
+    polars = pytest.importorskip("polars")
+    oeplr = pytest.importorskip("oepolars")
+    from cnotebook.polars_ext import render_polars_dataframe
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    # Create proper Polars series with molecule dtype
+    mol_series = polars.Series("mol", [mol1, mol2], dtype=oeplr.MoleculeType())
+    df = polars.DataFrame({"mol": mol_series})
+
+    invocations = []
+
+    def counting_callback(disp):
+        invocations.append(disp)
+
+    ctx = CNotebookContext(callbacks=[counting_callback])
+    render_polars_dataframe(df, ctx=ctx)
+
+    assert len(invocations) == 2, f"Expected 2 callback invocations (one per molecule), got {len(invocations)}"
+
+
+def test_marimo_table_formatter_invokes_callbacks_once_per_molecule():
+    """Marimo table formatting should invoke callbacks once per molecule (Finding B)."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("oepandas")
+    pytest.importorskip("marimo")
+    from cnotebook.marimo_ext import _create_molecule_formatter
+
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    invocations = []
+
+    def counting_callback(disp):
+        invocations.append(disp)
+
+    ctx = CNotebookContext(callbacks=[counting_callback])
+    formatter = _create_molecule_formatter(ctx)
+
+    # Format both molecules
+    formatter(mol1)
+    formatter(mol2)
+
+    assert len(invocations) == 2, f"Expected 2 callback invocations (one per molecule), got {len(invocations)}"
