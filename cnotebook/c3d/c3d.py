@@ -17,17 +17,9 @@ from cnotebook.core.convert import (
 )
 from cnotebook.core.vocabulary import (
     ISOSURFACE_REPRESENTATIONS as _ISOSURFACE_REPRESENTATION_TUPLE,
-)
-from cnotebook.core.vocabulary import (
     STYLE_PRESETS as _STYLE_PRESETS,
-)
-from cnotebook.core.vocabulary import (
     SURFACE_MODES as _SURFACE_MODE_TUPLE,
-)
-from cnotebook.core.vocabulary import (
     SURFACE_TYPES as _SURFACE_TYPE_TUPLE,
-)
-from cnotebook.core.vocabulary import (
     VIEW_PRESETS as _VIEW_PRESET_TUPLE,
 )
 

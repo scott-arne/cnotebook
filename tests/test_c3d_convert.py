@@ -1,6 +1,7 @@
 """Tests for the C3D molecule conversion module."""
 
 import os
+import warnings
 
 import pytest
 from openeye import oechem
@@ -10,6 +11,7 @@ from cnotebook.c3d.convert import (
     convert_design_unit,
     convert_molecule,
 )
+from cnotebook.core.errors import CNotebookWarning
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -207,13 +209,6 @@ class TestEnsure3DCoords:
 
         result = _ensure_3d_coords(mol_3d)
         assert result is mol_3d
-
-
-import warnings
-
-from openeye import oechem
-
-from cnotebook.core.errors import CNotebookWarning
 
 
 def _two_d_molecule():
