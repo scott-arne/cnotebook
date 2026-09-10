@@ -192,9 +192,8 @@ def configure(
     :raises KeyError: If a key is unknown.
     """
     # Validate everything first before applying any changes (atomicity)
-    if display_mode is not None:
-        if display_mode not in _DISPLAY_MODES:
-            raise ValueError(f"display_mode must be one of {_DISPLAY_MODES} (got {display_mode!r})")
+    if display_mode is not None and display_mode not in _DISPLAY_MODES:
+        raise ValueError(f"display_mode must be one of {_DISPLAY_MODES} (got {display_mode!r})")
 
     # Validate c3d and molgrid options
     validated_updates: dict[str, dict[str, Any]] = {}

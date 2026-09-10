@@ -734,7 +734,7 @@ class TestDisplayC3DMolGridStatic:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         c3d = C3D()
-        c3d.add_molecule(mol)
+        c3d.add_molecule(mol, generate_3d=False)
         with patch("cnotebook._display_html", side_effect=lambda html, env: html):
             result = cnotebook.display(c3d)
         assert result is not None
@@ -748,7 +748,7 @@ class TestDisplayC3DMolGridStatic:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         c3d = C3D()
-        c3d.add_molecule(mol)
+        c3d.add_molecule(mol, generate_3d=False)
         with patch("cnotebook._display_html", side_effect=lambda html, env: html):
             result = cnotebook.display(c3d, static=None)
         assert result is not None
@@ -762,7 +762,7 @@ class TestDisplayC3DMolGridStatic:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         c3d = C3D()
-        c3d.add_molecule(mol)
+        c3d.add_molecule(mol, generate_3d=False)
         with pytest.raises(TypeError, match="C3D.display.*does not support the static option"):
             cnotebook.display(c3d, static=True)
 
@@ -775,7 +775,7 @@ class TestDisplayC3DMolGridStatic:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         c3d = C3D()
-        c3d.add_molecule(mol)
+        c3d.add_molecule(mol, generate_3d=False)
         with pytest.raises(TypeError, match="C3D.display.*does not support the static option"):
             cnotebook.display(c3d, static=False)
 
@@ -784,8 +784,9 @@ class TestDisplayC3DMolGridStatic:
         env = get_env()
         if not env.molgrid_available:
             pytest.skip("MolGrid not available")
-        from cnotebook import molgrid
         from openeye import oechem
+
+        from cnotebook import molgrid
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         mg = molgrid([mol])
@@ -798,8 +799,9 @@ class TestDisplayC3DMolGridStatic:
         env = get_env()
         if not env.molgrid_available:
             pytest.skip("MolGrid not available")
-        from cnotebook import molgrid
         from openeye import oechem
+
+        from cnotebook import molgrid
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         mg = molgrid([mol])
@@ -812,8 +814,9 @@ class TestDisplayC3DMolGridStatic:
         env = get_env()
         if not env.molgrid_available:
             pytest.skip("MolGrid not available")
-        from cnotebook import molgrid
         from openeye import oechem
+
+        from cnotebook import molgrid
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         mg = molgrid([mol])
@@ -825,8 +828,9 @@ class TestDisplayC3DMolGridStatic:
         env = get_env()
         if not env.molgrid_available:
             pytest.skip("MolGrid not available")
-        from cnotebook import molgrid
         from openeye import oechem
+
+        from cnotebook import molgrid
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         mg = molgrid([mol])
@@ -844,10 +848,10 @@ class TestDisplayC3DMolGridStatic:
         
         stub = StubWidget()
         with patch("cnotebook._display_html", side_effect=lambda html, env: html):
-            result = cnotebook.display(stub, static=True)
+            cnotebook.display(stub, static=True)
         assert stub.static_value is True
         
         stub2 = StubWidget()
         with patch("cnotebook._display_html", side_effect=lambda html, env: html):
-            result = cnotebook.display(stub2, static=False)
+            cnotebook.display(stub2, static=False)
         assert stub2.static_value is False
