@@ -92,30 +92,6 @@ def _as_depictable_molecule_array(arr: Any) -> Any:
     return arr
 
 
-def _collect_render_options(**options: Any) -> dict[str, Any]:
-    """
-    Collect render options that were explicitly provided by the caller.
-
-    :param options: Render option names and values.
-    :returns: Mapping containing only caller-provided options.
-    """
-    return {
-        name: value for name, value in options.items()
-        if value is not _RENDER_OPTION_UNSET
-    }
-
-
-def _apply_render_options(ctx: CNotebookContext, options: dict[str, Any]) -> None:
-    """
-    Apply render options to a CNotebook context.
-
-    :param ctx: Context to modify.
-    :param options: Render options to apply.
-    """
-    for name, value in options.items():
-        setattr(ctx, name, value)
-
-
 def classify_dtype(dtype: Any) -> ColumnKind:
     """
     Map a Pandas dtype to the kind of cell rendering it needs.

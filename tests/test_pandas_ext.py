@@ -1136,9 +1136,11 @@ class TestSeriesAlignDepictions:
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
 
-        with patch('cnotebook.core.columnops.create_aligner', side_effect=RuntimeError("boom")):
-            with pytest.raises(RuntimeError, match="boom"):
-                series.chem.align_depictions(ref=mol)
+        with (
+            patch('cnotebook.core.columnops.create_aligner', side_effect=RuntimeError("boom")),
+            pytest.raises(RuntimeError, match="boom")
+        ):
+            series.chem.align_depictions(ref=mol)
 
 
 class TestSeriesRecalculateDepictions:
@@ -1638,7 +1640,8 @@ class TestDataFrameFingerprintSimilarity:
             "mol": pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype()),
         })
 
-        result = df.chem.fingerprint_similarity("mol")
+        with pytest.warns(CNotebookWarning, match="Fingerprint overlap was empty"):
+            result = df.chem.fingerprint_similarity("mol")
         assert len(result) == 2
         # First molecule is the reference, so its tanimoto should be 1.0
         assert result["fingerprint_tanimoto"].iloc[0] == pytest.approx(1.0)
