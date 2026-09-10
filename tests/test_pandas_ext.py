@@ -1735,3 +1735,82 @@ class TestDataFrameFingerprintSimilarity:
         assert len(result) == 2
         # Self-similarity should be 1.0
         assert result["fingerprint_tanimoto"].iloc[0] == pytest.approx(1.0)
+
+
+
+def test_highlight_using_column_overlay_produces_different_svg():
+    """Test that overlay highlighting actually modifies the rendered output."""
+    import pandas as pd
+    from openeye import oechem, oedepict
+    from cnotebook.core.render import oedisp_to_html
+    from cnotebook.core.context import CNotebookContext
+    
+    # Create a simple molecule
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")  # phenol
+    oedepict.OEPrepareDepiction(mol)
+    
+    df = pd.DataFrame({
+        "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        "pattern": ["c1ccccc1"]  # benzene ring
+    })
+    
+    # Create highlighted version
+    df_highlighted = df.chem.highlight_using_column(
+        "mol", "pattern",
+        highlighted_column="highlighted",
+        style="overlay_default"
+    )
+    
+    # Render both to SVG
+    ctx = CNotebookContext(image_format="svg")
+    from cnotebook.core.render import oemol_to_disp
+    unhighlighted_disp = oemol_to_disp(mol, ctx=ctx)
+    unhighlighted_svg = oedisp_to_html(unhighlighted_disp, ctx=ctx)
+    
+    highlighted_disp = df_highlighted["highlighted"].iloc[0]
+    highlighted_svg = oedisp_to_html(highlighted_disp, ctx=ctx)
+    
+    # The SVGs should be different
+    assert unhighlighted_svg != highlighted_svg
+    assert "svg" in unhighlighted_svg.lower()
+    assert "svg" in highlighted_svg.lower()
+
+
+def test_highlight_using_column_traditional_produces_different_svg():
+    """Test that traditional highlighting actually modifies the rendered output."""
+    import pandas as pd
+    from openeye import oechem, oedepict
+    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
+    from cnotebook.core.context import CNotebookContext
+    
+    # Create a simple molecule
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")  # phenol
+    oedepict.OEPrepareDepiction(mol)
+    
+    df = pd.DataFrame({
+        "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        "pattern": ["c1ccccc1"]  # benzene ring
+    })
+    
+    # Create highlighted version
+    df_highlighted = df.chem.highlight_using_column(
+        "mol", "pattern",
+        highlighted_column="highlighted",
+        color=oechem.OEColor(oechem.OEPink),
+        style=oedepict.OEHighlightStyle_BallAndStick
+    )
+    
+    # Render both to SVG
+    ctx = CNotebookContext(image_format="svg")
+    unhighlighted_disp = oemol_to_disp(mol, ctx=ctx)
+    unhighlighted_svg = oedisp_to_html(unhighlighted_disp, ctx=ctx)
+    
+    highlighted_disp = df_highlighted["highlighted"].iloc[0]
+    highlighted_svg = oedisp_to_html(highlighted_disp, ctx=ctx)
+    
+    # The SVGs should be different
+    assert unhighlighted_svg != highlighted_svg
+    assert "svg" in unhighlighted_svg.lower()
+    assert "svg" in highlighted_svg.lower()

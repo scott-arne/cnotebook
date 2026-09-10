@@ -1060,7 +1060,7 @@ def _dataframe_highlight_using_column(
             if use_overlay:
                 highlight = oedepict.OEHighlightOverlayByBallAndStick(color)
                 for ss in substructures:
-                    oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(mol, True))
+                    oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(disp.GetMolecule(), True))
 
             else:
                 # Traditional highlighting
@@ -1073,7 +1073,7 @@ def _dataframe_highlight_using_column(
                         highlight_color = c
                         break
                 for ss in substructures:
-                    for match in ss.Match(mol, True):
+                    for match in ss.Match(disp.GetMolecule(), True):
                         oedepict.OEAddHighlighting(disp, highlight_color, style, match)
 
             displays.append(disp)
