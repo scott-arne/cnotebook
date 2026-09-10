@@ -488,7 +488,7 @@ def _append_skipped_row(result: SimilarityResult) -> None:
 def _overlap_glyph(maxvalue: int, tag: int) -> ColorBondByOverlapScore:
     """The bond glyph running from pink (no overlap) to dark green (*maxvalue* overlaps).
 
-    :param maxvalue: Highest per-bond overlap count in the pair.
+    :param maxvalue: Highest per-bond overlap count in the pair; always at least one.
     :param tag: OEChem data tag holding the per-bond overlap score.
     :returns: The glyph to add to both displays of the pair.
     """
@@ -508,8 +508,9 @@ def fingerprint_similarity(
     """Tanimoto and overlap-coloured depictions of each molecule against *ref*.
 
     Overlap colouring needs a fingerprint whose bits can be traced back to bonds. Lingo
-    fingerprints cannot, and rows whose overlap is empty have nothing to colour: both still
-    get their Tanimoto and a plain depiction, and both are reported once as a warning.
+    fingerprints cannot, an atom-only configuration (``max_distance=0``) scores no bond, and
+    rows whose overlap is empty have nothing to colour: each of those rows still gets its
+    Tanimoto and a plain depiction, and each case is reported once as a warning.
 
     :param mols: Molecules; ``None``/invalid rows produce ``None`` entries.
     :param ref: Reference molecule; the first valid molecule when ``None``.
@@ -551,6 +552,7 @@ def fingerprint_similarity(
     tag = _fingerprint_overlap_tag
     result = SimilarityResult([], [], [])
     without_overlap = 0
+    without_bond_scores = 0
     for mol in mols:
         if not isinstance(mol, oechem.OEMolBase) or not mol.IsValid():
             _append_skipped_row(result)
@@ -579,18 +581,22 @@ def fingerprint_similarity(
                 for bond in match.GetTargetBonds():
                     target_bonds[bond.GetIdx()] += 1
 
-            # An empty overlap has nothing to colour and nothing to align to; asking OpenEye
-            # anyway only produces a toolkit diagnostic, so those rows are counted instead
-            if overlapping == 0:
-                without_overlap += 1
+            # An all-zero score would draw every bond as "no overlap", which is a false
+            # picture both for a pair that has no overlap at all and for a configuration whose
+            # bits only reach atoms. Asking for the aligned depiction of an empty overlap also
+            # produces a toolkit diagnostic, so those rows are counted and reported instead.
+            maxvalue = max(max(target_bonds, default=0), max(ref_bonds, default=0))
+            if maxvalue == 0:
+                if overlapping == 0:
+                    without_overlap += 1
+                else:
+                    without_bond_scores += 1
             else:
                 for bond in target_mol.GetBonds():
                     bond.SetData(tag, target_bonds[bond.GetIdx()])
                 for bond in ref_mol.GetBonds():
                     bond.SetData(tag, ref_bonds[bond.GetIdx()])
-                glyph = _overlap_glyph(
-                    max(0, max(target_bonds, default=0), max(ref_bonds, default=0)), tag
-                )
+                glyph = _overlap_glyph(maxvalue, tag)
 
         oedepict.OEPrepareDepiction(ref_mol, False)
         oedepict.OEPrepareDepiction(target_mol, False)
@@ -612,5 +618,11 @@ def fingerprint_similarity(
         warn(
             f"Fingerprint overlap was empty for {without_overlap} of {len(mols)} rows, so those "
             "depictions are neither aligned nor overlap-coloured"
+        )
+    if without_bond_scores:
+        warn(
+            f"Fingerprint type {fptype!r} produced no per-bond attribution for "
+            f"{without_bond_scores} of {len(mols)} rows, so those depictions are neither aligned "
+            "nor overlap-coloured"
         )
     return result

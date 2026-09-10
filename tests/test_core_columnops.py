@@ -436,3 +436,30 @@ def test_fingerprint_similarity_glyph_colours_bonds_by_overlap():
     unglyphed = _unglyphed_html(depiction, ctx)
     assert _stroke_colors(glyphed) > _stroke_colors(unglyphed)
     assert len(glyphed) > len(unglyphed)
+
+
+def test_fingerprint_similarity_does_not_glyph_atom_only_fingerprints():
+    ctx = CNotebookContext(image_format="svg")
+    mol, ref = _mol("c1ccccc1CCO"), _mol("c1ccccc1CCO")
+    with (
+        _captured_toolkit_output() as toolkit,
+        pytest.warns(
+            CNotebookWarning, match="produced no per-bond attribution for 1 of 1 rows"
+        ) as record,
+    ):
+        atom_only = columnops.fingerprint_similarity(
+            [mol], ref, fptype="path", max_distance=0, ctx=ctx
+        )
+    assert len(record) == 1 and toolkit.str() == b""
+    assert atom_only.tanimotos[0] == pytest.approx(1.0)
+    plain = atom_only.target[0]
+    assert _stroke_colors(plain.to_html(ctx)) == _stroke_colors(_unglyphed_html(plain, ctx))
+
+    # The same identical pair still gets its colouring once the paths are long enough to hit bonds
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        bonded = columnops.fingerprint_similarity(
+            [mol], ref, fptype="path", max_distance=4, ctx=ctx
+        )
+    glyphed = bonded.target[0]
+    assert _stroke_colors(glyphed.to_html(ctx)) > _stroke_colors(_unglyphed_html(glyphed, ctx))
