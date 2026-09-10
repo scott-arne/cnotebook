@@ -203,22 +203,7 @@ def _create_molecule_formatter(ctx):
         if not isinstance(mol, oechem.OEMolBase):
             return str(mol)
 
-        # Check heavy atom count for valid molecules
-        if (mol.IsValid()
-                and ctx.max_heavy_atoms is not None
-                and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
-            return _CtxBoundImage(oemol_to_image(mol, ctx=ctx), ctx)
-
-        # Valid molecules with callbacks need the intermediate display step
-        if mol.IsValid() and mol.NumAtoms() > 0 and ctx.callbacks:
-            disp = oemol_to_disp(mol, ctx=ctx)
-            for callback in ctx.callbacks:
-                callback(disp)
-            image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
-            oedepict.OERenderMolecule(image, disp)
-            return _CtxBoundImage(image, ctx)
-
-        # All other cases (valid without callbacks, empty, invalid)
+        # All cases (callbacks applied by make_depiction in the render path)
         return _CtxBoundImage(oemol_to_image(mol, ctx=ctx), ctx)
 
     return formatter

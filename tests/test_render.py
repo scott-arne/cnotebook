@@ -1029,6 +1029,7 @@ def test_svg_unaffected_by_device_pixel_ratio():
 def test_auto_scaled_svg_respects_max_dimensions():
     """Auto-scaled SVG should be clamped by max_width and max_height (Finding C)."""
     import re
+
     from cnotebook.core.render import oemol_to_html
     
     mol = oechem.OEGraphMol()
@@ -1066,7 +1067,13 @@ def test_auto_scaled_svg_respects_max_dimensions():
 
 from pathlib import Path
 
-from cnotebook.core.render import make_depiction, render_display, render_molecule, save_image
+from cnotebook.core.render import (
+    make_depiction,
+    render_design_unit,
+    render_display,
+    render_molecule,
+    save_image,
+)
 
 
 def _phenol():
@@ -1109,3 +1116,247 @@ def test_save_image_infers_format_from_suffix(tmp_path: Path):
     assert out_png.read_bytes()[:4] == b"\x89PNG"
     with pytest.raises(ValueError, match="format"):
         save_image(_phenol(), tmp_path / "phenol.bmp")
+
+
+# Fix Round 1: Additional tests for review findings
+
+
+# Fix Round 1: Additional tests for review findings
+
+def test_render_molecule_applies_callbacks():
+    """Callbacks from the context should be applied to the display before rendering."""
+    invoked = []
+    
+    def marker_callback(disp):
+        invoked.append(disp)
+    
+    ctx = CNotebookContext(callbacks=[marker_callback])
+    render_molecule(_phenol(), format="svg", ctx=ctx)
+    
+    assert len(invoked) == 1, "Callback should have been invoked exactly once"
+    assert isinstance(invoked[0], oedepict.OE2DMolDisplay), "Callback should receive a display"
+
+
+def test_render_design_unit_applies_callbacks_to_ligand():
+    """Callbacks should be applied to design unit ligand displays."""
+    pytest.importorskip("oespruce")
+    du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
+    if not du_path.exists():
+        pytest.skip("Design unit fixture not available")
+    
+    from openeye import oespruce
+    du = oespruce.OEDesignUnit()
+    ifs = oechem.oemolistream(str(du_path))
+    oespruce.OEReadDesignUnit(ifs, du)
+    
+    invoked = []
+    
+    def marker_callback(disp):
+        invoked.append(disp)
+    
+    ctx = CNotebookContext(callbacks=[marker_callback])
+    render_design_unit(du, format="svg", ctx=ctx)
+    
+    assert len(invoked) == 1, "Callback should have been invoked for ligand"
+    assert isinstance(invoked[0], oedepict.OE2DMolDisplay), "Callback should receive a display"
+
+
+def test_render_design_unit_respects_heavy_atom_limit():
+    """Design units with over-limit ligands should yield placeholder."""
+    pytest.importorskip("oespruce")
+    du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
+    if not du_path.exists():
+        pytest.skip("Design unit fixture not available")
+    
+    from openeye import oespruce
+    du = oespruce.OEDesignUnit()
+    ifs = oechem.oemolistream(str(du_path))
+    oespruce.OEReadDesignUnit(ifs, du)
+    
+    # Set a very low limit
+    ctx = CNotebookContext(max_heavy_atoms=1)
+    result = render_design_unit(du, format="svg", ctx=ctx)
+    
+    # Should get placeholder with "exceeds" message
+    assert b"exceeds" in result.lower() or b"too large" in result.lower() or b"heavy" in result.lower()
+
+
+def test_render_design_unit_apo():
+    """Apo design units (no ligand) should render placeholder."""
+    # Create a minimal apo design unit
+    pytest.importorskip("oespruce")
+    from openeye import oespruce
+    
+    du = oespruce.OEDesignUnit()
+    # Empty design unit has no ligand
+    
+    result = render_design_unit(du, format="svg")
+    assert b"<svg" in result or b"Apo" in result
+
+
+def test_save_image_design_unit_ligand(tmp_path: Path):
+    """save_image should handle design units with ligands."""
+    pytest.importorskip("oespruce")
+    du_path = Path("examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu")
+    if not du_path.exists():
+        pytest.skip("Design unit fixture not available")
+    
+    from openeye import oespruce
+    du = oespruce.OEDesignUnit()
+    ifs = oechem.oemolistream(str(du_path))
+    oespruce.OEReadDesignUnit(ifs, du)
+    
+    out = save_image(du, tmp_path / "du_ligand.png")
+    assert out.exists() and out.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_save_image_design_unit_apo(tmp_path: Path):
+    """save_image should handle apo design units."""
+    pytest.importorskip("oespruce")
+    from openeye import oespruce
+    
+    du = oespruce.OEDesignUnit()
+    out = save_image(du, tmp_path / "du_apo.svg")
+    assert out.exists() and b"<svg" in out.read_bytes()
+
+
+def test_render_functions_png_and_svg():
+    """All render functions should support both PNG and SVG."""
+    mol = _phenol()
+    
+    # render_molecule
+    png = render_molecule(mol, format="png")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    svg = render_molecule(mol, format="svg")
+    assert b"<svg" in svg
+    
+    # render_display
+    dep = make_depiction(mol, ctx=CNotebookContext())
+    png_disp = render_display(dep.display, format="png")
+    assert png_disp[:8] == b"\x89PNG\r\n\x1a\n"
+    svg_disp = render_display(dep.display, format="svg")
+    assert b"<svg" in svg_disp
+
+
+def test_render_molecule_option_changes_output():
+    """Render options like width should change the output."""
+    mol = _phenol()
+    
+    default = render_molecule(mol, format="png")
+    custom_width = render_molecule(mol, format="png", width=100, height=100)
+    
+    # Different sizes should produce different bytes
+    assert len(default) != len(custom_width)
+
+
+def test_save_image_all_dispatch_types(tmp_path: Path):
+    """save_image should dispatch correctly for molecule, display, and design unit."""
+    mol = _phenol()
+    
+    # Molecule dispatch
+    mol_path = save_image(mol, tmp_path / "mol.png")
+    assert mol_path.exists() and mol_path.read_bytes()[:4] == b"\x89PNG"
+    
+    # Display dispatch
+    dep = make_depiction(mol, ctx=CNotebookContext())
+    disp_path = save_image(dep.display, tmp_path / "disp.svg")
+    assert disp_path.exists() and b"<svg" in disp_path.read_bytes()
+    
+    # Design unit tested in other tests
+
+
+def test_save_image_explicit_format_override(tmp_path: Path):
+    """Explicit format parameter should override suffix."""
+    mol = _phenol()
+    
+    # Save as SVG despite .png suffix
+    out = save_image(mol, tmp_path / "test.png", format="svg")
+    assert out.exists() and b"<svg" in out.read_bytes()
+
+
+def test_save_image_empty_format_raises(tmp_path: Path):
+    """Empty format string should raise ValueError (Finding 3)."""
+    mol = _phenol()
+    
+    with pytest.raises(ValueError, match="format"):
+        save_image(mol, tmp_path / "test.png", format="")
+
+
+def test_save_image_undeterminable_suffix_raises(tmp_path: Path):
+    """Files with no/unknown suffix and no format should raise ValueError."""
+    mol = _phenol()
+    
+    # No suffix
+    with pytest.raises(ValueError, match="format"):
+        save_image(mol, tmp_path / "test")
+    
+    # Unknown suffix
+    with pytest.raises(ValueError, match="format"):
+        save_image(mol, tmp_path / "test.bmp")
+
+
+def test_save_image_wrong_object_type_raises(tmp_path: Path):
+    """save_image with unsupported object type should raise TypeError."""
+    with pytest.raises(TypeError, match="Cannot render"):
+        save_image("not a molecule", tmp_path / "test.png")
+
+
+def test_render_molecule_dpr_doubles_png_pixels():
+    """PNG at device_pixel_ratio=2.0 should be twice the logical size."""
+    mol = _phenol()
+    
+    ctx1 = CNotebookContext(width=100, height=100, device_pixel_ratio=1.0, image_format="png")
+    png1 = render_molecule(mol, ctx=ctx1)
+    
+    ctx2 = CNotebookContext(width=100, height=100, device_pixel_ratio=2.0, image_format="png")
+    png2 = render_molecule(mol, ctx=ctx2)
+    
+    # DPR=2 should produce more bytes (larger image)
+    assert len(png2) > len(png1)
+
+
+def test_save_image_preserves_existing_on_render_failure(tmp_path: Path):
+    """Rendering failure should leave existing destination file untouched (Finding 4)."""
+    dest = tmp_path / "existing.png"
+    original_content = b"ORIGINAL_CONTENT"
+    dest.write_bytes(original_content)
+    
+    # Trigger a rendering error by passing invalid object type
+    try:
+        save_image("invalid", dest)
+    except TypeError:
+        pass
+    
+    # Original file should be unchanged
+    assert dest.read_bytes() == original_content
+
+
+def test_public_api_imports_from_cnotebook():
+    """Public functions should be importable from top-level cnotebook."""
+    from cnotebook import (
+        render_design_unit,
+        render_display,
+        render_molecule,
+        save_image,
+    )
+    
+    # Just verify they're the right functions
+    assert callable(render_molecule)
+    assert callable(render_display)
+    assert callable(render_design_unit)
+    assert callable(save_image)
+
+
+def test_public_api_imports_from_cnotebook_core():
+    """Public functions should be importable from cnotebook.core."""
+    from cnotebook.core import (
+        render_design_unit,
+        render_display,
+        render_molecule,
+        save_image,
+    )
+    
+    assert callable(render_molecule)
+    assert callable(render_display)
+    assert callable(render_design_unit)
+    assert callable(save_image)

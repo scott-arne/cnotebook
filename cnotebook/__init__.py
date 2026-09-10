@@ -12,8 +12,11 @@ from openeye import oechem, oedepict
 # Core functionality that doesn't depend on backends
 from .context import CNotebookContext, cnotebook_context
 from .core.errors import warn
+from .core.render import render_design_unit as render_design_unit
+from .core.render import render_display as render_display
+from .core.render import render_molecule as render_molecule
+from .core.render import save_image as save_image
 from .helpers import highlight_smarts as highlight_smarts
-from .core.render import render_molecule as render_molecule, render_display as render_display, render_design_unit as render_design_unit, save_image as save_image
 
 __version__ = '3.1.3'
 

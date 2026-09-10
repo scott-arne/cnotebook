@@ -7,7 +7,11 @@ from typing import Any
 
 from openeye import oechem, oedepict
 
-from cnotebook.core.context import CNotebookContext, cnotebook_context, pass_cnotebook_context
+from cnotebook.core.context import (
+    CNotebookContext,
+    cnotebook_context,
+    pass_cnotebook_context,
+)
 from cnotebook.core.vocabulary import IMAGE_FORMATS
 
 log = logging.getLogger("cnotebook")
@@ -70,7 +74,13 @@ def make_depiction(mol: oechem.OEMolBase, *, ctx: CNotebookContext) -> Depiction
     :returns: The depiction handle.
     """
     work = prepare_depiction_copy(mol)
-    return Depiction(work, ctx.create_molecule_display(work))
+    disp = ctx.create_molecule_display(work)
+
+    # Apply context callbacks to the display before rendering
+    for callback in ctx.callbacks:
+        callback(disp)
+
+    return Depiction(work, disp)
 
 
 
@@ -396,11 +406,15 @@ def oedu_to_disp(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> Depiction
 
     :param du: Design unit.
     :param ctx: Render context.
-    :returns: A :class:`Depiction` of the ligand, or ``None`` for an apo design unit.
+    :returns: A :class:`Depiction` of the ligand, or ``None`` for an apo design unit or over-limit ligand.
     """
     lig = oechem.OEGraphMol()
     du.GetLigand(lig)
     if lig.NumAtoms() == 0:
+        return None
+    # Check heavy-atom limit
+    if (lig.IsValid() and ctx.max_heavy_atoms is not None
+            and oechem.OECount(lig, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
         return None
     return make_depiction(lig, ctx=ctx)
 
@@ -414,12 +428,20 @@ def oedu_to_image(
 
     If the design unit has a ligand, renders the ligand with a small
     "OEDesignUnit" label. If no ligand is present (apo structure),
-    renders a placeholder image with "Apo DesignUnit" text.
+    renders a placeholder image with "Apo DesignUnit" text. If the
+    ligand exceeds the heavy-atom limit, renders the exceeds placeholder.
 
     :param du: Design unit to render.
     :param ctx: Render context.
     :returns: Rendered image.
     """
+    # Extract ligand to check for apo vs. over-limit
+    lig = oechem.OEGraphMol()
+    du.GetLigand(lig)
+    is_apo = lig.NumAtoms() == 0
+    is_over_limit = (not is_apo and lig.IsValid() and ctx.max_heavy_atoms is not None
+                     and oechem.OECount(lig, oechem.OEIsHeavy()) > ctx.max_heavy_atoms)
+
     dep = oedu_to_disp(du, ctx=ctx)
 
     if dep is not None:
@@ -429,6 +451,10 @@ def oedu_to_image(
         scale = ctx.device_pixel_ratio if ctx.image_format == "png" else 1.0
         _draw_du_label(image, scale=scale)
         return image
+
+    # Over-limit case: render the exceeds placeholder
+    if is_over_limit:
+        return _create_exceeds_heavy_atoms_image(lig, ctx=ctx)
 
     # Apo case: no ligand
     min_width, min_height = placeholder_size(ctx)
@@ -632,8 +658,11 @@ def save_image(
     :raises ValueError: If the format cannot be determined or is unsupported.
     :raises TypeError: If *obj* is not a renderable type.
     """
+    import tempfile
+
     target = Path(path)
-    fmt = format or target.suffix.lstrip(".").lower()
+    # Only use suffix when format is None (not when it's an empty string)
+    fmt = target.suffix.lstrip(".").lower() if format is None else format
     _check_format(fmt)
     if isinstance(obj, oedepict.OE2DMolDisplay):
         data = render_display(obj, format=fmt, ctx=ctx)
@@ -643,5 +672,22 @@ def save_image(
         data = render_molecule(obj, format=fmt, ctx=ctx, **options)
     else:
         raise TypeError(f"Cannot render object of type {type(obj).__name__}")
-    target.write_bytes(data)
-    return target
+
+    # Write to temp file in same directory, then atomically replace
+    target_dir = target.parent
+    temp_fd, temp_path = tempfile.mkstemp(dir=target_dir, suffix=".tmp")
+    temp_file = Path(temp_path)
+    try:
+        os.write(temp_fd, data)
+        os.close(temp_fd)
+        # Atomic replacement
+        os.replace(temp_path, target)
+        return target
+    except BaseException:
+        # Clean up temp file on failure; log but don't mask original error
+        try:
+            temp_file.unlink(missing_ok=True)
+        except OSError:
+            # Cleanup failed, but original error is more important
+            log.debug(f"Failed to clean up temporary file {temp_path}")
+        raise

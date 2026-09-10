@@ -104,13 +104,8 @@ def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OE
                         and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
                     return render_exceeds_max_heavy_atoms(mol, ctx=ctx)
 
-                # Create the display object
+                # Create the display object (callbacks applied by make_depiction)
                 disp = oemol_to_disp(mol, ctx=ctx)
-
-                # Apply display callbacks
-                if ctx.callbacks is not None:
-                    for callback in ctx.callbacks:
-                        callback(disp)
 
                 # Render into the string stream
                 return oedisp_to_html(disp, ctx=ctx)

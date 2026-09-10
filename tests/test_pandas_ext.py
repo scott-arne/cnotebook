@@ -195,27 +195,26 @@ class TestCreateMolFormatter:
         assert result == "not a molecule"
     
     def test_create_mol_formatter_with_callbacks(self):
-        """Test formatter with context callbacks"""
+        """Test formatter with context callbacks (callbacks applied by make_depiction)"""
         ctx = CNotebookContext()
-        mock_callback = MagicMock()
-        ctx.add_callback(mock_callback)
+        callback_invocations = []
 
-        mock_mol = MagicMock(spec=oechem.OEMolBase)
-        mock_mol.IsValid.return_value = True
+        def test_callback(disp):
+            callback_invocations.append(disp)
 
-        with patch('cnotebook.pandas_ext.oechem.OECount', return_value=10):
-            with patch('cnotebook.pandas_ext.oemol_to_disp') as mock_to_disp:
-                with patch('cnotebook.pandas_ext.oedisp_to_html') as mock_to_html:
-                    mock_disp = MagicMock()
-                    mock_to_disp.return_value = mock_disp
-                    mock_to_html.return_value = '<img>callback_mol</img>'
+        ctx.add_callback(test_callback)
 
-                    formatter = create_mol_formatter(ctx=ctx)
-                    result = formatter(mock_mol)
+        # Use a real molecule instead of a mock
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
 
-                    # Callback should have been called
-                    mock_callback.assert_called_once_with(mock_disp)
-                    assert result == '<img>callback_mol</img>'
+        formatter = create_mol_formatter(ctx=ctx)
+        result = formatter(mol)
+
+        # Callback should have been called (by make_depiction in the render path)
+        assert len(callback_invocations) == 1
+        assert isinstance(callback_invocations[0], oedepict.OE2DMolDisplay)
+        assert '<img' in result or '<div' in result
 
 
 class TestCreateDispFormatter:
