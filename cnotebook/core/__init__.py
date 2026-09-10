@@ -3,7 +3,7 @@
 Imports here require only the OpenEye Toolkits and the standard library.
 """
 
-from cnotebook.core import formatters, viewer3d, vocabulary
+from cnotebook.core import formatters, table, viewer3d, vocabulary
 from cnotebook.core.context import CNotebookContext, RenderContext
 from cnotebook.core.convert import (
     MapData,
@@ -70,6 +70,7 @@ __all__ = [
     "render_summary",
     "save_image",
     "summary_image",
+    "table",
     "viewer3d",
     "vocabulary",
 ]
