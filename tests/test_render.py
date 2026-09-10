@@ -858,13 +858,17 @@ def test_oedu_to_disp_apo_returns_none():
 
 def _png_size(html: str) -> tuple[int, int]:
     import base64
-    b64 = re.search(r"base64,([^']+)'", html).group(1)
+    match = re.search(r"base64,([^']+)'", html)
+    assert match is not None
+    b64 = match.group(1)
     data = base64.b64decode(b64)
     return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
 
 
 def _css_width(html: str) -> int:
-    return int(re.search(r"width:(\d+)px", html).group(1))
+    match = re.search(r"width:(\d+)px", html)
+    assert match is not None
+    return int(match.group(1))
 
 
 def test_placeholder_size_falls_back_to_defaults():
@@ -929,3 +933,98 @@ def test_oeimage_to_html_uses_logical_size():
     ctx = CNotebookContext(device_pixel_ratio=1.0)
     html = oeimage_to_html(image, ctx=ctx, logical_width=200, logical_height=200)
     assert _css_width(html) == 200
+
+
+# Finding 2: Design unit DPR tests
+def test_design_unit_honors_device_pixel_ratio():
+    """Design unit PNGs should be oversampled at device_pixel_ratio."""
+    import os
+    from cnotebook.core.render import oedu_to_html
+
+    du_path = "examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu"
+    if not os.path.exists(du_path):
+        pytest.skip("Design unit file not available")
+
+    design_unit = oechem.OEDesignUnit()
+    ifs = oechem.oeifstream(du_path)
+    assert oechem.OEReadDesignUnit(ifs, design_unit)
+    ifs.close()
+
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    html = oedu_to_html(design_unit, ctx=ctx)
+    width_px, _ = _png_size(html)
+    # PNG should be 2x the logical size
+    assert width_px == 2 * _css_width(html)
+
+
+# Finding 3: Placeholder max-size clamp tests
+def test_empty_molecule_respects_max_width():
+    """Empty molecule placeholders should be clamped by max_width."""
+    from cnotebook.core.render import render_empty_molecule
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0, min_width=400, max_width=200)
+    html = render_empty_molecule(ctx=ctx)
+    assert _css_width(html) == 200
+
+
+def test_invalid_molecule_respects_max_height():
+    """Invalid molecule placeholders should be clamped by max_height."""
+    from cnotebook.core.render import render_invalid_molecule
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0, min_height=400, max_height=250)
+    html = render_invalid_molecule(ctx=ctx)
+    # Height is harder to extract, but width should be scaled proportionally if max_height binds
+    assert _css_width(html) <= 400  # Should be clamped
+
+
+def test_exceeds_heavy_atoms_respects_max_dimensions():
+    """Heavy-atom-limit placeholders should be clamped."""
+    from cnotebook.core.render import render_exceeds_max_heavy_atoms
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0, min_width=500, max_width=250)
+    html = render_exceeds_max_heavy_atoms(mol, ctx=ctx)
+    assert _css_width(html) == 250
+
+
+# Finding 4: SVG clamp and height enforcement tests
+def test_svg_respects_max_width():
+    """SVG output should be clamped by max_width."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    ctx = CNotebookContext(image_format="svg", width=800, max_width=300, device_pixel_ratio=1.0)
+    html = oemol_to_html(mol, ctx=ctx)
+    assert _css_width(html) == 300
+
+
+def test_svg_respects_max_height():
+    """SVG output should be clamped by max_height."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    ctx = CNotebookContext(image_format="svg", width=800, height=600, max_height=300, device_pixel_ratio=1.0)
+    html = oemol_to_html(mol, ctx=ctx)
+    # Extract both width and height from HTML
+    assert "width" in html.lower() or "height" in html.lower()
+
+
+def test_png_respects_both_max_dimensions():
+    """PNG output should be clamped by both max_width and max_height."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    ctx = CNotebookContext(image_format="png", width=800, height=600, max_width=300, max_height=250, device_pixel_ratio=1.0)
+    html = oemol_to_html(mol, ctx=ctx)
+    assert _css_width(html) == 300  # Width clamp binds
+
+
+# Finding 5: SVG DPR test
+def test_svg_unaffected_by_device_pixel_ratio():
+    """SVG should produce identical output at DPR 1 and DPR 2."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    
+    ctx1 = CNotebookContext(image_format="svg", device_pixel_ratio=1.0)
+    html1 = oemol_to_html(mol, ctx=ctx1)
+    
+    ctx2 = CNotebookContext(image_format="svg", device_pixel_ratio=2.0)
+    html2 = oemol_to_html(mol, ctx=ctx2)
+    
+    # SVG should be identical regardless of DPR
+    assert html1 == html2

@@ -135,7 +135,7 @@ def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OE
                         callback(disp)
 
                 # Render into the string stream
-                return oedisp_to_html(disp)  # pyright: ignore[reportCallIssue]
+                return oedisp_to_html(disp, ctx=ctx)
 
             # Empty molecule
             elif mol.NumAtoms() == 0:
@@ -527,6 +527,7 @@ def _series_set_render_options(
         bond_width_scaling=_RENDER_OPTION_UNSET,
         title=_RENDER_OPTION_UNSET,
         max_heavy_atoms=_RENDER_OPTION_UNSET,
+        device_pixel_ratio=_RENDER_OPTION_UNSET,
 ) -> None:
     """
     Set rendering options for a molecule or query series.
@@ -547,6 +548,7 @@ def _series_set_render_options(
     :param bond_width_scaling: Whether to scale bond widths with structure scale.
     :param title: Whether to display molecule titles.
     :param max_heavy_atoms: Maximum heavy atom count to render, or ``None`` to disable.
+    :param device_pixel_ratio: Oversampling ratio for PNG output (1.0 = no oversampling, 2.0 = 2x).
     """
     if not _is_depictable_molecule_dtype(self._obj.dtype):
         raise TypeError(
@@ -569,6 +571,7 @@ def _series_set_render_options(
         bond_width_scaling=bond_width_scaling,
         title=title,
         max_heavy_atoms=max_heavy_atoms,
+        device_pixel_ratio=device_pixel_ratio,
     )
     if not options:
         return
@@ -677,6 +680,7 @@ def _dataframe_set_render_options(
         bond_width_scaling=_RENDER_OPTION_UNSET,
         title=_RENDER_OPTION_UNSET,
         max_heavy_atoms=_RENDER_OPTION_UNSET,
+        device_pixel_ratio=_RENDER_OPTION_UNSET,
 ) -> None:
     """
     Set rendering options for molecule or query columns in a DataFrame.
@@ -701,6 +705,7 @@ def _dataframe_set_render_options(
     :param bond_width_scaling: Whether to scale bond widths with structure scale.
     :param title: Whether to display molecule titles.
     :param max_heavy_atoms: Maximum heavy atom count to render, or ``None`` to disable.
+    :param device_pixel_ratio: Oversampling ratio for PNG output (1.0 = no oversampling, 2.0 = 2x).
     """
     if molecule_columns is None:
         columns = [
@@ -736,6 +741,7 @@ def _dataframe_set_render_options(
         bond_width_scaling=bond_width_scaling,
         title=title,
         max_heavy_atoms=max_heavy_atoms,
+        device_pixel_ratio=device_pixel_ratio,
     )
     if not options:
         return

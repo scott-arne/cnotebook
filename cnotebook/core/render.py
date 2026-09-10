@@ -117,17 +117,19 @@ def create_img_tag(
     """
     if image_mime_type == "image/svg+xml":
         if wrap_svg:
-            return '<div style=\'width:{w}px;height:auto;max-width:none\'>\n\t{svg}\n</div>'.format(
+            return '<div style=\'width:{w}px;height:{h}px;max-width:none\'>\n\t{svg}\n</div>'.format(
                 w=int(width),
+                h=int(height),
                 svg=image_bytes.decode("utf-8")
             )
         else:
             return image_bytes.decode("utf-8")
 
-    return '<img src=\'data:{mime};base64,{data}\' style=\'width:{w}px;height:auto;max-width:none\' />'.format(
+    return '<img src=\'data:{mime};base64,{data}\' style=\'width:{w}px;height:{h}px;max-width:none\' />'.format(
         mime=image_mime_type,
         data=base64.b64encode(image_bytes).decode("utf-8"),
-        w=int(width)
+        w=int(width),
+        h=int(height)
     )
 
 
@@ -167,13 +169,7 @@ def render_empty_molecule(*, ctx: CNotebookContext) -> str:
         )
     )
 
-    return create_img_tag(
-        min_width,
-        min_height,
-        image_mime_type=ctx.image_mime_type,
-        image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
-        wrap_svg=not ctx.auto_scale
-    )
+    return oeimage_to_html(image, ctx=ctx)
 
 
 def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
@@ -197,13 +193,7 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
         )
     )
 
-    return create_img_tag(
-        min_width,
-        min_height,
-        image_mime_type=ctx.image_mime_type,
-        image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
-        wrap_svg=not ctx.auto_scale
-    )
+    return oeimage_to_html(image, ctx=ctx)
 
 
 def _create_exceeds_heavy_atoms_image(
@@ -277,15 +267,7 @@ def render_exceeds_max_heavy_atoms(
     :returns: HTML image tag.
     """
     image = _create_exceeds_heavy_atoms_image(mol, ctx=ctx)
-    min_width, min_height = placeholder_size(ctx)
-
-    return create_img_tag(
-        min_width,
-        min_height,
-        image_mime_type=ctx.image_mime_type,
-        image_bytes=oedepict.OEWriteImageToString(ctx.image_format, image),
-        wrap_svg=not ctx.auto_scale
-    )
+    return oeimage_to_html(image, ctx=ctx)
 
 
 def oemol_to_disp(
@@ -365,16 +347,17 @@ def oemol_to_image(
     return image
 
 
-def _draw_du_label(image: oedepict.OEImageBase) -> None:
+def _draw_du_label(image: oedepict.OEImageBase, scale: float = 1.0) -> None:
     """Draw a small semi-transparent "OEDesignUnit" label in the upper right.
 
     :param image: Image to draw the label on.
+    :param scale: Scaling factor for HiDPI rendering (font size is multiplied by this).
     """
-    padding = 4
+    padding = int(4 * scale)
     font = oedepict.OEFont(
         oedepict.OEFontFamily_Arial,
         oedepict.OEFontStyle_Bold,
-        14,
+        int(14 * scale),
         oedepict.OEAlignment_Right,
         oechem.OEColor(180, 180, 180, 128)
     )
@@ -417,10 +400,11 @@ def oedu_to_image(
     dep = oedu_to_disp(du, ctx=ctx)
 
     if dep is not None:
-        width, height = dep.display.GetWidth(), dep.display.GetHeight()
-        image = oedepict.OEImage(width, height)
-        oedepict.OERenderMolecule(image, dep.display)
-        _draw_du_label(image)
+        # Render with DPR oversampling
+        image = _render_display_image(dep.display, ctx)
+        # Scale label font for oversampling
+        scale = ctx.device_pixel_ratio if ctx.image_format == "png" else 1.0
+        _draw_du_label(image, scale=scale)
         return image
 
     # Apo case: no ligand
@@ -470,7 +454,13 @@ def oedu_to_html(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> str:
     :param ctx: Render context.
     :returns: HTML image tag.
     """
-    return oeimage_to_html(oedu_to_image(du, ctx=ctx), ctx=ctx)
+    dep = oedu_to_disp(du, ctx=ctx)
+    if dep is not None:
+        # Ligand case: use logical dimensions from display
+        return oeimage_to_html(oedu_to_image(du, ctx=ctx), ctx=ctx, logical_width=dep.display.GetWidth(), logical_height=dep.display.GetHeight())
+    else:
+        # Apo case: placeholder (not oversampled)
+        return oeimage_to_html(oedu_to_image(du, ctx=ctx), ctx=ctx)
 
 
 @pass_cnotebook_context

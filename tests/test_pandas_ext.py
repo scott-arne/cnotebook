@@ -1814,3 +1814,31 @@ def test_highlight_using_column_traditional_produces_different_svg():
     assert unhighlighted_svg != highlighted_svg
     assert "svg" in unhighlighted_svg.lower()
     assert "svg" in highlighted_svg.lower()
+
+
+def test_pandas_honors_column_context_dpr():
+    """Regression test for Finding 1: pandas must honor column-specific device_pixel_ratio."""
+    import base64
+    import re
+    
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    
+    # Create a series with DPR 1.0
+    series = pd.Series([mol], dtype=oepd.MoleculeDtype())
+    series.chem.set_render_options(device_pixel_ratio=1.0, image_format="png", width=100, height=100)
+    
+    # Render the DataFrame (with global context at DPR 2.0)
+    df = pd.DataFrame({"mol": series})
+    from cnotebook.context import CNotebookContext
+    global_ctx = CNotebookContext(device_pixel_ratio=2.0)
+    html = render_dataframe(df, ctx=global_ctx)
+    
+    # Extract PNG size from the rendered HTML
+    match = re.search(r"base64,([^']+)'", html)
+    assert match is not None
+    data = base64.b64decode(match.group(1))
+    width_px = int.from_bytes(data[16:20], "big")
+
+    # Column context (DPR 1.0) should win, so PNG should be 100px (not 200px from global DPR 2.0)
+    assert width_px == 100
