@@ -11,6 +11,7 @@ import numpy as np
 import oepandas as oepd
 import pandas as pd
 from openeye import oechem, oedepict, oegraphsim
+from packaging.version import Version
 
 from .context import get_series_context, pass_cnotebook_context
 from .core import columnops
@@ -456,7 +457,7 @@ else:
 # CNotebook Series accessor extensions for OEPandas .chem accessor
 ########################################################################################################################
 
-_MIN_OEPANDAS = (3, 3, 0)
+_MIN_OEPANDAS = "3.3.0"
 _ATTACHED = False
 
 
@@ -569,16 +570,34 @@ def _series_recalculate_depiction_coordinates(self, *, clear_coords=True, add_de
     )
 
 
-def _molecule_columns(df: pd.DataFrame, molecule_columns, method: str) -> list[Hashable]:
+def _molecule_columns(df: pd.DataFrame, molecule_columns, method: str) -> list[int]:
+    """Find column positions, handling duplicate labels. Returns positions not labels."""
     if molecule_columns is None:
-        return [c for c in df.columns if _is_depictable_molecule_dtype(df[c].dtype)]
+        # All molecule columns by position
+        return [pos for pos in range(len(df.columns)) if _is_depictable_molecule_dtype(df.dtypes.iloc[pos])]
+    # User-specified labels
     names = [molecule_columns] if isinstance(molecule_columns, str) else list(molecule_columns)
-    for name in names:
-        if name not in df.columns:
-            warn(f"{name!r} not found in DataFrame columns ({', '.join(map(str, df.columns))}); skipped by {method}")
-        elif not _is_depictable_molecule_dtype(df[name].dtype):
-            raise TypeError(f"{method} only works on molecule columns; column {name!r} has dtype {df[name].dtype}")
-    return [n for n in names if n in df.columns]
+    positions = []
+    for label in names:
+        matches = [pos for pos in range(len(df.columns)) if df.columns[pos] == label]
+        if not matches:
+            warn(f"{label!r} not found in DataFrame columns ({', '.join(map(str, df.columns))}); skipped by {method}")
+        else:
+            for pos in matches:
+                if not _is_depictable_molecule_dtype(df.dtypes.iloc[pos]):
+                    raise TypeError(f"{method} only works on molecule columns; column {label!r} has dtype {df.dtypes.iloc[pos]}")
+            positions.extend(matches)
+    return positions
+
+
+def _unique_column_label(df: pd.DataFrame, label: Hashable, method: str) -> int:
+    """Find the single position for a label, raising ValueError if not unique."""
+    matches = [pos for pos in range(len(df.columns)) if df.columns[pos] == label]
+    if len(matches) == 0:
+        raise KeyError(f"{label!r} not found in DataFrame columns")
+    if len(matches) > 1:
+        raise ValueError(f"Column label {label!r} is not unique; rename the columns or select one")
+    return matches[0]
 
 
 def _dataframe_set_render_options(self, molecule_columns=None, **options) -> None:
@@ -587,8 +606,8 @@ def _dataframe_set_render_options(self, molecule_columns=None, **options) -> Non
     :param molecule_columns: Optional column name(s); ``None`` updates all molecule columns.
     :param options: Render option names and values.
     """
-    for name in _molecule_columns(self._obj, molecule_columns, "set_render_options"):
-        self._obj[name].chem.set_render_options(**options)
+    for pos in _molecule_columns(self._obj, molecule_columns, "set_render_options"):
+        self._obj.iloc[:, pos].chem.set_render_options(**options)
 
 
 def _dataframe_recalculate_depiction_coordinates(self, molecule_columns=None, **options) -> None:
@@ -597,8 +616,8 @@ def _dataframe_recalculate_depiction_coordinates(self, molecule_columns=None, **
     :param molecule_columns: Optional column name(s); ``None`` updates all molecule columns.
     :param options: Depiction options.
     """
-    for name in _molecule_columns(self._obj, molecule_columns, "recalculate_depiction_coordinates"):
-        self._obj[name].chem.recalculate_depiction_coordinates(**options)
+    for pos in _molecule_columns(self._obj, molecule_columns, "recalculate_depiction_coordinates"):
+        self._obj.iloc[:, pos].chem.recalculate_depiction_coordinates(**options)
 
 
 def _dataframe_reset_depictions(self, molecule_columns=None) -> None:
@@ -606,8 +625,8 @@ def _dataframe_reset_depictions(self, molecule_columns=None) -> None:
 
     :param molecule_columns: Optional column name(s); ``None`` resets all molecule columns.
     """
-    for name in _molecule_columns(self._obj, molecule_columns, "reset_depictions"):
-        self._obj[name].chem.reset_depictions()
+    for pos in _molecule_columns(self._obj, molecule_columns, "reset_depictions"):
+        self._obj.iloc[:, pos].chem.reset_depictions()
 
 
 def _dataframe_clear_formatting_rules(self, molecule_columns=None) -> None:
@@ -615,8 +634,8 @@ def _dataframe_clear_formatting_rules(self, molecule_columns=None) -> None:
 
     :param molecule_columns: Optional column name(s); ``None`` clears all molecule columns.
     """
-    for name in _molecule_columns(self._obj, molecule_columns, "clear_formatting_rules"):
-        self._obj[name].chem.clear_formatting_rules()
+    for pos in _molecule_columns(self._obj, molecule_columns, "clear_formatting_rules"):
+        self._obj.iloc[:, pos].chem.clear_formatting_rules()
 
 
 def _dataframe_highlight(self, molecule_column, pattern, *, color=None, style="overlay_default") -> None:
@@ -629,21 +648,41 @@ def _dataframe_highlight(self, molecule_column, pattern, *, color=None, style="o
     """
     if molecule_column not in self._obj.columns:
         raise ValueError(f"Column {molecule_column!r} not found in DataFrame columns")
-    self._obj[molecule_column].chem.highlight(pattern, color=color, style=style)
+    # Find all columns with this label and highlight each
+    positions = [pos for pos in range(len(self._obj.columns)) if self._obj.columns[pos] == molecule_column]
+    for pos in positions:
+        self._obj.iloc[:, pos].chem.highlight(pattern, color=color, style=style)
 
 
 def _dataframe_copy_molecules(self, source_column, dest_column) -> pd.DataFrame:
     """Copy molecules from one column to a new column.
 
+    Creates deep copies of molecules and an independent rendering context. An existing
+    destination column is overwritten.
+
     :param source_column: Source column name.
     :param dest_column: Destination column name.
     :returns: The DataFrame with the new column.
+    :raises ValueError: If *source_column* is not unique.
     """
-    if source_column not in self._obj.columns:
-        raise ValueError(f"Column {source_column!r} not found in DataFrame columns")
-    if not isinstance(self._obj[source_column].dtype, oepd.MoleculeDtype):
-        raise TypeError(f"copy_molecules only works on molecule columns; {source_column!r} has dtype {self._obj[source_column].dtype}")
-    self._obj[dest_column] = self._obj[source_column].chem.copy_molecules()
+    pos = _unique_column_label(self._obj, source_column, "copy_molecules")
+    if not isinstance(self._obj.dtypes.iloc[pos], oepd.MoleculeDtype):
+        raise TypeError(f"copy_molecules only works on molecule columns; {source_column!r} has dtype {self._obj.dtypes.iloc[pos]}")
+    # Access the column by label to avoid iloc index alignment issues with extension arrays
+    source_series = self._obj[source_column]
+    # Copy molecules manually to preserve index and context
+    copied_mols = [columnops._copy(m) if m is not None else None for m in source_series.array]
+    copied_array = oepd.MoleculeArray(copied_mols)
+    # Create Series without index param (pandas+oepandas bug: passing index can null molecules)
+    copied_series = pd.Series(copied_array, dtype=oepd.MoleculeDtype())
+    # Align to frame's index after creation
+    copied_series.index = self._obj.index
+    self._obj[dest_column] = copied_series
+    # Copy the context so the copy has independent rendering state
+    if "cnotebook" in source_series.array.metadata:
+        ctx = source_series.array.metadata["cnotebook"]
+        if isinstance(ctx, CNotebookContext):
+            self._obj[dest_column].array.metadata["cnotebook"] = ctx.copy()
     return self._obj
 
 
@@ -665,14 +704,27 @@ def _dataframe_highlight_using_column(self, molecule_column, pattern_column, *, 
     :param style: Highlight style name or constant.
     :param inplace: Modify the DataFrame in place.
     :returns: Modified DataFrame.
+    :raises ValueError: If any column label is not unique.
     """
     df = self._obj if inplace else self._obj.copy()
-    for name in (molecule_column, pattern_column) + ((color_column,) if color_column else ()):
-        if name not in df.columns:
-            raise KeyError(f"{name!r} not found in DataFrame columns")
-    arr = _require_molecule_series(df[molecule_column], "highlight_using_column")
+    # Check for unique labels (test truthiness correctly: color_column is not None)
+    mol_pos = _unique_column_label(df, molecule_column, "highlight_using_column")
+    _unique_column_label(df, pattern_column, "highlight_using_column")
+    if color_column is not None:
+        _unique_column_label(df, color_column, "highlight_using_column")
+    arr = _require_molecule_series(df.iloc[:, mol_pos], "highlight_using_column")
     ctx = get_series_context(arr.metadata)
-    colors = list(df[color_column]) if color_column else ([color] * len(df) if color is not None else None)
+    # Handle color_column properly (test color_column is not None, not truthiness)
+    if color_column is not None:
+        # Normalize pd.NA to None so columnops doesn't see missing scalars
+        colors = [
+            None if pd.api.types.is_scalar(c) and pd.isna(c) else c
+            for c in df[color_column]
+        ]
+    elif color is not None:
+        colors = [color] * len(df)
+    else:
+        colors = None
     depictions = columnops.build_highlight_column(list(arr), list(df[pattern_column]), colors=colors, style=style, ctx=ctx)
     df[highlighted_column] = _display_column(depictions, df.index)
     return df
@@ -698,13 +750,13 @@ def _dataframe_fingerprint_similarity(self, molecule_column, ref=None, *, tanimo
     :param bond_type: Bond types.
     :param inplace: Modify the DataFrame in place.
     :returns: Modified DataFrame.
+    :raises ValueError: If the molecule column label is not unique.
     """
     df = self._obj if inplace else self._obj.copy()
-    if molecule_column not in df.columns:
-        raise KeyError(f"Molecule column not found in DataFrame: {molecule_column}")
-    if not isinstance(df[molecule_column].dtype, oepd.MoleculeDtype):
+    mol_pos = _unique_column_label(df, molecule_column, "fingerprint_similarity")
+    if not isinstance(df.dtypes.iloc[mol_pos], oepd.MoleculeDtype):
         raise TypeError(f"Column {molecule_column!r} does not have dtype oepandas.MoleculeDtype")
-    arr = df[molecule_column].array
+    arr = df.iloc[:, mol_pos].array
     ctx = get_series_context(arr.metadata)
     result = columnops.fingerprint_similarity(list(arr), ref, fptype=fptype, num_bits=num_bits, min_distance=min_distance,
                                               max_distance=max_distance, atom_type=atom_type, bond_type=bond_type, ctx=ctx)
@@ -750,9 +802,8 @@ def _attach() -> None:
     if _ATTACHED:
         return
     try:
-        version = tuple(int(part) for part in oepd.__version__.split(".")[:3])
-        if version < _MIN_OEPANDAS:
-            raise ImportError(f"oepandas {oepd.__version__} is older than {'.'.join(map(str, _MIN_OEPANDAS))}")
+        if Version(oepd.__version__) < Version(_MIN_OEPANDAS):
+            raise ImportError(f"oepandas {oepd.__version__} is older than {_MIN_OEPANDAS}")
         from oepandas.pandas_extensions import OEDataFrameAccessor, OESeriesAccessor
     except (ImportError, AttributeError, ValueError) as exc:
         warn(f"cnotebook pandas integration disabled: {exc}")

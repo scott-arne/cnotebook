@@ -742,7 +742,7 @@ class TestPandasDataFrameCopyMolecules:
 
         df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
 
-        with pytest.raises(ValueError):
+        with pytest.raises(KeyError):
             df.chem.copy_molecules("nonexistent", "copy")
 
 
@@ -2291,10 +2291,202 @@ def test_attach_is_idempotent_and_guarded(monkeypatch):
     pe._attach()
     pe._attach()
     assert OESeriesAccessor.highlight is before or callable(OESeriesAccessor.highlight)
-    monkeypatch.setattr(pe, "_MIN_OEPANDAS", (99, 0, 0))
+    monkeypatch.setattr(pe, "_MIN_OEPANDAS", "99.0.0")
     monkeypatch.setattr(pe, "_ATTACHED", False)
     with pytest.warns(CNotebookWarning, match="pandas integration disabled"):
         pe._attach()
-    monkeypatch.setattr(pe, "_MIN_OEPANDAS", (3, 3, 0))
+    monkeypatch.setattr(pe, "_MIN_OEPANDAS", "3.3.0")
     monkeypatch.setattr(pe, "_ATTACHED", False)
+    pe._attach()
+
+
+def test_copy_molecules_preserves_integer_index():
+    """copy_molecules should preserve non-default integer index."""
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    # Create Series with custom index first to avoid pandas/oepandas index alignment bug
+    series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
+    series.index = [10, 20]
+    df = pd.DataFrame({"mol": series})
+
+    result = df.chem.copy_molecules("mol", "copy")
+    assert result["copy"][10] is not None
+    assert result["copy"][20] is not None
+    assert result["copy"][10].NumAtoms() == mol1.NumAtoms()
+
+
+def test_copy_molecules_preserves_string_index():
+    """copy_molecules should preserve string index."""
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+
+    # Create Series with custom index first to avoid pandas/oepandas index alignment bug
+    series = pd.Series([mol1], dtype=oepd.MoleculeDtype())
+    series.index = ["a"]
+    df = pd.DataFrame({"mol": series})
+
+    result = df.chem.copy_molecules("mol", "copy")
+    assert result["copy"]["a"] is not None
+
+
+def test_copy_molecules_preserves_duplicate_index():
+    """copy_molecules should work with duplicate index labels."""
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    # Create Series with custom index first to avoid pandas/oepandas index alignment bug
+    series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
+    series.index = ["a", "a"]
+    df = pd.DataFrame({"mol": series})
+
+    result = df.chem.copy_molecules("mol", "copy")
+    assert all(m is not None for m in result["copy"])
+
+
+def test_copy_molecules_creates_distinct_objects():
+    """Copied molecules should be distinct from source."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+    result = df.chem.copy_molecules("mol", "copy")
+
+    assert result["copy"][0] is not result["mol"][0]
+    result["mol"][0].SetTitle("changed")
+    assert result["copy"][0].GetTitle() != "changed"
+
+
+def test_copy_molecules_does_not_share_context():
+    """Copied column should have independent rendering context."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+
+    df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+    df["mol"].chem.highlight("c1ccccc1")
+
+    original_ctx = df["mol"].array.metadata.get("cnotebook")
+    original_callback_count = len(original_ctx.callbacks)
+
+    result = df.chem.copy_molecules("mol", "copy")
+
+    result["copy"].chem.highlight("[OH]")
+
+    # Source context should be unchanged
+    assert len(original_ctx.callbacks) == original_callback_count
+
+
+def test_copy_molecules_preserves_render_options():
+    """Copied column should preserve source's render options at copy time."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+    df["mol"].chem.set_render_options(image_format="png")
+
+    result = df.chem.copy_molecules("mol", "copy")
+    copy_ctx = result["copy"].array.metadata.get("cnotebook")
+
+    assert copy_ctx is not None
+    assert copy_ctx.image_format == "png"
+
+
+def test_bulk_accessor_with_duplicate_labels():
+    """Bulk accessors should handle duplicate column labels."""
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    df = pd.DataFrame({
+        "mol": pd.Series([mol1], dtype=oepd.MoleculeDtype()),
+        "other": pd.Series([mol2], dtype=oepd.MoleculeDtype())
+    })
+    df.columns = ["mol", "mol"]
+
+    df.chem.set_render_options(width=200)
+
+    # Both columns should be affected
+    assert df.iloc[:, 0].array.metadata.get("cnotebook") is not None
+    assert df.iloc[:, 1].array.metadata.get("cnotebook") is not None
+
+
+def test_highlight_using_column_rejects_duplicate_molecule_column():
+    """highlight_using_column should reject duplicate molecule column labels."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1")
+
+    df = pd.DataFrame({
+        "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        "other": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        "pat": ["c1ccccc1"]
+    })
+    df.columns = ["mol", "mol", "pat"]
+
+    with pytest.raises(ValueError, match="not unique"):
+        df.chem.highlight_using_column("mol", "pat")
+
+
+def test_highlight_using_column_color_column_zero():
+    """color_column=0 should work for integer-labeled columns."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+
+    df = pd.DataFrame({
+        0: ["#FF0000"],
+        1: pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        2: ["[OH]"]
+    })
+
+    result = df.chem.highlight_using_column(1, 2, color_column=0)
+    # Should not raise and should have the column
+    assert "highlighted_substructures" in result.columns
+
+
+def test_highlight_using_column_handles_na_colors():
+    """pd.NA in color column should use default color."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+
+    df = pd.DataFrame({
+        "mol": pd.Series([mol], dtype=oepd.MoleculeDtype()),
+        "pat": ["[OH]"],
+        "col": pd.array([pd.NA], dtype=pd.StringDtype())
+    })
+
+    # Should not raise TypeError
+    result = df.chem.highlight_using_column("mol", "pat", color_column="col")
+    assert "highlighted_substructures" in result.columns
+
+
+def test_attach_with_dev_version(monkeypatch):
+    """_attach should reject dev versions."""
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    monkeypatch.setattr(oepd, "__version__", "3.3.0.dev1")
+
+    with pytest.warns(CNotebookWarning, match="pandas integration disabled"):
+        pe._attach()
+
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    monkeypatch.setattr(oepd, "__version__", oepd.__version__)
+    pe._attach()
+
+
+def test_attach_with_local_version(monkeypatch):
+    """_attach should accept local versions like 3.3.0+corp."""
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    monkeypatch.setattr(oepd, "__version__", "3.3.0+corp")
+
+    pe._attach()
+
+    # Should attach successfully
+    from oepandas.pandas_extensions import OESeriesAccessor
+    assert hasattr(OESeriesAccessor, "highlight")
+
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    monkeypatch.setattr(oepd, "__version__", oepd.__version__)
     pe._attach()
