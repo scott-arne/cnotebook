@@ -1,11 +1,14 @@
 import html
 import logging
 import re
+import threading
 import typing
 from collections.abc import Hashable, Iterable
+from contextlib import ExitStack
 from copy import copy as shallow_copy
 from typing import Any, Literal
 
+import numpy as np
 import oepandas as oepd
 import pandas as pd
 from oepandas.pandas_extensions import OEDataFrameAccessor, OESeriesAccessor
@@ -62,6 +65,13 @@ _DEPICTABLE_MOLECULE_DTYPES = _oepandas_types("MoleculeDtype", "QueryDtype")
 _DEPICTABLE_MOLECULE_ARRAYS = _oepandas_types("MoleculeArray", "QueryArray")
 _DEPICTABLE_MOLECULE_DTYPE_MESSAGE = "oepandas.MoleculeDtype or oepandas.QueryDtype"
 _RENDER_OPTION_UNSET = object()
+
+# Stands in for a missing depiction cell: Pandas renders NA scalars as the literal text "None"
+# without ever calling a column formatter, so missing cells are handed to Pandas as this object.
+_MISSING_CELL = object()
+
+# display.max_colwidth is process-global, so renders that have to change it take turns.
+_MAX_COLWIDTH_LOCK = threading.Lock()
 
 
 def _is_depictable_molecule_dtype(dtype: Any) -> bool:
@@ -289,6 +299,34 @@ def escape_formatter(obj: Any) -> str:
     return html.escape("" if obj is None else str(obj))
 
 
+def _escape_attribute_options(kwargs: dict[str, Any]) -> None:
+    """
+    Escape the ``to_html`` options Pandas writes straight into an HTML attribute.
+
+    Pandas interpolates ``table_id``, ``classes``, ``border`` and ``justify`` into the opening
+    ``<table>`` and ``<tr>`` tags without escaping them, so a caller value could close the
+    attribute and start markup of its own. (``to_html`` also rejects any ``justify`` outside its
+    own fixed list, but escaping it keeps the set of attribute-valued options in one place.)
+
+    :param kwargs: Keyword arguments destined for ``DataFrame.to_html``; escaped in place.
+    """
+    for name in ("table_id", "justify"):
+        value = kwargs.get(name)
+        if value is not None:
+            kwargs[name] = html.escape(str(value), quote=True)
+
+    classes = kwargs.get("classes")
+    if isinstance(classes, str):
+        kwargs["classes"] = html.escape(classes, quote=True)
+    elif isinstance(classes, (list, tuple)):
+        kwargs["classes"] = type(classes)(html.escape(str(item), quote=True) for item in classes)
+
+    # Pandas types border as int | bool | None; anything else is a caller string.
+    border = kwargs.get("border")
+    if border is not None and not isinstance(border, int):
+        kwargs["border"] = html.escape(str(border), quote=True)
+
+
 def render_dataframe(
         df: pd.DataFrame,
         formatters: dict | None = None,
@@ -305,6 +343,10 @@ def render_dataframe(
     only the depiction HTML is substituted back in raw. Cells are depicted lazily
     by the Pandas formatters, so only the rows Pandas actually renders are drawn.
 
+    Cell tokens cannot survive being shortened, so ordinary cells are never truncated to
+    ``display.max_colwidth`` either: Pandas' default HTML writer already renders every cell in
+    full, and the notebook writer is made to do the same.
+
     :param df: Frame to render (never modified).
     :param formatters: Extra Pandas formatters for ordinary columns (copied, never mutated).
         Their output is escaped like any other ordinary cell.
@@ -314,8 +356,9 @@ def render_dataframe(
         into the ``style`` attribute.
     :param ctx: Overrides every column context when given; ``None`` honours column contexts.
     :param max_rows: ``None`` for the Pandas display rule, ``<= 0`` for all rows, else the row budget.
-    :param kwargs: Forwarded to ``DataFrame.to_html``; ``escape`` is ignored with a warning and
-        ``buf`` is rejected, because this function returns the HTML rather than writing it.
+    :param kwargs: Forwarded to ``DataFrame.to_html``. ``escape`` and ``render_links`` are ignored
+        with a warning, ``buf`` is rejected because this function returns the HTML rather than
+        writing it, and the options Pandas writes into HTML attributes are escaped first.
     :returns: HTML table.
     :raises TypeError: If ``buf`` is passed.
     """
@@ -324,9 +367,15 @@ def render_dataframe(
         kwargs.pop("escape")
         warn("render_dataframe always escapes ordinary cells; the escape argument is ignored")
 
+    # Pandas writes the unescaped cell text into the href of a linkified cell.
+    if kwargs.pop("render_links", False):
+        warn("render_dataframe never linkifies cells; the render_links argument is ignored")
+
     # Tokens are only substituted in the returned string, so a buffer would receive raw tokens.
-    if "buf" in kwargs:
+    if kwargs.pop("buf", None) is not None:
         raise TypeError("render_dataframe returns the HTML; buf is not supported")
+
+    _escape_attribute_options(kwargs)
 
     # to_html applies its own "columns" argument after the formatters are bound, which
     # would misalign the positional formatter list; select the columns up front instead.
@@ -348,25 +397,44 @@ def render_dataframe(
         for label, value in (col_space or {}).items()
     }
 
+    depiction_positions: list[int] = []
     for pos, label in enumerate(labels):
         kind = adapter.kind(pos)
         if kind is ColumnKind.OTHER:
             continue
+        depiction_positions.append(pos)
         if positional_formatters[pos] is not None:
             warn(f"Overwriting the formatter for column {label!r} with the depiction formatter")
         column_ctx = adapter.context(pos)
         positional_formatters[pos] = (
-            lambda value, _kind=kind, _ctx=column_ctx: tokens.token_for(cell_html(_kind, value, _ctx))
+            lambda value, _kind=kind, _ctx=column_ctx: tokens.token_for(
+                cell_html(_kind, None if value is _MISSING_CELL else value, _ctx)
+            )
         )
         if column_ctx.width > 0:
             # col_space is keyed by label in Pandas, so duplicate labels share the widest image.
             previous = widths.get(label)
             widths[label] = max(int(column_ctx.width), previous) if isinstance(previous, int) else int(column_ctx.width)
 
-    # A trimmed cell token cannot be substituted, and only one of Pandas' writers lifts the
-    # column width limit itself, so lift it here for every writer kwargs can select.
-    with pd.option_context("display.max_colwidth", None):
-        html_out = df.to_html(  # pyright: ignore[reportCallIssue]
+    render_df = df
+    if depiction_positions:
+        # Pandas renders an NA scalar as the literal text "None" without calling the column
+        # formatter, so missing depiction cells travel as a sentinel the formatter maps back.
+        render_df = df.copy(deep=False)
+        for pos in depiction_positions:
+            column = df.iloc[:, pos]
+            cells = np.array(column.array, dtype=object)  # a copy, never the caller's buffer
+            cells[np.asarray(column.array.isna(), dtype=bool)] = _MISSING_CELL
+            render_df.isetitem(pos, cells)
+
+    with ExitStack() as stack:
+        # A trimmed cell token cannot be substituted. Pandas' default writer lifts
+        # display.max_colwidth itself, its notebook writer does not, and the option is
+        # process-global, so lift it only for the notebook writer and one render at a time.
+        if kwargs.get("notebook"):
+            stack.enter_context(_MAX_COLWIDTH_LOCK)
+            stack.enter_context(pd.option_context("display.max_colwidth", None))
+        html_out = render_df.to_html(  # pyright: ignore[reportCallIssue]
             escape=True,
             formatters=positional_formatters if any(f is not None for f in positional_formatters) else None,
             col_space=widths or None,  # pyright: ignore[reportArgumentType]

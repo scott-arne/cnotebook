@@ -1,4 +1,5 @@
 import io
+import threading
 from html import escape
 from unittest.mock import MagicMock, patch
 
@@ -2019,6 +2020,8 @@ def test_buf_kwarg_is_rejected():
     with pytest.raises(TypeError, match="buf is not supported"):
         render_dataframe(_frame(1), buf=buf)
     assert buf.getvalue() == ""
+    # buf=None is Pandas' own default and asks for the HTML back, so it is accepted.
+    assert "<table" in render_dataframe(_frame(1), buf=None)
 
 
 class _InvalidMolecule(oechem.OEGraphMol):
@@ -2035,8 +2038,7 @@ def test_none_and_invalid_molecule_cells():
     df = pd.DataFrame({"mol": pd.Series(mols, dtype=oepd.MoleculeDtype())})
     html = render_dataframe(df, ctx=CNotebookContext(image_format="svg"))
     assert "Empty Molecule" in html and "Invalid Molecule" in html and html.count("<tr") == 5
-    # pandas short-circuits NA scalars before any formatter, so a None cell is its own literal text.
-    assert ">None<" in html
+    assert html.count("<td></td>") == 1 and ">None<" not in html
 
 
 def test_frame_adapter_classification():
@@ -2071,3 +2073,127 @@ def test_duplicate_column_labels_keep_their_own_kinds_and_contexts():
     both.iloc[:, 1].array.metadata["cnotebook"] = CNotebookContext(image_format="png", device_pixel_ratio=1.0)
     html = render_dataframe(both)
     assert "<svg" in html and "data:image/png" in html
+
+
+def test_render_links_kwarg_is_rejected_with_warning():
+    """pandas writes the unescaped cell text into the href of a linkified cell."""
+    df = pd.DataFrame({"u": ['https://example.com/"><img src=x onerror=alert(1)>']})
+    with pytest.warns(CNotebookWarning, match="render_links"):
+        html = render_dataframe(df, render_links=True)
+    assert "<a " not in html and "<img" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
+def test_attribute_valued_kwargs_are_escaped():
+    payload = '"><script>alert(1)</script><table x="'
+    escaped = escape(payload, quote=True)
+    df = pd.DataFrame({"a": [1]})
+    html = render_dataframe(df, table_id=payload, classes=payload, border=payload)
+    table_tag = html[html.index("<table"):html.index(">", html.index("<table")) + 1]
+
+    assert "<script>" not in html
+    assert f' id="{escaped}"' in table_tag and f' border="{escaped}"' in table_tag
+    assert table_tag.split('class="')[1].split('"')[0] == f"dataframe {escaped}"
+
+    from_list = render_dataframe(df, classes=[payload, "safe"])
+    assert "<script>" not in from_list
+    assert f'class="dataframe {escaped} safe"' in from_list
+
+    # pandas checks justify against a fixed list, so no payload of any shape reaches the writer.
+    with pytest.raises(ValueError, match="justify"):
+        render_dataframe(df, justify=payload)
+
+
+def test_attribute_valued_kwargs_keep_legitimate_values():
+    df = pd.DataFrame({"a": [1]})
+    html = render_dataframe(df, table_id="t1", classes=["a", "b"], border=1, justify="left")
+    assert ' id="t1"' in html and ' border="1"' in html
+    assert 'class="dataframe a b"' in html and '<tr style="text-align: left;">' in html
+    # pandas drops the attribute for a falsy border rather than writing border="0".
+    assert "border=" not in render_dataframe(df, border=0)
+
+
+def test_notebook_max_colwidth_guard_is_serialised(monkeypatch):
+    """The notebook writer needs the process-global width option lifted, so renders take turns."""
+    recorded = []
+    entered = threading.Event()
+    release = threading.Event()
+    original = pd.DataFrame.to_html
+
+    def blocking_to_html(self, *args, **kwargs):
+        recorded.append(pd.get_option("display.max_colwidth"))
+        if not entered.is_set():
+            entered.set()
+            release.wait(10)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "to_html", blocking_to_html)
+
+    frames = {"first": _frame(1), "second": _frame(1)}
+    outputs = {}
+
+    def render(key):
+        outputs[key] = render_dataframe(frames[key], notebook=True)
+
+    with pd.option_context("display.max_colwidth", 4):
+        first = threading.Thread(target=render, args=("first",))
+        second = threading.Thread(target=render, args=("second",))
+        first.start()
+        assert entered.wait(10), "the first render never reached to_html"
+        second.start()
+        second.join(0.2)
+        blocked = second.is_alive()
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert blocked, "the second notebook render was not serialised behind the first"
+        assert pd.get_option("display.max_colwidth") == 4
+
+    assert set(outputs) == {"first", "second"}
+    assert recorded == [None, None]
+    assert all("@@CN-" not in out for out in outputs.values())
+
+
+def test_notebook_mode_does_not_truncate_ordinary_strings():
+    """Cell tokens cannot survive truncation, so no cell is truncated under either writer."""
+    text = "x" * 80
+    df = pd.DataFrame({"a": [text]})
+    with pd.option_context("display.max_colwidth", 4):
+        html = render_dataframe(df, notebook=True)
+    assert text in html
+
+
+def test_none_cells_render_empty_for_every_depiction_kind():
+    df = pd.DataFrame({
+        "mol": pd.Series([None], dtype=oepd.MoleculeDtype()),
+        "disp": pd.Series([None], dtype=oepd.DisplayDtype()),
+        "du": pd.Series([None], dtype=oepd.DesignUnitDtype()),
+    })
+    html = render_dataframe(df)
+    assert html.count("<td></td>") == 3 and "None" not in html
+
+
+def test_render_dataframe_leaves_none_cells_in_the_caller_frame():
+    mols = _mols(1)
+    df = pd.DataFrame({"mol": pd.Series([None, *mols], dtype=oepd.MoleculeDtype()), "x": [1, 2]})
+    dtypes_before = list(df.dtypes)
+
+    render_dataframe(df)
+
+    assert list(df.dtypes) == dtypes_before
+    assert df["mol"].iloc[0] is None and df["mol"].iloc[1] is mols[0]
+    assert list(df["x"]) == [1, 2]
+
+
+def test_none_cells_in_the_head_and_tail_of_a_truncated_frame():
+    df = pd.DataFrame({"mol": pd.Series([None, *_mols(3), None], dtype=oepd.MoleculeDtype())})
+    html = render_dataframe(df, max_rows=4)
+    assert html.count("<td></td>") == 2 and ">None<" not in html
+
+
+def test_duplicate_labels_with_a_none_cell():
+    left = pd.DataFrame({"mol": pd.Series([None], dtype=oepd.MoleculeDtype())})
+    right = pd.DataFrame({"mol": pd.Series(_mols(1), dtype=oepd.MoleculeDtype())})
+    df = pd.concat([left, right], axis=1)
+    html = render_dataframe(df)
+    assert html.count("<td></td>") == 1 and html.count("<img") == 1 and ">None<" not in html
