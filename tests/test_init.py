@@ -720,3 +720,134 @@ def test_display_honours_column_contexts():
     with patch("cnotebook._display_html", side_effect=lambda html, env: html):
         cnotebook.display(df)
     assert calls == [1]
+
+
+class TestDisplayC3DMolGridStatic:
+    """Test display() with C3D and MolGrid static parameter handling."""
+
+    def test_display_c3d_without_static(self):
+        """Test display(c3d) works when C3D.display doesn't support static yet."""
+        env = get_env()
+        if not env.c3d_available:
+            pytest.skip("C3D not available")
+        from cnotebook import C3D
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        c3d = C3D()
+        c3d.add_molecule(mol)
+        with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+            result = cnotebook.display(c3d)
+        assert result is not None
+
+    def test_display_c3d_static_none_works(self):
+        """Test display(c3d, static=None) works."""
+        env = get_env()
+        if not env.c3d_available:
+            pytest.skip("C3D not available")
+        from cnotebook import C3D
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        c3d = C3D()
+        c3d.add_molecule(mol)
+        with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+            result = cnotebook.display(c3d, static=None)
+        assert result is not None
+
+    def test_display_c3d_static_true_raises(self):
+        """Test display(c3d, static=True) raises when not yet supported."""
+        env = get_env()
+        if not env.c3d_available:
+            pytest.skip("C3D not available")
+        from cnotebook import C3D
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        c3d = C3D()
+        c3d.add_molecule(mol)
+        with pytest.raises(TypeError, match="C3D.display.*does not support the static option"):
+            cnotebook.display(c3d, static=True)
+
+    def test_display_c3d_static_false_raises(self):
+        """Test display(c3d, static=False) raises when not yet supported."""
+        env = get_env()
+        if not env.c3d_available:
+            pytest.skip("C3D not available")
+        from cnotebook import C3D
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        c3d = C3D()
+        c3d.add_molecule(mol)
+        with pytest.raises(TypeError, match="C3D.display.*does not support the static option"):
+            cnotebook.display(c3d, static=False)
+
+    def test_display_molgrid_without_static(self):
+        """Test display(molgrid) works when MolGrid.display doesn't support static yet."""
+        env = get_env()
+        if not env.molgrid_available:
+            pytest.skip("MolGrid not available")
+        from cnotebook import molgrid
+        from openeye import oechem
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        mg = molgrid([mol])
+        with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+            result = cnotebook.display(mg)
+        assert result is not None
+
+    def test_display_molgrid_static_none_works(self):
+        """Test display(molgrid, static=None) works."""
+        env = get_env()
+        if not env.molgrid_available:
+            pytest.skip("MolGrid not available")
+        from cnotebook import molgrid
+        from openeye import oechem
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        mg = molgrid([mol])
+        with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+            result = cnotebook.display(mg, static=None)
+        assert result is not None
+
+    def test_display_molgrid_static_true_raises(self):
+        """Test display(molgrid, static=True) raises when not yet supported."""
+        env = get_env()
+        if not env.molgrid_available:
+            pytest.skip("MolGrid not available")
+        from cnotebook import molgrid
+        from openeye import oechem
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        mg = molgrid([mol])
+        with pytest.raises(TypeError, match="MolGrid.display.*does not support the static option"):
+            cnotebook.display(mg, static=True)
+
+    def test_display_molgrid_static_false_raises(self):
+        """Test display(molgrid, static=False) raises when not yet supported."""
+        env = get_env()
+        if not env.molgrid_available:
+            pytest.skip("MolGrid not available")
+        from cnotebook import molgrid
+        from openeye import oechem
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "C")
+        mg = molgrid([mol])
+        with pytest.raises(TypeError, match="MolGrid.display.*does not support the static option"):
+            cnotebook.display(mg, static=False)
+
+    def test_display_static_forwarding_when_supported(self):
+        """Test static parameter is forwarded when display method accepts it."""
+        class StubWidget:
+            def __init__(self):
+                self.static_value = None
+            def display(self, static=None):
+                self.static_value = static
+                return f"displayed with static={static}"
+        
+        stub = StubWidget()
+        with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+            result = cnotebook.display(stub, static=True)
+        assert stub.static_value is True
+        
+        stub2 = StubWidget()
+        with patch("cnotebook._display_html", side_effect=lambda html, env: html):
+            result = cnotebook.display(stub2, static=False)
+        assert stub2.static_value is False

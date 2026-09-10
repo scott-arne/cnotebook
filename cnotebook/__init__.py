@@ -419,6 +419,8 @@ def display(obj, ctx: CNotebookContext | None = None, *, static: bool | None = N
     :returns: A displayable object appropriate for the environment.
     :raises TypeError: If the object type is not supported.
     """
+    import inspect
+
     from .core.render import (
         oedisp_to_html,
         oedu_to_html,
@@ -427,8 +429,8 @@ def display(obj, ctx: CNotebookContext | None = None, *, static: bool | None = N
     )
 
     env = get_env()
-    if hasattr(obj, "display") and type(obj).__name__ in ("C3D", "MolGrid"):
-        return obj.display(static=static)
+
+    # Check OpenEye molecule types first
     render_ctx = ctx if ctx is not None else cnotebook_context.get()
     if isinstance(obj, oechem.OEMolBase):
         return _display_html(oemol_to_html(obj, ctx=render_ctx), env)
@@ -438,6 +440,8 @@ def display(obj, ctx: CNotebookContext | None = None, *, static: bool | None = N
         return _display_html(oedu_to_html(obj, ctx=render_ctx), env)
     if isinstance(obj, oedepict.OEImage):
         return _display_html(oeimage_to_html(obj, ctx=render_ctx), env)
+
+    # Check DataFrame types before widgets (DataFrames can have display methods too)
     if env.pandas_available:
         import pandas as pd
         if isinstance(obj, pd.DataFrame):
@@ -448,6 +452,18 @@ def display(obj, ctx: CNotebookContext | None = None, *, static: bool | None = N
         if isinstance(obj, pl.DataFrame):
             from .polars_ext import render_polars_dataframe as _render_polars_dataframe
             return _display_html(_render_polars_dataframe(obj, ctx=ctx), env)
+
+    # Handle objects with display() method (C3D, MolGrid, or test stubs)
+    if hasattr(obj, "display") and callable(obj.display):
+        sig = inspect.signature(obj.display)
+        accepts_static = "static" in sig.parameters
+        if accepts_static:
+            return obj.display(static=static)
+        elif static is None:
+            return obj.display()
+        else:
+            raise TypeError(f"{type(obj).__name__}.display() does not support the static option yet")
+
     raise TypeError(f"Cannot display object of type {type(obj).__name__}")
 
 

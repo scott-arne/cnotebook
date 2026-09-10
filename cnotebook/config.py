@@ -18,6 +18,19 @@ UNSET: Any = object()
 _THEMES = ("auto", "light", "dark")
 _DISPLAY_MODES = ("widget", "static")
 
+# Writable render options with type validators
+_RENDER_OPTIONS: dict[str, Any] = {
+    "image_format": lambda v: v in IMAGE_FORMATS,
+    "width": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
+    "height": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
+    "device_pixel_ratio": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0,
+    "atom_stereo_style": lambda v: True,  # Accepts any value, validated by context setter
+    "bond_stereo_style": lambda v: True,
+    "depiction_style": lambda v: True,
+    "resolution": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0,
+    "callback": lambda v: callable(v) or v is None,
+}
+
 # section -> key -> (default, validator returning True when acceptable)
 DEFAULTS: dict[str, dict[str, tuple[Any, Any]]] = {
     "display": {"mode": ("widget", lambda v: v in _DISPLAY_MODES)},
@@ -65,8 +78,11 @@ def _config_path() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _section(raw: dict[str, Any], name: str, source: str) -> dict[str, Any]:
+def _section(raw: Any, name: str, source: str) -> dict[str, Any]:
     """Validate one section against ``DEFAULTS`` and return accepted values."""
+    if not isinstance(raw, dict):
+        warn(f"{source}: section '{name}' must be a mapping, not {type(raw).__name__}")
+        return {}
     accepted: dict[str, Any] = {}
     for key, value in raw.items():
         spec = DEFAULTS[name].get(key)
@@ -81,19 +97,26 @@ def _section(raw: dict[str, Any], name: str, source: str) -> dict[str, Any]:
     return accepted
 
 
-def _render_section(raw: dict[str, Any], source: str) -> dict[str, Any]:
+def _render_section(raw: Any, source: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        warn(f"{source}: section 'render' must be a mapping, not {type(raw).__name__}")
+        return {}
     accepted: dict[str, Any] = {}
-    probe = CNotebookContext()
     for key, value in raw.items():
-        if not isinstance(getattr(CNotebookContext, key, None), property):
+        if key not in _RENDER_OPTIONS:
             warn(f"{source}: unknown key 'render.{key}' ignored")
             continue
+        validator = _RENDER_OPTIONS[key]
+        if not validator(value):
+            warn(f"{source}: invalid value {value!r} for 'render.{key}'")
+            continue
+        # Try setting on a probe context to catch any remaining validation errors
+        probe = CNotebookContext()
         try:
             setattr(probe, key, value)
-        except (ValueError, TypeError) as exc:
-            warn(f"{source}: invalid value {value!r} for 'render.{key}' ({exc})")
-            continue
-        accepted[key] = value
+            accepted[key] = value
+        except (ValueError, TypeError, AttributeError) as exc:
+            warn(f"{source}: cannot set 'render.{key}' to {value!r}: {exc}")
     return accepted
 
 
@@ -168,22 +191,45 @@ def configure(
     :raises ValueError: If a value is not acceptable.
     :raises KeyError: If a key is unknown.
     """
-    cfg = get_config()
+    # Validate everything first before applying any changes (atomicity)
     if display_mode is not None:
         if display_mode not in _DISPLAY_MODES:
             raise ValueError(f"display_mode must be one of {_DISPLAY_MODES} (got {display_mode!r})")
-        cfg.display_mode = display_mode
+
+    # Validate c3d and molgrid options
+    validated_updates: dict[str, dict[str, Any]] = {}
     for name, values in (("c3d", c3d), ("molgrid", molgrid)):
+        validated_updates[name] = {}
         for key, value in (values or {}).items():
             if key not in DEFAULTS[name]:
                 raise KeyError(f"Unknown {name} option {key!r}")
             if not DEFAULTS[name][key][1](value):
                 raise ValueError(f"Invalid value {value!r} for {name}.{key}")
-            getattr(cfg, name)[key] = value
-    ctx = cnotebook_context.get()
+            validated_updates[name][key] = value
+
+    # Validate render options
+    validated_render: dict[str, Any] = {}
+    probe = CNotebookContext()
     for key, value in render_options.items():
-        if not isinstance(getattr(CNotebookContext, key, None), property):
+        if key not in _RENDER_OPTIONS:
             raise KeyError(f"Unknown render option {key!r}")
+        if not _RENDER_OPTIONS[key](value):
+            raise ValueError(f"Invalid value {value!r} for render option {key!r}")
+        # Try setting on probe to catch any remaining issues
+        try:
+            setattr(probe, key, value)
+            validated_render[key] = value
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError(f"Cannot set render option {key!r} to {value!r}: {exc}") from exc
+
+    # All validation passed; now apply changes atomically
+    cfg = get_config()
+    if display_mode is not None:
+        cfg.display_mode = display_mode
+    for name in ("c3d", "molgrid"):
+        getattr(cfg, name).update(validated_updates[name])
+    ctx = cnotebook_context.get()
+    for key, value in validated_render.items():
         setattr(ctx, key, value)
         cfg.render[key] = value
 

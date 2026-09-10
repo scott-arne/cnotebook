@@ -89,3 +89,140 @@ def test_configure_and_resolve_precedence(fresh_config):
         fresh_config.configure(display_mode="sideways")
     with pytest.raises(KeyError):
         fresh_config.resolve("c3d", "bogus", fresh_config.UNSET)
+
+
+def test_scalar_section_warns_and_imports(tmp_path, monkeypatch):
+    """Test that scalar section values warn but don't prevent import."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "bad.toml"
+    path.write_text('[display]\nmode = "static"\nrender = 5\n')
+    code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0
+    assert "OK" in result.stdout
+    assert "render" in result.stderr or "5" in result.stderr
+
+
+def test_array_section_warns_and_imports(tmp_path, monkeypatch):
+    """Test that array section values warn but don't prevent import."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "bad.toml"
+    path.write_text('[display]\nmode = "static"\nc3d = ["a", "b"]\n')
+    code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0
+    assert "OK" in result.stdout
+    assert "c3d" in result.stderr
+
+
+def test_unknown_render_key_warns_and_imports(tmp_path, monkeypatch):
+    """Test that unknown render keys warn but don't prevent import."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "bad.toml"
+    path.write_text('[render]\nbogus_option = "value"\n')
+    code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0
+    assert "OK" in result.stdout
+    assert "bogus_option" in result.stderr or "unknown" in result.stderr.lower()
+
+
+def test_readonly_render_property_warns_and_imports(tmp_path, monkeypatch):
+    """Test that read-only render properties warn but don't prevent import."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "bad.toml"
+    path.write_text('[render]\nsvg_data = "bad"\n')
+    code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0
+    assert "OK" in result.stdout
+
+
+def test_wrong_type_render_option_warns_and_imports(tmp_path, monkeypatch):
+    """Test that wrong-type render options warn but don't prevent import."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "bad.toml"
+    path.write_text('[render]\nwidth = "not a number"\n')
+    code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0
+    assert "OK" in result.stdout
+    assert "width" in result.stderr or "not a number" in result.stderr
+
+
+def test_configure_unknown_key_doesnt_change_state(fresh_config):
+    """Test that configure with unknown key doesn't partially apply changes."""
+    fresh_config.get_config()
+    from cnotebook.core.context import cnotebook_context
+
+    original_display_mode = fresh_config.get_config().display_mode
+    original_c3d_width = fresh_config.get_config().c3d["width"]
+    original_ctx_width = cnotebook_context.get().width
+
+    with pytest.raises(KeyError):
+        fresh_config.configure(display_mode="static", c3d={"bogus": 1})
+
+    assert fresh_config.get_config().display_mode == original_display_mode
+    assert fresh_config.get_config().c3d["width"] == original_c3d_width
+    assert cnotebook_context.get().width == original_ctx_width
+
+
+def test_configure_wrong_type_doesnt_change_state(fresh_config):
+    """Test that configure with wrong type doesn't partially apply changes."""
+    fresh_config.get_config()
+    from cnotebook.core.context import cnotebook_context
+
+    original_display_mode = fresh_config.get_config().display_mode
+    original_c3d_width = fresh_config.get_config().c3d["width"]
+    original_ctx_width = cnotebook_context.get().width
+
+    with pytest.raises(ValueError):
+        fresh_config.configure(display_mode="static", c3d={"width": "wide"})
+
+    assert fresh_config.get_config().display_mode == original_display_mode
+    assert fresh_config.get_config().c3d["width"] == original_c3d_width
+    assert cnotebook_context.get().width == original_ctx_width
+
+
+def test_configure_invalid_display_mode_doesnt_change_state(fresh_config):
+    """Test that configure with invalid display_mode doesn't partially apply changes."""
+    fresh_config.get_config()
+    from cnotebook.core.context import cnotebook_context
+
+    original_c3d_width = fresh_config.get_config().c3d["width"]
+    original_ctx_width = cnotebook_context.get().width
+
+    with pytest.raises(ValueError):
+        fresh_config.configure(display_mode="sideways", c3d={"width": 500})
+
+    assert fresh_config.get_config().c3d["width"] == original_c3d_width
+    assert cnotebook_context.get().width == original_ctx_width
+
+
+def test_configure_readonly_render_option_raises(fresh_config):
+    """Test that configure rejects read-only render properties."""
+    fresh_config.get_config()
+    with pytest.raises((KeyError, AttributeError)):
+        fresh_config.configure(svg_data="bad")
+
+
+def test_configure_wrong_type_render_option_raises(fresh_config):
+    """Test that configure rejects wrong-type render options."""
+    fresh_config.get_config()
+    from cnotebook.core.context import cnotebook_context
+
+    original_width = cnotebook_context.get().width
+    with pytest.raises((ValueError, TypeError)):
+        fresh_config.configure(width="not a number")
+
+    assert cnotebook_context.get().width == original_width
