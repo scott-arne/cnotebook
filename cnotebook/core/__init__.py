@@ -3,7 +3,7 @@
 Imports here require only the OpenEye Toolkits and the standard library.
 """
 
-from cnotebook.core import viewer3d, vocabulary
+from cnotebook.core import formatters, viewer3d, vocabulary
 from cnotebook.core.context import CNotebookContext, RenderContext
 from cnotebook.core.convert import (
     MapData,
@@ -53,6 +53,7 @@ __all__ = [
     "convert_design_unit",
     "convert_map",
     "convert_molecule",
+    "formatters",
     "highlight_alerts",
     "load_design_unit",
     "load_molecule",
