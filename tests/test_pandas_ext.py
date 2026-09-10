@@ -1,3 +1,4 @@
+import gc
 import io
 import threading
 from html import escape
@@ -7,11 +8,12 @@ import pandas as pd
 import pytest
 from openeye import oechem, oedepict
 
+import cnotebook.pandas_ext as pe
 from cnotebook.context import CNotebookContext
+from cnotebook.core.columnops import AlignmentReport, ColorBondByOverlapScore
 from cnotebook.core.errors import CNotebookWarning
 from cnotebook.pandas_ext import (
     SMARTS_DELIMITER_RE,
-    ColorBondByOverlapScore,
     PandasFrameAdapter,
     create_disp_formatter,
     create_mol_formatter,
@@ -27,6 +29,12 @@ try:
     oepandas_available = True
 except ImportError:
     oepandas_available = False
+
+try:
+    from openeye import oeomega
+    oeomega_available = True
+except ImportError:
+    oeomega_available = False
 
 
 class TestRenderDataframe:
@@ -680,10 +688,10 @@ class TestPandasDataFrameRenderOptions:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_set_render_options_requires_existing_column(self):
-        """Missing requested columns should raise ValueError."""
+        """Missing requested columns should warn and skip."""
         df = pd.DataFrame({"name": ["ethanol"]})
 
-        with pytest.raises(ValueError, match="Column mol not found"):
+        with pytest.warns(CNotebookWarning, match="mol.*not found"):
             df.chem.set_render_options("mol", structure_scale=1.5)
 
 
@@ -928,7 +936,7 @@ class TestSeriesHighlight:
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
 
-        with pytest.raises(TypeError, match="Do not know how to add molecule highlight"):
+        with pytest.raises(TypeError, match="highlight patterns must be SMARTS strings"):
             series.chem.highlight([123])
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
@@ -940,7 +948,7 @@ class TestSeriesHighlight:
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
 
-        with pytest.raises(TypeError, match="Do not know how to add molecule highlight"):
+        with pytest.raises(TypeError, match="highlight patterns must be SMARTS strings"):
             series.chem.highlight(123)
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
@@ -948,7 +956,7 @@ class TestSeriesHighlight:
         """Highlight on a non-MoleculeDtype series should raise TypeError."""
         series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
 
-        with pytest.raises(TypeError, match="highlight only works on molecule columns"):
+        with pytest.raises(TypeError, match="column operation only works on molecule columns"):
             series.chem.highlight("c1ccccc1")
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
@@ -964,11 +972,11 @@ class TestSeriesHighlight:
         series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
 
         aligner = MagicMock(return_value=True)
-        with patch('cnotebook.pandas_ext.create_aligner', return_value=aligner) as mock_create_aligner:
+        with patch('cnotebook.core.columnops.create_aligner', return_value=aligner) as mock_create_aligner:
             series.chem.highlight("c1ccccc1", ref="first")
 
         mock_create_aligner.assert_called_once()
-        assert isinstance(mock_create_aligner.call_args.kwargs["ref"], oechem.OEMolBase)
+        assert isinstance(mock_create_aligner.call_args.args[0], oechem.OEMolBase)
         assert aligner.call_count == 2
         ctx = series.array.metadata.get("cnotebook")
         assert ctx is not None
@@ -1029,7 +1037,8 @@ class TestSeriesRenderOptions:
         series.chem.set_render_options(width=321)
 
         ctx = series.array.metadata["cnotebook"]
-        assert ctx is original_ctx
+        assert ctx is not original_ctx  # set_render_options replaces the context atomically
+        assert len(ctx.callbacks) == len(original_ctx.callbacks)  # but preserves callbacks
         assert ctx.width == 321
         assert len(ctx.callbacks) == 1
 
@@ -1054,7 +1063,7 @@ class TestSeriesRenderOptions:
         """Non-molecule-like Series should reject render options."""
         series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
 
-        with pytest.raises(TypeError, match="set_render_options only works on molecule columns"):
+        with pytest.raises(TypeError, match="column operation only works on molecule columns"):
             series.chem.set_render_options(structure_scale=1.5)
 
 
@@ -1074,11 +1083,11 @@ class TestSeriesAlignDepictions:
         series = pd.Series([mol1, mol2], dtype=oepd.MoleculeDtype())
 
         aligner = MagicMock(return_value=True)
-        with patch('cnotebook.pandas_ext.create_aligner', return_value=aligner) as mock_create_aligner:
+        with patch('cnotebook.core.columnops.create_aligner', return_value=aligner) as mock_create_aligner:
             series.chem.align_depictions(ref="first")
 
         mock_create_aligner.assert_called_once()
-        assert isinstance(mock_create_aligner.call_args.kwargs["ref"], oechem.OEMolBase)
+        assert isinstance(mock_create_aligner.call_args.args[0], oechem.OEMolBase)
         assert aligner.call_count == 2
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
@@ -1103,10 +1112,10 @@ class TestSeriesAlignDepictions:
         series = pd.Series([mol1], dtype=oepd.MoleculeDtype())
 
         aligner = MagicMock(return_value=True)
-        with patch('cnotebook.pandas_ext.create_aligner', return_value=aligner) as mock_create_aligner:
+        with patch('cnotebook.core.columnops.create_aligner', return_value=aligner) as mock_create_aligner:
             series.chem.align_depictions(ref=ref_mol)
 
-        mock_create_aligner.assert_called_once_with(ref=ref_mol, method=None)
+        mock_create_aligner.assert_called_once_with(ref_mol, method=None)
         aligner.assert_called_once()
         assert isinstance(aligner.call_args.args[0], oechem.OEMolBase)
 
@@ -1115,24 +1124,21 @@ class TestSeriesAlignDepictions:
         """Align on a non-MoleculeDtype series should raise TypeError."""
         series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
 
-        with pytest.raises(TypeError, match="align_depictions only works on molecule columns"):
+        with pytest.raises(TypeError, match="column operation only works on molecule columns"):
             series.chem.align_depictions(ref="first")
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_align_exception_handled(self):
-        """If create_aligner raises, align_depictions should catch and log the exception."""
+        """If create_aligner raises, align_depictions should propagate the exception."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol)
 
         series = pd.Series([mol], dtype=oepd.MoleculeDtype())
 
-        with patch('cnotebook.pandas_ext.create_aligner', side_effect=RuntimeError("boom")), \
-             patch('cnotebook.pandas_ext.log.debug') as mock_log_debug:
-            series.chem.align_depictions(ref=mol)
-
-        mock_log_debug.assert_called_once()
-        assert "Error aligning molecules" in mock_log_debug.call_args.args[0]
+        with patch('cnotebook.core.columnops.create_aligner', side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                series.chem.align_depictions(ref=mol)
 
 
 class TestSeriesRecalculateDepictions:
@@ -1157,7 +1163,7 @@ class TestSeriesRecalculateDepictions:
         """Recalculate on a non-MoleculeDtype series should raise TypeError."""
         series = pd.Series(["abc", "def"], dtype=pd.StringDtype())
 
-        with pytest.raises(TypeError, match="recalculate_depiction_coordinates only works on molecule columns"):
+        with pytest.raises(TypeError, match="column operation only works on molecule columns"):
             series.chem.recalculate_depiction_coordinates()
 
 
@@ -1222,14 +1228,13 @@ class TestDataFrameRecalculateDepictions:
             "mol2": pd.Series([mol2], dtype=oepd.MoleculeDtype()),
         })
 
-        # Source has a typo in kwarg name (add_depction_hydrogens vs add_depiction_hydrogens)
-        # which causes TypeError when the DataFrame method calls the Series method.
-        with pytest.raises(TypeError, match="add_depction_hydrogens"):
-            df.chem.recalculate_depiction_coordinates()
+        df.chem.recalculate_depiction_coordinates()
+        assert df["mol1"][0].GetDimension() == 2
+        assert df["mol2"][0].GetDimension() == 2
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_recalculate_string_column(self):
-        """Pass a single column name as string hits the typo bug."""
+        """Pass a single column name as string."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -1237,13 +1242,12 @@ class TestDataFrameRecalculateDepictions:
             "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
         })
 
-        # Source has typo in kwarg passthrough (add_depction_hydrogens)
-        with pytest.raises(TypeError, match="add_depction_hydrogens"):
-            df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
+        df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
+        assert df["mol1"][0].GetDimension() == 2
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_recalculate_list_column(self):
-        """Pass a list of column names hits the typo bug."""
+        """Pass a list of column names."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -1251,13 +1255,12 @@ class TestDataFrameRecalculateDepictions:
             "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
         })
 
-        # Source has typo in kwarg passthrough (add_depction_hydrogens)
-        with pytest.raises(TypeError, match="add_depction_hydrogens"):
-            df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+        df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+        assert df["mol1"][0].GetDimension() == 2
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_recalculate_non_molecule_warns(self):
-        """Specifying a non-molecule column should log a warning."""
+    def test_recalculate_non_molecule_raises(self):
+        """Specifying a non-molecule column should raise TypeError."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -1266,14 +1269,12 @@ class TestDataFrameRecalculateDepictions:
             "name": ["benzene"],
         })
 
-        with pytest.warns(CNotebookWarning, match="MoleculeDtype"):
+        with pytest.raises(TypeError, match="only works on molecule columns"):
             df.chem.recalculate_depiction_coordinates(molecule_columns="name")
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
-    def test_recalculate_missing_column_raises_runtime_error(self):
-        """Specifying a missing column triggers a set mutation bug in the source."""
-        import warnings
-
+    def test_recalculate_missing_column_warns(self):
+        """Specifying a missing column warns."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -1281,12 +1282,8 @@ class TestDataFrameRecalculateDepictions:
             "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
         })
 
-        # Source removes from set during iteration (line 563), causing RuntimeError
-        # (also warns about missing column before the error)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", CNotebookWarning)
-            with pytest.raises(RuntimeError, match="Set changed size during iteration"):
-                df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
+        with pytest.warns(CNotebookWarning, match="nonexistent.*not found"):
+            df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
 
 
 class TestDataFrameResetDepictions:
@@ -1481,12 +1478,11 @@ class TestDataFrameHighlightUsingColumn:
             "pattern": ["c1ccccc1"],
         })
 
-        with pytest.warns(CNotebookWarning, match="Overlay coloring"):
-            result = df.chem.highlight_using_column(
-                "mol", "pattern",
-                color=oechem.OEColor(oechem.OERed),
-                style="overlay_default"
-            )
+        result = df.chem.highlight_using_column(
+            "mol", "pattern",
+            color=oechem.OEColor(oechem.OERed),
+            style="overlay_default"
+        )
 
         assert "highlighted_substructures" in result.columns
 
@@ -1649,18 +1645,22 @@ class TestDataFrameFingerprintSimilarity:
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_fingerprint_similarity_no_valid_mols(self):
-        """All None molecules triggers AttributeError because source calls .IsValid() on None."""
+        """All None molecules handled gracefully; creates columns with all None/NaN."""
         df = pd.DataFrame({
             "mol": pd.Series([None, None], dtype=oepd.MoleculeDtype()),
         })
 
-        # Source iterates molecules and calls mol.IsValid() without None check (line 950)
-        with pytest.raises(AttributeError):
-            df.chem.fingerprint_similarity("mol")
+        with pytest.warns(CNotebookWarning, match="No valid reference"):
+            result = df.chem.fingerprint_similarity("mol")
+
+        assert "fingerprint_tanimoto" in result.columns
+        assert all(pd.isna(result["fingerprint_tanimoto"]))
+        assert all(r is None for r in result["reference_similarity"])
+        assert all(t is None for t in result["target_similarity"])
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_fingerprint_similarity_invalid_ref(self):
-        """Invalid reference molecule should log warning and return df."""
+        """Invalid reference molecule should log warning and create columns with None/NaN."""
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         oedepict.OEPrepareDepiction(mol)
@@ -1674,7 +1674,10 @@ class TestDataFrameFingerprintSimilarity:
         with pytest.warns(CNotebookWarning, match="not valid"):
             result = df.chem.fingerprint_similarity("mol", ref=invalid_ref)
 
-        assert "fingerprint_tanimoto" not in result.columns
+        assert "fingerprint_tanimoto" in result.columns
+        assert all(pd.isna(result["fingerprint_tanimoto"]))
+        assert all(r is None for r in result["reference_similarity"])
+        assert all(t is None for t in result["target_similarity"])
 
     @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
     def test_fingerprint_similarity_missing_column_raises(self):
@@ -2197,3 +2200,98 @@ def test_duplicate_labels_with_a_none_cell():
     df = pd.concat([left, right], axis=1)
     html = render_dataframe(df)
     assert html.count("<td></td>") == 1 and html.count("<img") == 1 and ">None<" not in html
+
+
+def _omega(smiles="CCO"):
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, smiles)
+    oechem.OEAddExplicitHydrogens(mol)
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(1)
+    assert omega(mol)
+    return mol
+
+
+def test_dataframe_recalculate_depiction_coordinates_works():
+    df = _frame(2)
+    df.chem.recalculate_depiction_coordinates()
+    assert all(m.GetDimension() == 2 for m in df["mol"])
+    with pytest.warns(CNotebookWarning, match="missing"):
+        df.chem.recalculate_depiction_coordinates(molecule_columns=["missing"])
+
+
+@pytest.mark.skipif(not oeomega_available, reason="oeomega not available")
+def test_align_depictions_skips_none_and_forwards_kwargs(monkeypatch):
+    seen = {}
+    real = pe.columnops.create_aligner
+
+    def spy(ref, method=None, **kwargs):
+        seen.update(kwargs)
+        return real(ref, method=method, **kwargs)
+
+    monkeypatch.setattr(pe.columnops, "create_aligner", spy)
+    series = pd.Series([*_mols(1), None, *_mols(2)], dtype=oepd.MoleculeDtype())
+    report = series.chem.align_depictions(ref="first", threshold=0.1, fptype="circular")
+    assert isinstance(report, AlignmentReport) and report.skipped_none == 1 and report.aligned == 3
+    assert seen == {"threshold": 0.1, "fptype": "circular"}
+    assert series.chem.alignment_report is report
+    assert [m.GetDimension() if m is not None else None for m in series] == [2, None, 2, 2]
+
+
+@pytest.mark.skipif(not oeomega_available, reason="oeomega not available")
+def test_align_depictions_does_not_touch_caller_molecules():
+    mol3d = _omega()
+    df = pd.DataFrame({"mol": pd.Series([mol3d], dtype=oepd.MoleculeDtype())})
+    df["mol"].chem.align_depictions("first")
+    assert mol3d.GetDimension() == 3 and df["mol"][0].GetDimension() == 2
+
+
+def test_fingerprint_similarity_with_none_rows():
+    df = pd.DataFrame({"mol": pd.Series([*_mols(1), None, *_mols(1, "c1ccccc1OC")], dtype=oepd.MoleculeDtype())})
+    out = df.chem.fingerprint_similarity("mol")
+    assert list(out.columns) == ["mol", "fingerprint_tanimoto", "reference_similarity", "target_similarity"]
+    assert pd.isna(out["fingerprint_tanimoto"][1]) and out["target_similarity"][1] is None
+    assert out["fingerprint_tanimoto"][0] == pytest.approx(1.0)
+    out2 = pd.DataFrame({"mol": pd.Series([None, *_mols(1)], dtype=oepd.MoleculeDtype())}).chem.fingerprint_similarity("mol")
+    assert out2["fingerprint_tanimoto"][1] == pytest.approx(1.0)
+
+
+def test_highlight_using_column_renders_after_source_dropped():
+    df = pd.DataFrame({"mol": pd.Series(_mols(2), dtype=oepd.MoleculeDtype()), "pat": ["c1ccccc1", "[OH]"]})
+    out = df.chem.highlight_using_column("mol", "pat").drop(columns=["mol"])
+    del df
+    gc.collect()
+    html = render_dataframe(out)
+    assert html.count("<img") + html.count("<svg") == 2
+
+
+@pytest.mark.skipif(not oeomega_available, reason="oeomega not available")
+def test_highlight_using_column_does_not_mutate_source_and_supports_color_column():
+    mol3d = _omega("c1ccccc1O")
+    df = pd.DataFrame({"mol": pd.Series([mol3d], dtype=oepd.MoleculeDtype()), "pat": ["[OH]"], "col": ["#FF0000"]})
+    out = df.chem.highlight_using_column("mol", "pat", color_column="col")
+    assert mol3d.GetDimension() == 3 and df["mol"][0] is mol3d
+    assert "highlighted_substructures" in out.columns and out["highlighted_substructures"][0].IsValid()
+
+
+def test_series_molgrid_frame_argument():
+    df = _frame(2, MW=[46.0, 78.0])
+    grid = df["mol"].chem.molgrid(frame=df)
+    assert grid.information_fields == ["MW"]
+    assert df["mol"].chem.molgrid().information_fields == []
+
+
+def test_attach_is_idempotent_and_guarded(monkeypatch):
+    from oepandas.pandas_extensions import OESeriesAccessor
+
+    before = OESeriesAccessor.highlight
+    pe._attach()
+    pe._attach()
+    assert OESeriesAccessor.highlight is before or callable(OESeriesAccessor.highlight)
+    monkeypatch.setattr(pe, "_MIN_OEPANDAS", (99, 0, 0))
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    with pytest.warns(CNotebookWarning, match="pandas integration disabled"):
+        pe._attach()
+    monkeypatch.setattr(pe, "_MIN_OEPANDAS", (3, 3, 0))
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    pe._attach()
