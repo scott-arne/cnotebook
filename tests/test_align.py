@@ -1,6 +1,6 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from openeye import oechem, oedepict, oegraphsim
 
 from cnotebook.align import (
@@ -891,3 +891,100 @@ def test_report_dataclasses():
     assert report.failed == [2]
     result = SimilarityResult(tanimotos=[1.0, None], reference=[None, None], target=[None, None])
     assert result.tanimotos[1] is None
+
+
+def test_mcss_validate_never_calls_single_match():
+    """Prove OEMCSSearchAligner.validate uses Match iterator, never SingleMatch."""
+    class FakeMCSSearch:
+        def SingleMatch(self, mol):
+            raise AssertionError("SingleMatch must not be called")
+        
+        def Match(self, mol, exhaust):
+            # Return empty iterator for no match, one item for match
+            if mol.NumAtoms() > 5:
+                return iter([object()])
+            return iter([])
+    
+    fake_mcss = FakeMCSSearch()
+    aligner = OEMCSSearchAligner.__new__(OEMCSSearchAligner)
+    aligner.mcss = fake_mcss
+    aligner.refmol = None
+    
+    # Small molecule - no match
+    small_mol = _mol("CC")
+    assert aligner.validate(small_mol) is False
+    
+    # Large molecule - match
+    large_mol = _mol("c1ccccc1O")
+    assert aligner.validate(large_mol) is True
+
+
+def test_subsearch_reference_immutability():
+    """Prove OESubSearchAligner copies OESubSearch references and never mutates them."""
+    # Create a reference OESubSearch
+    ref_ss = oechem.OESubSearch("c1ccccc1")
+    
+    # Snapshot state before aligner construction
+    original_dimension = ref_ss.GetPattern().GetDimension()
+    
+    # Construct aligner
+    aligner = OESubSearchAligner(ref_ss)
+    
+    # Invoke aligner on a molecule
+    target = _mol("c1ccccc1O")
+    aligner(target)
+    
+    # Assert caller's object is unchanged
+    assert ref_ss.GetPattern().GetDimension() == original_dimension
+    
+    # Assert aligner holds its own copy
+    assert aligner.ss is not ref_ss
+    
+    # Assert copy's pattern has 2D coordinates
+    assert aligner.ss.GetPattern().GetDimension() == 2
+
+
+def test_query_reference_immutability():
+    """Prove OESubSearchAligner copies OEQMolBase references and never mutates them."""
+    # Create a query molecule
+    query_mol = oechem.OEQMol()
+    oechem.OEParseSmarts(query_mol, "c1ccccc1")
+    
+    # Snapshot state before aligner construction
+    original_dimension = query_mol.GetDimension()
+    
+    # Construct aligner with query molecule
+    aligner = OESubSearchAligner(query_mol)
+    
+    # Invoke aligner on a molecule
+    target = _mol("c1ccccc1O")
+    aligner(target)
+    
+    # Assert caller's query molecule is unchanged
+    assert query_mol.GetDimension() == original_dimension
+    
+    # Assert aligner's pattern has 2D coordinates
+    assert aligner.ss.GetPattern().GetDimension() == 2
+
+
+def test_prebuilt_mcss_configuration():
+    """Prove create_aligner copies prebuilt OEMCSSearch and applies configuration."""
+    # Create a reference molecule and prebuilt MCS search
+    ref = _mol("c1ccccc1O")
+    oedepict.OEPrepareDepiction(ref)
+    
+    original_mcss = oechem.OEMCSSearch(oechem.OEMCSType_Approximate)
+    original_mcss.Init(ref, oechem.OEExprOpts_DefaultAtoms, oechem.OEExprOpts_DefaultBonds)
+    original_min_atoms = original_mcss.GetMinAtoms()
+    
+    # Create aligner with min_atoms configuration
+    aligner = create_aligner(original_mcss, min_atoms=4)
+    
+    # Assert aligner's copied search has the configured minimum
+    assert aligner.mcss.GetMinAtoms() == 4
+    
+    # Assert caller's search is unchanged
+    assert original_mcss.GetMinAtoms() == original_min_atoms
+    
+    # Assert it's a copy
+    assert aligner.mcss is not original_mcss
