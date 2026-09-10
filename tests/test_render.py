@@ -312,15 +312,13 @@ class TestRenderExceedsMaxHeavyAtoms:
 
         assert mock_image.DrawText.call_count == 2
 
-    @patch('cnotebook.core.render.create_img_tag')
-    @patch('openeye.oedepict.OEWriteImageToString')
+    @patch('cnotebook.core.render.oeimage_to_html')
     @patch('cnotebook.core.render._create_exceeds_heavy_atoms_image')
-    def test_render_exceeds_max_heavy_atoms(self, mock_create_image, mock_write_image, mock_create_img):
+    def test_render_exceeds_max_heavy_atoms(self, mock_create_image, mock_image_to_html):
         """Test the HTML rendering function delegates to the helper"""
         mock_image = MagicMock()
         mock_create_image.return_value = mock_image
-        mock_write_image.return_value = b'fake_image_bytes'
-        mock_create_img.return_value = '<img>exceeds</img>'
+        mock_image_to_html.return_value = '<img>exceeds</img>'
 
         mock_mol = MagicMock(spec=oechem.OEMolBase)
         ctx = CNotebookContext(min_width=200, min_height=150, image_format="png")
@@ -328,10 +326,7 @@ class TestRenderExceedsMaxHeavyAtoms:
         result = render_exceeds_max_heavy_atoms(mock_mol, ctx=ctx)
 
         mock_create_image.assert_called_once_with(mock_mol, ctx=ctx)
-        mock_create_img.assert_called_once()
-        call_args = mock_create_img.call_args
-        assert call_args[0][0] == 200  # width
-        assert call_args[0][1] == 150  # height
+        mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx)
         assert result == '<img>exceeds</img>'
 
 
@@ -578,14 +573,14 @@ class TestOeduToImage:
         mock_image = MagicMock()
         mock_oeimage.return_value = mock_image
 
-        ctx = CNotebookContext()
+        ctx = CNotebookContext(device_pixel_ratio=1.0)
 
         result = oedu_to_image(mock_du, ctx=ctx)
 
         mock_oedu_to_disp.assert_called_once_with(mock_du, ctx=ctx)
-        mock_oeimage.assert_called_once_with(400.0, 300.0)
+        mock_oeimage.assert_called_once_with(400, 300)
         mock_render.assert_called_once_with(mock_image, mock_disp)
-        mock_draw_label.assert_called_once_with(mock_image)
+        mock_draw_label.assert_called_once_with(mock_image, scale=1.0)
         assert result == mock_image
 
     @patch('cnotebook.core.render._draw_du_label')
@@ -939,6 +934,7 @@ def test_oeimage_to_html_uses_logical_size():
 def test_design_unit_honors_device_pixel_ratio():
     """Design unit PNGs should be oversampled at device_pixel_ratio."""
     import os
+
     from cnotebook.core.render import oedu_to_html
 
     du_path = "examples/assets/spruce_9Q03_ABC__DU__A1CM7_C-502.oedu"

@@ -265,8 +265,8 @@ def render_dataframe(
 
         arr = _as_depictable_molecule_array(df[col].array)
 
-        # Get the cnotebook options for this column
-        series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
+        # Get the cnotebook options for this column (prefer column context over global)
+        series_ctx = get_series_context(arr.metadata)
 
         formatters[col] = create_mol_formatter(ctx=series_ctx)
 
@@ -297,8 +297,8 @@ def render_dataframe(
         arr = df[col].array
         assert isinstance(arr, oepd.DisplayArray)
 
-        # Get column metadata
-        series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
+        # Get column metadata (prefer column context over global)
+        series_ctx = get_series_context(arr.metadata)
 
         formatters[col] = create_disp_formatter(ctx=series_ctx)
 
@@ -326,7 +326,8 @@ def render_dataframe(
             warn(f'Overwriting existing formatter for {col} with a design unit formatter')
 
         arr = df[col].array
-        series_ctx = ctx if ctx is not None else get_series_context(arr.metadata)
+        # Get column metadata (prefer column context over global)
+        series_ctx = get_series_context(arr.metadata)
         formatters[col] = create_du_formatter(ctx=series_ctx)
         col_space[col] = int(series_ctx.width)
 

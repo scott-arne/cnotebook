@@ -102,7 +102,8 @@ def create_img_tag(
         height: float,
         image_mime_type: str,
         image_bytes: bytes,
-        wrap_svg: bool = True
+        wrap_svg: bool = True,
+        explicit_height: bool = False
 
 ) -> str:
     """
@@ -113,24 +114,38 @@ def create_img_tag(
     :param image_mime_type: Image MIME type
     :param image_bytes: Image bytes
     :param wrap_svg: Wrap SVG in a specifically sized <div> tag for maximum control of size
+    :param explicit_height: Emit explicit height in CSS (for clamped output); otherwise use height:auto
     :return: Image tag
     """
     if image_mime_type == "image/svg+xml":
         if wrap_svg:
-            return '<div style=\'width:{w}px;height:{h}px;max-width:none\'>\n\t{svg}\n</div>'.format(
-                w=int(width),
-                h=int(height),
-                svg=image_bytes.decode("utf-8")
-            )
+            if explicit_height:
+                return '<div style=\'width:{w}px;height:{h}px;max-width:none\'>\n\t{svg}\n</div>'.format(
+                    w=int(width),
+                    h=int(height),
+                    svg=image_bytes.decode("utf-8")
+                )
+            else:
+                return '<div style=\'width:{w}px;height:auto;max-width:none\'>\n\t{svg}\n</div>'.format(
+                    w=int(width),
+                    svg=image_bytes.decode("utf-8")
+                )
         else:
             return image_bytes.decode("utf-8")
 
-    return '<img src=\'data:{mime};base64,{data}\' style=\'width:{w}px;height:{h}px;max-width:none\' />'.format(
-        mime=image_mime_type,
-        data=base64.b64encode(image_bytes).decode("utf-8"),
-        w=int(width),
-        h=int(height)
-    )
+    if explicit_height:
+        return '<img src=\'data:{mime};base64,{data}\' style=\'width:{w}px;height:{h}px;max-width:none\' />'.format(
+            mime=image_mime_type,
+            data=base64.b64encode(image_bytes).decode("utf-8"),
+            w=int(width),
+            h=int(height)
+        )
+    else:
+        return '<img src=\'data:{mime};base64,{data}\' style=\'width:{w}px;height:auto;max-width:none\' />'.format(
+            mime=image_mime_type,
+            data=base64.b64encode(image_bytes).decode("utf-8"),
+            w=int(width)
+        )
 
 
 @pass_cnotebook_context
@@ -489,6 +504,9 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext, logical_w
     else:
         display_width, display_height = intrinsic_w, intrinsic_h
 
+    # Track original dimensions before clamping
+    unclamped_width, unclamped_height = display_width, display_height
+
     # Clamp to max dimensions
     if ctx.max_width is not None and display_width > ctx.max_width:
         display_height = display_height * (ctx.max_width / display_width) if display_width else display_height
@@ -497,11 +515,17 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext, logical_w
         display_width = display_width * (ctx.max_height / display_height) if display_height else display_width
         display_height = ctx.max_height
 
+    # Emit explicit height if clamping changed dimensions or both logical dimensions were provided
+    clamping_changed = (display_width != unclamped_width or display_height != unclamped_height)
+    both_logical_dims = (logical_width is not None and logical_height is not None)
+    explicit_height = clamping_changed or both_logical_dims
+
     return create_img_tag(
         display_width,
         display_height,
         image_mime_type=ctx.image_mime_type,
         image_bytes=image_bytes,
-        wrap_svg=not ctx.auto_scale
+        wrap_svg=not ctx.auto_scale,
+        explicit_height=explicit_height
     )
 

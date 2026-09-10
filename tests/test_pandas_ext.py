@@ -149,7 +149,7 @@ class TestCreateMolFormatter:
 
                     assert result == '<img>valid_mol</img>'
                     mock_to_disp.assert_called_once_with(mock_mol, ctx=ctx)
-                    mock_to_html.assert_called_once_with(mock_disp)
+                    mock_to_html.assert_called_once_with(mock_disp, ctx=ctx)
     
     def test_create_mol_formatter_empty_molecule(self):
         """Test formatter with empty molecule"""
@@ -1742,8 +1742,9 @@ def test_highlight_using_column_overlay_produces_different_svg():
     """Test that overlay highlighting actually modifies the rendered output."""
     import pandas as pd
     from openeye import oechem, oedepict
-    from cnotebook.core.render import oedisp_to_html
+
     from cnotebook.core.context import CNotebookContext
+    from cnotebook.core.render import oedisp_to_html
     
     # Create a simple molecule
     mol = oechem.OEGraphMol()
@@ -1781,8 +1782,9 @@ def test_highlight_using_column_traditional_produces_different_svg():
     """Test that traditional highlighting actually modifies the rendered output."""
     import pandas as pd
     from openeye import oechem, oedepict
-    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
+
     from cnotebook.core.context import CNotebookContext
+    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
     
     # Create a simple molecule
     mol = oechem.OEGraphMol()
