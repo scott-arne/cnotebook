@@ -1,14 +1,20 @@
+import contextlib
 import gc
+import re
 import warnings
 
 import pytest
-from openeye import oechem, oedepict
+from openeye import oechem, oedepict, oegraphsim
 
 from cnotebook.core import columnops
 from cnotebook.core.columnops import AlignmentReport, SimilarityResult
-from cnotebook.core.context import CNotebookContext, create_local_context
+from cnotebook.core.context import (
+    CNotebookContext,
+    create_local_context,
+    render_options,
+)
 from cnotebook.core.errors import CNotebookWarning
-from cnotebook.core.render import Depiction
+from cnotebook.core.render import Depiction, make_depiction
 
 
 class ListColumnAdapter:
@@ -219,3 +225,214 @@ def test_fingerprint_similarity_warns_without_valid_reference():
         result = columnops.fingerprint_similarity([None, oechem.OEGraphMol()], None, ctx=ctx)
     assert result.tanimotos == [None, None]
     assert result.reference == [None, None] and result.target == [None, None]
+
+
+def _multiconformer(smiles, conformers=3):
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, smiles)
+    coords = oechem.OEFloatArray(mol.NumAtoms() * 3)
+    for conformer in range(1, conformers):
+        for index in range(len(coords)):
+            coords[index] = float(conformer + index)
+        mol.NewConf(coords)
+    return mol
+
+
+@contextlib.contextmanager
+def _captured_toolkit_output():
+    """Capture OpenEye's own diagnostic stream so leaked toolkit messages fail an assert."""
+    stream = oechem.oeosstream()
+    oechem.OEThrow.SetOutputStream(stream)
+    try:
+        yield stream
+    finally:
+        oechem.OEThrow.SetOutputStream(oechem.oeerr)
+
+
+def _stroke_colors(html):
+    return set(re.findall(r'stroke="([^"]+)"', html))
+
+
+def _unglyphed_html(depiction, ctx):
+    """Render the depiction's own molecule again with no glyph, so only the glyph can differ."""
+    return Depiction(depiction.mol, ctx.create_molecule_display(depiction.mol)).to_html(ctx)
+
+
+def test_align_depictions_preserves_conformer_ensembles():
+    mol = _multiconformer("c1ccccc1O")
+    col = ListColumnAdapter([mol])
+    report = columnops.align_depictions(col, "c1ccccc1")
+    aligned = col.molecules()[0]
+    assert report.aligned == 1
+    assert isinstance(aligned, oechem.OEMol) and aligned.NumConfs() == 3
+    assert aligned is not mol and aligned.GetDimension() == 2
+    assert mol.NumConfs() == 3 and mol.GetDimension() == 0
+
+
+def test_recalculate_depiction_coordinates_preserves_conformer_ensembles():
+    mol = _multiconformer("c1ccccc1O")
+    col = ListColumnAdapter([mol])
+    columnops.recalculate_depiction_coordinates(col)
+    recalculated = col.molecules()[0]
+    assert isinstance(recalculated, oechem.OEMol) and recalculated.NumConfs() == 3
+    assert recalculated is not mol and recalculated.GetDimension() == 2
+    assert mol.NumConfs() == 3 and mol.GetDimension() == 0
+
+
+def test_align_depictions_copies_invalid_rows_too():
+    valid, invalid = _mol("c1ccccc1O"), oechem.OEGraphMol()
+    col = ListColumnAdapter([valid, invalid])
+    report = columnops.align_depictions(col, "c1ccccc1")
+    new = col.molecules()
+    assert report.skipped_invalid == 1 and report.aligned == 1
+    assert new[0] is not valid and new[1] is not invalid and not new[1].IsValid()
+
+
+def test_highlight_failures_leave_the_column_context_unchanged():
+    col = ListColumnAdapter([_mol("c1ccccc1O")])
+    columnops.highlight(col, "c1ccccc1")
+    before = col.get_context(create=False).callbacks
+    assert len(before) == 1
+
+    with (
+        _captured_toolkit_output() as toolkit,
+        pytest.raises(ValueError, match="Invalid SMARTS"),
+    ):
+        columnops.highlight(col, "not a smarts")
+    assert b"SMARTS" not in toolkit.str()
+    with pytest.raises(ValueError, match="Unknown highlight style"):
+        columnops.highlight(col, "[OH]", style="sparkles")
+    with pytest.raises(TypeError, match="Highlight style"):
+        columnops.highlight(col, "[OH]", style=object())
+    with pytest.raises(ValueError, match="Unknown depiction alignment method"):
+        columnops.highlight(col, "[OH]", ref="first", method="bogus")
+
+    assert col.get_context(create=False).callbacks == before
+    assert col.replaced == 0
+
+
+def test_highlight_failure_does_not_create_a_column_context():
+    col = ListColumnAdapter([_mol("CCO")])
+    with _captured_toolkit_output(), pytest.raises(ValueError, match="Invalid SMARTS"):
+        columnops.highlight(col, "not a smarts")
+    assert col.get_context(create=False) is None
+
+
+def test_highlight_callback_applies_the_requested_color_and_style():
+    mol = _mol("c1ccccc1O")
+    col = ListColumnAdapter([mol])
+    columnops.set_render_options(col, image_format="svg")
+    columnops.highlight(col, "c1ccccc1", color="#3A6EC8", style=oedepict.OEHighlightStyle_Stick)
+    ctx = col.get_context(create=False)
+    highlighted = make_depiction(mol, ctx=ctx, apply_callbacks=True).to_html(ctx)
+    control = make_depiction(mol, ctx=ctx, apply_callbacks=False).to_html(ctx)
+    assert highlighted != control
+    assert "#3a6ec8" in highlighted.lower() and "#3a6ec8" not in control.lower()
+    # Stick highlighting draws bonds only; the ball-and-stick style adds the atom circles
+    assert "<circle" not in highlighted
+
+    balls = ListColumnAdapter([mol])
+    columnops.set_render_options(balls, image_format="svg")
+    columnops.highlight(balls, "c1ccccc1", color="#3A6EC8",
+                        style=oedepict.OEHighlightStyle_BallAndStick)
+    ball_ctx = balls.get_context(create=False)
+    ball_html = make_depiction(mol, ctx=ball_ctx, apply_callbacks=True).to_html(ball_ctx)
+    assert "#3a6ec8" in ball_html.lower() and "<circle" in ball_html
+
+
+def test_set_render_options_is_atomic_on_failure():
+    col = ListColumnAdapter([_mol("CCO")])
+    columnops.set_render_options(col, image_format="svg", width=120)
+    with pytest.raises(ValueError, match="image_format"):
+        columnops.set_render_options(col, width=200, image_format="jpeg")
+    ctx = col.get_context(create=False)
+    assert ctx.image_format == "svg" and ctx.width == 120
+
+
+def test_set_render_options_does_not_create_a_context_on_failure():
+    col = ListColumnAdapter([_mol("CCO")])
+    with pytest.raises(ValueError, match="image_format"):
+        columnops.set_render_options(col, width=200, image_format="jpeg")
+    assert col.get_context(create=False) is None
+
+
+def test_set_render_options_keeps_untouched_options_deferred():
+    col = ListColumnAdapter([_mol("CCO")])
+    columnops.set_render_options(col, width=120)
+    ctx = col.get_context(create=False)
+    assert ctx.scope == "local"
+    with render_options(image_format="svg"):
+        assert ctx.image_format == "svg"
+    with render_options(image_format="png"):
+        assert ctx.image_format == "png"
+    assert ctx.width == 120
+
+
+@pytest.mark.parametrize("fptype", ["path", "tree", "circular", "maccs", "lingo"])
+def test_fingerprint_similarity_scores_every_advertised_fingerprint_type(fptype):
+    ctx = CNotebookContext(image_format="svg")
+    mols = [_mol("c1ccccc1O"), _mol("c1ccccc1OC")]
+    if fptype == "lingo":
+        with pytest.warns(CNotebookWarning, match="no per-bond attribution"):
+            result = columnops.fingerprint_similarity(mols, None, fptype=fptype, ctx=ctx)
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", CNotebookWarning)
+            result = columnops.fingerprint_similarity(mols, None, fptype=fptype, ctx=ctx)
+    assert result.tanimotos[0] == pytest.approx(1.0)
+    assert 0.0 < result.tanimotos[1] < 1.0
+    assert all(isinstance(dep, Depiction) for dep in result.target + result.reference)
+
+
+def test_fingerprint_similarity_refuses_to_colour_lingo_overlaps():
+    ctx = CNotebookContext(image_format="svg")
+    mols = [_mol("c1ccccc1OC")]
+    with (
+        _captured_toolkit_output() as toolkit,
+        pytest.warns(CNotebookWarning, match="no per-bond attribution") as record,
+    ):
+        result = columnops.fingerprint_similarity(
+            mols, _mol("c1ccccc1O"), fptype="lingo", ctx=ctx
+        )
+    assert len(record) == 1 and b"Lingo" not in toolkit.str()
+    depiction = result.target[0]
+    assert _stroke_colors(depiction.to_html(ctx)) == _stroke_colors(_unglyphed_html(depiction, ctx))
+
+
+def test_fingerprint_similarity_warns_once_for_zero_overlap_rows():
+    ctx = CNotebookContext(image_format="svg")
+    mols = [_mol("c1ccccc1O"), _mol("[Na+]"), _mol("[Xe]")]
+    with (
+        _captured_toolkit_output() as toolkit,
+        pytest.warns(CNotebookWarning, match="overlap was empty for 2 of 3 rows") as record,
+    ):
+        result = columnops.fingerprint_similarity(mols, None, ctx=ctx)
+    assert len(record) == 1 and b"OEPrepareMultiAlignedDepiction" not in toolkit.str()
+    assert result.tanimotos[1] == pytest.approx(0.0)
+    assert isinstance(result.target[1], Depiction)
+
+
+def test_fingerprint_similarity_matches_an_independent_tanimoto():
+    ctx = CNotebookContext(image_format="svg")
+    ref, target = _mol("c1ccccc1O"), _mol("c1ccccc1OC")
+    result = columnops.fingerprint_similarity([target], ref, ctx=ctx)
+    fingerprints = []
+    for mol in (ref, target):
+        fingerprint = oegraphsim.OEFingerPrint()
+        oegraphsim.OEMakeTreeFP(fingerprint, mol, 4096, 0, 4,
+                                oegraphsim.OEFPAtomType_DefaultTreeAtom,
+                                oegraphsim.OEFPBondType_DefaultTreeBond)
+        fingerprints.append(fingerprint)
+    expected = oegraphsim.OETanimoto(*fingerprints)
+    assert 0.0 < expected < 1.0
+    assert result.tanimotos[0] == pytest.approx(expected)
+
+
+def test_fingerprint_similarity_glyph_colours_bonds_by_overlap():
+    ctx = CNotebookContext(image_format="svg")
+    result = columnops.fingerprint_similarity([_mol("c1ccccc1OC")], _mol("c1ccccc1O"), ctx=ctx)
+    depiction = result.target[0]
+    glyphed = depiction.to_html(ctx)
+    unglyphed = _unglyphed_html(depiction, ctx)
+    assert _stroke_colors(glyphed) > _stroke_colors(unglyphed)
+    assert len(glyphed) > len(unglyphed)

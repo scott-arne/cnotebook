@@ -8,15 +8,17 @@ back through :meth:`ColumnAdapter.replace_molecules`.
 
 from __future__ import annotations
 
+import inspect
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from openeye import oechem, oedepict, oegrapheme, oegraphsim
 
 from cnotebook.core.align import create_aligner, fingerprint_maker
-from cnotebook.core.context import CNotebookContext, create_local_context
+from cnotebook.core.context import DEFERRED, CNotebookContext, create_local_context
 from cnotebook.core.errors import warn
 from cnotebook.core.helpers import create_structure_highlighter
 from cnotebook.core.render import Depiction, make_depiction
@@ -28,6 +30,15 @@ SMARTS_DELIMITER_RE = re.compile(r"\s*[|\r\n\t]+\s*")
 _PATTERN_TYPES = (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)
 _OVERLAY_STYLES = ("overlay_default", "overlay_ball_and_stick")
 _fingerprint_overlap_tag = oechem.OEGetTag("fingerprint_overlap")
+
+# Lingo fingerprints hash SMILES substrings, so their bits cannot be traced back to atoms or bonds
+_UNATTRIBUTABLE_FPTYPES = frozenset({"lingo"})
+
+# Every context option a copy has to carry over, taken from the constructor so that an option
+# added to CNotebookContext later cannot be dropped silently by _detached_context
+_CONTEXT_OPTIONS = tuple(
+    name for name in inspect.signature(CNotebookContext).parameters if name != "scope"
+)
 
 
 @dataclass
@@ -76,7 +87,22 @@ class ColumnAdapter(Protocol):
 
 
 def _copy(mol: oechem.OEMolBase) -> oechem.OEMolBase:
-    return oechem.OEQMol(mol) if isinstance(mol, oechem.OEQMolBase) else oechem.OEGraphMol(mol)
+    """A copy made through the molecule's own model, so ``OEMol`` conformer ensembles survive."""
+    return mol.CreateCopy()
+
+
+@contextmanager
+def _quiet_toolkit() -> Iterator[None]:
+    """Silence OpenEye's own diagnostics for a block that reports its problems itself.
+
+    :returns: A context manager that restores the previous ``OEThrow`` level.
+    """
+    level = oechem.OEThrow.GetLevel()
+    oechem.OEThrow.SetLevel(oechem.OEErrorLevel_Error)
+    try:
+        yield
+    finally:
+        oechem.OEThrow.SetLevel(level)
 
 
 def _column_context(col: ColumnAdapter) -> CNotebookContext:
@@ -87,6 +113,66 @@ def _column_context(col: ColumnAdapter) -> CNotebookContext:
     """
     ctx = col.get_context(create=True)
     return ctx if ctx is not None else create_local_context()
+
+
+def _detached_context(col: ColumnAdapter) -> CNotebookContext:
+    """A copy of the column's context that the column does not see until it is committed.
+
+    ``CNotebookContext.copy`` resolves deferred options, which would pin a column to whatever
+    the global context happened to hold; options the column left deferred stay deferred here.
+    Nothing is created on the column either, so an abandoned copy leaves no trace.
+
+    :param col: Column adapter.
+    :returns: A private context to mutate and then hand to ``set_context``.
+    """
+    ctx = col.get_context(create=False)
+    if ctx is None:
+        return create_local_context()
+    values: dict[str, Any] = {}
+    for name in _CONTEXT_OPTIONS:
+        # Options that are not deferred values at all simply carry their resolved value over
+        deferred = getattr(getattr(ctx, f"_{name}", None), "is_deferred", False)
+        values[name] = DEFERRED if deferred else getattr(ctx, name)
+    return CNotebookContext(scope=ctx.scope, **values)
+
+
+def _highlight_query(pattern: Any) -> Any:
+    """Validate one highlight pattern before it can reach a column context.
+
+    :param pattern: SMARTS string or an OpenEye query object.
+    :returns: The query to build a highlighter from.
+    :raises ValueError: If the pattern cannot be parsed, or is not a valid query.
+    """
+    if isinstance(pattern, str):
+        # The toolkit only prints a parse diagnostic, so the ValueError below is the contract
+        with _quiet_toolkit():
+            search = oechem.OESubSearch(pattern)
+        if not search.IsValid():
+            raise ValueError(f"Invalid SMARTS pattern for highlighting: {pattern!r}")
+        return search
+    if not pattern.IsValid():
+        raise ValueError(f"Invalid {type(pattern).__name__} pattern for highlighting")
+    return pattern
+
+
+def _validate_highlight_style(style: Any) -> None:
+    """Reject highlight styles before they can reach a column context.
+
+    :param style: Overlay style name or an ``OEHighlightStyle`` constant.
+    :raises ValueError: For unknown style names.
+    :raises TypeError: For values that are neither a style name nor a style constant.
+    """
+    if isinstance(style, str):
+        if style not in _OVERLAY_STYLES:
+            raise ValueError(
+                f"Unknown highlight style {style!r} (valid: {', '.join(_OVERLAY_STYLES)}, or an "
+                "oedepict.OEHighlightStyle_ constant)"
+            )
+    elif isinstance(style, bool) or not isinstance(style, int):
+        raise TypeError(
+            "Highlight style must be a style name or an OEHighlightStyle constant "
+            f"(got {type(style).__name__})"
+        )
 
 
 def parse_color(value: Any) -> oechem.OEColor | oechem.OEColorIter:
@@ -124,7 +210,8 @@ def highlight(
     :param method: Alignment method.
     :param align_kwargs: Extra aligner options.
     :returns: The alignment report when *ref* was given, else ``None``.
-    :raises TypeError: For unsupported pattern types.
+    :raises TypeError: For unsupported pattern or style types.
+    :raises ValueError: For unparsable patterns and unknown style names.
     """
     if isinstance(pattern, _PATTERN_TYPES):
         patterns: list[Any] | None = [pattern]
@@ -137,15 +224,22 @@ def highlight(
             "highlight patterns must be SMARTS strings, OESubSearch, OEMCSSearch or OEQMol objects"
         )
 
-    ctx = _column_context(col)
+    # Everything that can fail happens before the column is touched, so a rejected pattern,
+    # a rejected style or a failed alignment cannot leave half a highlight on the context
+    queries = [_highlight_query(item) for item in patterns]
+    _validate_highlight_style(style)
     parsed_color = None if color is None else parse_color(color)
-    for item in patterns:
-        ctx.add_callback(create_structure_highlighter(query=item, color=parsed_color, style=style))
-    col.set_context(ctx)
+    callbacks = [
+        create_structure_highlighter(query=query, color=parsed_color, style=style)
+        for query in queries
+    ]
+    report = align_depictions(col, ref, method=method, **align_kwargs) if ref is not None else None
 
-    if ref is not None:
-        return align_depictions(col, ref, method=method, **align_kwargs)
-    return None
+    ctx = _column_context(col)
+    for callback in callbacks:
+        ctx.add_callback(callback)
+    col.set_context(ctx)
+    return report
 
 
 def align_depictions(
@@ -171,9 +265,7 @@ def align_depictions(
         ref = _copy(first)
 
     # Alignment is chatty about molecules it cannot match; only real errors are useful here
-    level = oechem.OEThrow.GetLevel()
-    oechem.OEThrow.SetLevel(oechem.OEErrorLevel_Error)
-    try:
+    with _quiet_toolkit():
         # create_aligner validates the method name itself and raises for anything unknown
         aligner = create_aligner(ref, method=method, **kwargs)  # type: ignore[arg-type]
         out: list[oechem.OEMolBase | None] = []
@@ -182,9 +274,10 @@ def align_depictions(
                 report.skipped_none += 1
                 out.append(None)
                 continue
+            # Skipped rows are copied too: the column never hands a caller's molecule back
             if not mol.IsValid():
                 report.skipped_invalid += 1
-                out.append(mol)
+                out.append(_copy(mol))
                 continue
             copy = _copy(mol)
             if aligner(copy):
@@ -192,8 +285,6 @@ def align_depictions(
             else:
                 report.failed.append(position)
             out.append(copy)
-    finally:
-        oechem.OEThrow.SetLevel(level)
 
     col.replace_molecules(out)
     col.set_alignment_report(report)
@@ -218,7 +309,9 @@ def set_render_options(col: ColumnAdapter, **options: Any) -> None:
             raise TypeError(f"Unknown render option {name!r}")
         if attribute.fset is None:
             raise TypeError(f"Render option {name!r} is read-only")
-    ctx = _column_context(col)
+    # Values are applied to a private copy, so a rejected one leaves the column neither
+    # half-updated nor holding a context it did not have before
+    ctx = _detached_context(col)
     for name, value in options.items():
         setattr(ctx, name, value)
     col.set_context(ctx)
@@ -392,6 +485,20 @@ def _append_skipped_row(result: SimilarityResult) -> None:
     result.target.append(None)
 
 
+def _overlap_glyph(maxvalue: int, tag: int) -> ColorBondByOverlapScore:
+    """The bond glyph running from pink (no overlap) to dark green (*maxvalue* overlaps).
+
+    :param maxvalue: Highest per-bond overlap count in the pair.
+    :param tag: OEChem data tag holding the per-bond overlap score.
+    :returns: The glyph to add to both displays of the pair.
+    """
+    gradient = oechem.OELinearColorGradient()
+    gradient.AddStop(oechem.OEColorStop(0.0, oechem.OEPinkTint))
+    gradient.AddStop(oechem.OEColorStop(1.0, oechem.OEYellow))
+    gradient.AddStop(oechem.OEColorStop(maxvalue, oechem.OEDarkGreen))
+    return ColorBondByOverlapScore(gradient, tag)
+
+
 def fingerprint_similarity(
     mols: list[Any], ref: oechem.OEMolBase | None, *, fptype: str = "tree", num_bits: int = 4096,
     min_distance: int = 0, max_distance: int = 4,
@@ -399,6 +506,10 @@ def fingerprint_similarity(
     bond_type: str | int = oegraphsim.OEFPBondType_DefaultTreeBond, ctx: CNotebookContext,
 ) -> SimilarityResult:
     """Tanimoto and overlap-coloured depictions of each molecule against *ref*.
+
+    Overlap colouring needs a fingerprint whose bits can be traced back to bonds. Lingo
+    fingerprints cannot, and rows whose overlap is empty have nothing to colour: both still
+    get their Tanimoto and a plain depiction, and both are reported once as a warning.
 
     :param mols: Molecules; ``None``/invalid rows produce ``None`` entries.
     :param ref: Reference molecule; the first valid molecule when ``None``.
@@ -428,8 +539,18 @@ def fingerprint_similarity(
         warn("Fingerprint from reference molecule is invalid")
         return empty
 
+    # Colouring a bond from a fingerprint that cannot be attributed to bonds would invent a
+    # picture the score does not support, so those depictions are left plain
+    attributable = fptype.lower() not in _UNATTRIBUTABLE_FPTYPES
+    if not attributable:
+        warn(
+            f"Fingerprint type {fptype!r} has no per-bond attribution, so the similarity "
+            "depictions are neither aligned nor overlap-coloured"
+        )
+
     tag = _fingerprint_overlap_tag
     result = SimilarityResult([], [], [])
+    without_overlap = 0
     for mol in mols:
         if not isinstance(mol, oechem.OEMolBase) or not mol.IsValid():
             _append_skipped_row(result)
@@ -445,37 +566,51 @@ def fingerprint_similarity(
 
         result.tanimotos.append(oegraphsim.OETanimoto(ref_fp, target_fp))
 
-        # Score each bond by how many fingerprint overlaps it takes part in
-        target_bonds = [0] * target_mol.GetMaxBondIdx()
-        ref_bonds = [0] * ref_mol.GetMaxBondIdx()
-        for match in oegraphsim.OEGetFPOverlap(ref_mol, target_mol, ref_fp.GetFPTypeBase()):
-            for bond in match.GetPatternBonds():
-                ref_bonds[bond.GetIdx()] += 1
-            for bond in match.GetTargetBonds():
-                target_bonds[bond.GetIdx()] += 1
-        for bond in target_mol.GetBonds():
-            bond.SetData(tag, target_bonds[bond.GetIdx()])
-        for bond in ref_mol.GetBonds():
-            bond.SetData(tag, ref_bonds[bond.GetIdx()])
+        glyph = None
+        if attributable:
+            # Score each bond by how many fingerprint overlaps it takes part in
+            target_bonds = [0] * target_mol.GetMaxBondIdx()
+            ref_bonds = [0] * ref_mol.GetMaxBondIdx()
+            overlapping = 0
+            for match in oegraphsim.OEGetFPOverlap(ref_mol, target_mol, ref_fp.GetFPTypeBase()):
+                overlapping += 1
+                for bond in match.GetPatternBonds():
+                    ref_bonds[bond.GetIdx()] += 1
+                for bond in match.GetTargetBonds():
+                    target_bonds[bond.GetIdx()] += 1
 
-        maxvalue = max(0, max(target_bonds, default=0), max(ref_bonds, default=0))
-        gradient = oechem.OELinearColorGradient()
-        gradient.AddStop(oechem.OEColorStop(0.0, oechem.OEPinkTint))
-        gradient.AddStop(oechem.OEColorStop(1.0, oechem.OEYellow))
-        gradient.AddStop(oechem.OEColorStop(maxvalue, oechem.OEDarkGreen))
-        glyph = ColorBondByOverlapScore(gradient, tag)
+            # An empty overlap has nothing to colour and nothing to align to; asking OpenEye
+            # anyway only produces a toolkit diagnostic, so those rows are counted instead
+            if overlapping == 0:
+                without_overlap += 1
+            else:
+                for bond in target_mol.GetBonds():
+                    bond.SetData(tag, target_bonds[bond.GetIdx()])
+                for bond in ref_mol.GetBonds():
+                    bond.SetData(tag, ref_bonds[bond.GetIdx()])
+                glyph = _overlap_glyph(
+                    max(0, max(target_bonds, default=0), max(ref_bonds, default=0)), tag
+                )
 
         oedepict.OEPrepareDepiction(ref_mol, False)
         oedepict.OEPrepareDepiction(target_mol, False)
-        # The overlap iterator is consumed above, so ask for a fresh one to align with
-        overlaps = oegraphsim.OEGetFPOverlap(ref_mol, target_mol, ref_fp.GetFPTypeBase())
-        oedepict.OEPrepareMultiAlignedDepiction(target_mol, ref_mol, overlaps)
+        if glyph is not None:
+            # The overlap iterator is consumed above, so ask for a fresh one to align with
+            overlaps = oegraphsim.OEGetFPOverlap(ref_mol, target_mol, ref_fp.GetFPTypeBase())
+            oedepict.OEPrepareMultiAlignedDepiction(target_mol, ref_mol, overlaps)
 
         # Displays are built without context callbacks; the formatters apply those per render
         ref_dep = Depiction(ref_mol, ctx.create_molecule_display(ref_mol))
         target_dep = Depiction(target_mol, ctx.create_molecule_display(target_mol))
-        oegrapheme.OEAddGlyph(ref_dep.display, glyph, oechem.IsTrueBond())
-        oegrapheme.OEAddGlyph(target_dep.display, glyph, oechem.IsTrueBond())
+        if glyph is not None:
+            oegrapheme.OEAddGlyph(ref_dep.display, glyph, oechem.IsTrueBond())
+            oegrapheme.OEAddGlyph(target_dep.display, glyph, oechem.IsTrueBond())
         result.reference.append(ref_dep)
         result.target.append(target_dep)
+
+    if without_overlap:
+        warn(
+            f"Fingerprint overlap was empty for {without_overlap} of {len(mols)} rows, so those "
+            "depictions are neither aligned nor overlap-coloured"
+        )
     return result
