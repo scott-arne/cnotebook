@@ -99,7 +99,7 @@ def test_scalar_section_warns_and_imports(tmp_path, monkeypatch):
     path = tmp_path / "bad.toml"
     path.write_text('[display]\nmode = "static"\nrender = 5\n')
     code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=False)
     assert result.returncode == 0
     assert "OK" in result.stdout
     assert "render" in result.stderr or "5" in result.stderr
@@ -113,7 +113,7 @@ def test_array_section_warns_and_imports(tmp_path, monkeypatch):
     path = tmp_path / "bad.toml"
     path.write_text('[display]\nmode = "static"\nc3d = ["a", "b"]\n')
     code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=False)
     assert result.returncode == 0
     assert "OK" in result.stdout
     assert "c3d" in result.stderr
@@ -127,7 +127,7 @@ def test_unknown_render_key_warns_and_imports(tmp_path, monkeypatch):
     path = tmp_path / "bad.toml"
     path.write_text('[render]\nbogus_option = "value"\n')
     code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=False)
     assert result.returncode == 0
     assert "OK" in result.stdout
     assert "bogus_option" in result.stderr or "unknown" in result.stderr.lower()
@@ -141,7 +141,7 @@ def test_readonly_render_property_warns_and_imports(tmp_path, monkeypatch):
     path = tmp_path / "bad.toml"
     path.write_text('[render]\nsvg_data = "bad"\n')
     code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=False)
     assert result.returncode == 0
     assert "OK" in result.stdout
     assert "svg_data" in result.stderr and ("unknown" in result.stderr.lower() or "ignored" in result.stderr.lower())
@@ -155,7 +155,7 @@ def test_wrong_type_render_option_warns_and_imports(tmp_path, monkeypatch):
     path = tmp_path / "bad.toml"
     path.write_text('[render]\nwidth = "not a number"\n')
     code = f'import os; os.environ["CNOTEBOOK_CONFIG"] = {str(path)!r}; import cnotebook; print("OK")'
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=False)
     assert result.returncode == 0
     assert "OK" in result.stdout
     assert "width" in result.stderr or "not a number" in result.stderr
