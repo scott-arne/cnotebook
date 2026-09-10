@@ -307,22 +307,33 @@ def render_dataframe(
 
     :param df: Frame to render (never modified).
     :param formatters: Extra Pandas formatters for ordinary columns (copied, never mutated).
-    :param col_space: Extra Pandas ``col_space`` entries (copied, never mutated).
+        Their output is escaped like any other ordinary cell.
+    :param col_space: Extra Pandas ``col_space`` entries (copied, never mutated). For a depiction
+        column an ``int`` entry is widened to at least the image width and a non-``int`` entry is
+        replaced by the image width; non-``int`` entries are escaped before Pandas writes them
+        into the ``style`` attribute.
     :param ctx: Overrides every column context when given; ``None`` honours column contexts.
     :param max_rows: ``None`` for the Pandas display rule, ``<= 0`` for all rows, else the row budget.
-    :param kwargs: Forwarded to ``DataFrame.to_html``; ``escape`` is ignored with a warning.
+    :param kwargs: Forwarded to ``DataFrame.to_html``; ``escape`` is ignored with a warning and
+        ``buf`` is rejected, because this function returns the HTML rather than writing it.
     :returns: HTML table.
+    :raises TypeError: If ``buf`` is passed.
     """
     kwargs = dict(kwargs)
     if "escape" in kwargs:
         kwargs.pop("escape")
         warn("render_dataframe always escapes ordinary cells; the escape argument is ignored")
 
+    # Tokens are only substituted in the returned string, so a buffer would receive raw tokens.
+    if "buf" in kwargs:
+        raise TypeError("render_dataframe returns the HTML; buf is not supported")
+
     # to_html applies its own "columns" argument after the formatters are bound, which
     # would misalign the positional formatter list; select the columns up front instead.
     columns = kwargs.pop("columns", None)
     if columns is not None:
-        df = df[columns]
+        # pd.Index normalises the argument the way to_html's own ensure_index call would.
+        df = df[pd.Index(columns)]
 
     adapter = PandasFrameAdapter(df, ctx=ctx)
     tokens = CellTokens()
@@ -330,14 +341,19 @@ def render_dataframe(
     caller_formatters = dict(formatters or {})
     # Pandas applies a list of formatters by position, which keeps duplicate and non-string labels distinct.
     positional_formatters: list[Any] = [caller_formatters.get(label) for label in labels]
-    widths: dict[Hashable, str | int] = dict(col_space or {})
+    # Pandas interpolates a non-int col_space raw into style="min-width: {value};", so escape it
+    # here; legitimate widths such as "150px" or "10%" are unchanged by escaping.
+    widths: dict[Hashable, str | int] = {
+        label: value if isinstance(value, int) else html.escape(str(value), quote=True)
+        for label, value in (col_space or {}).items()
+    }
 
     for pos, label in enumerate(labels):
         kind = adapter.kind(pos)
         if kind is ColumnKind.OTHER:
             continue
         if positional_formatters[pos] is not None:
-            warn(f"Overwriting the formatter for column {label!r} with the molecule formatter")
+            warn(f"Overwriting the formatter for column {label!r} with the depiction formatter")
         column_ctx = adapter.context(pos)
         positional_formatters[pos] = (
             lambda value, _kind=kind, _ctx=column_ctx: tokens.token_for(cell_html(_kind, value, _ctx))
@@ -347,13 +363,16 @@ def render_dataframe(
             previous = widths.get(label)
             widths[label] = max(int(column_ctx.width), previous) if isinstance(previous, int) else int(column_ctx.width)
 
-    html_out = df.to_html(  # pyright: ignore[reportCallIssue]
-        escape=True,
-        formatters=positional_formatters if any(f is not None for f in positional_formatters) else None,
-        col_space=widths or None,  # pyright: ignore[reportArgumentType]
-        max_rows=adapter.row_budget(max_rows),
-        **kwargs
-    )
+    # A trimmed cell token cannot be substituted, and only one of Pandas' writers lifts the
+    # column width limit itself, so lift it here for every writer kwargs can select.
+    with pd.option_context("display.max_colwidth", None):
+        html_out = df.to_html(  # pyright: ignore[reportCallIssue]
+            escape=True,
+            formatters=positional_formatters if any(f is not None for f in positional_formatters) else None,
+            col_space=widths or None,  # pyright: ignore[reportArgumentType]
+            max_rows=adapter.row_budget(max_rows),
+            **kwargs
+        )
     assert html_out is not None
     return tokens.substitute(html_out)
 

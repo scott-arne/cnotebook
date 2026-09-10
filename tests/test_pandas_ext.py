@@ -1,3 +1,5 @@
+import io
+from html import escape
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -1982,10 +1984,59 @@ def test_render_dataframe_survives_a_small_display_max_colwidth():
     assert "data:image/png" in html and "@@CN-" not in html
 
 
+def test_render_dataframe_survives_a_small_display_max_colwidth_in_notebook_mode():
+    """NotebookFormatter does not lift the width limit itself, so render_dataframe must."""
+    df = _frame(2)
+    with pd.option_context("display.max_colwidth", 4):
+        html = render_dataframe(df, notebook=True)
+    assert html.count("data:image/png") == 2 and "@@CN-" not in html
+
+
+def test_caller_col_space_strings_are_escaped():
+    payload = '1px;"><script>alert(1)</script><th x="'
+    df = pd.DataFrame({"a": [1]})
+    html = render_dataframe(df, col_space={"a": payload})
+    assert "<script>alert(1)</script>" not in html
+    assert f'min-width: {escape(payload, quote=True)};' in html
+    assert "min-width: 150px" in render_dataframe(df, col_space={"a": "150px"})
+
+
+def test_caller_formatter_output_is_escaped():
+    df = pd.DataFrame({"a": [1]})
+    html = render_dataframe(df, formatters={"a": lambda v: "<b>b</b>"})
+    assert "&lt;b&gt;" in html and "<b>b</b>" not in html
+
+
+def test_columns_kwarg_selects_columns():
+    df = _frame(1, keep=["k"], drop=["d"])
+    for columns in (["mol", "keep"], ("mol", "keep")):
+        html = render_dataframe(df, columns=columns)
+        assert ">keep<" in html and ">drop<" not in html and "data:image/png" in html
+
+
+def test_buf_kwarg_is_rejected():
+    buf = io.StringIO()
+    with pytest.raises(TypeError, match="buf is not supported"):
+        render_dataframe(_frame(1), buf=buf)
+    assert buf.getvalue() == ""
+
+
+class _InvalidMolecule(oechem.OEGraphMol):
+    """A molecule with atoms that reports itself invalid; OEChem parses even broken SMILES into valid mols."""
+
+    def IsValid(self):
+        return False
+
+
 def test_none_and_invalid_molecule_cells():
-    df = pd.DataFrame({"mol": pd.Series([None, oechem.OEGraphMol(), *_mols(1)], dtype=oepd.MoleculeDtype())})
+    invalid = _InvalidMolecule()
+    oechem.OESmilesToMol(invalid, "CCO")
+    mols = [None, oechem.OEGraphMol(), invalid, *_mols(1)]
+    df = pd.DataFrame({"mol": pd.Series(mols, dtype=oepd.MoleculeDtype())})
     html = render_dataframe(df, ctx=CNotebookContext(image_format="svg"))
-    assert "Empty Molecule" in html and html.count("<tr") == 4
+    assert "Empty Molecule" in html and "Invalid Molecule" in html and html.count("<tr") == 5
+    # pandas short-circuits NA scalars before any formatter, so a None cell is its own literal text.
+    assert ">None<" in html
 
 
 def test_frame_adapter_classification():
