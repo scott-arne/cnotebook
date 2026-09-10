@@ -29,9 +29,7 @@ class Depiction:
         :param ctx: Render context (image format decides nothing here yet; Task 4 adds oversampling).
         :returns: The rendered image.
         """
-        image = oedepict.OEImage(self.display.GetWidth(), self.display.GetHeight())
-        oedepict.OERenderMolecule(image, self.display)
-        return image
+        return _render_display_image(self.display, ctx)
 
     def to_html(self, ctx: CNotebookContext) -> str:
         """Render the display to an HTML image tag.
@@ -39,7 +37,7 @@ class Depiction:
         :param ctx: Render context.
         :returns: HTML fragment.
         """
-        return oedisp_to_html(self.display, ctx=ctx)
+        return oeimage_to_html(self.render_image(ctx), ctx=ctx, logical_width=self.display.GetWidth(), logical_height=self.display.GetHeight())
 
 
 def prepare_depiction_copy(
@@ -70,6 +68,29 @@ def make_depiction(mol: oechem.OEMolBase, *, ctx: CNotebookContext) -> Depiction
     """
     work = prepare_depiction_copy(mol)
     return Depiction(work, ctx.create_molecule_display(work))
+
+
+
+def placeholder_size(ctx: CNotebookContext) -> tuple[int, int]:
+    """Canvas size for placeholder images.
+
+    :param ctx: Render context.
+    :returns: ``(width, height)`` in pixels, each at least 1, defaulting to 200 when the
+        context has no minimum.
+    """
+    width = int(ctx.min_width) if ctx.min_width else 200
+    height = int(ctx.min_height) if ctx.min_height else 200
+    return max(1, width), max(1, height)
+
+
+def _render_display_image(disp: oedepict.OE2DMolDisplay, ctx: CNotebookContext) -> oedepict.OEImage:
+    """Rasterise *disp*, oversampling PNG output by the context's device pixel ratio."""
+    scale = ctx.device_pixel_ratio if ctx.image_format == "png" else 1.0
+    image = oedepict.OEImage(
+        max(1, int(disp.GetWidth() * scale)), max(1, int(disp.GetHeight() * scale))
+    )
+    oedepict.OERenderMolecule(image, disp)
+    return image
 
 
 ########################################################################################################################
@@ -122,31 +143,7 @@ def oedisp_to_html(
     :param disp: OpenEye 2D molecule display object
     :return: HTML image tag
     """
-    # Render at intrinsic resolution for image quality
-    image = oedepict.OEImage(disp.GetWidth(), disp.GetHeight())
-    oedepict.OERenderMolecule(image, disp)
-    image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
-
-    # Resolve display dimensions: prefer ctx when set, else intrinsic
-    intrinsic_w, intrinsic_h = disp.GetWidth(), disp.GetHeight()
-    if ctx.width > 0 and ctx.height > 0:
-        display_width, display_height = ctx.width, ctx.height
-    elif ctx.width > 0:
-        display_width = ctx.width
-        display_height = intrinsic_h * (ctx.width / intrinsic_w) if intrinsic_w > 0 else ctx.width
-    elif ctx.height > 0:
-        display_height = ctx.height
-        display_width = intrinsic_w * (ctx.height / intrinsic_h) if intrinsic_h > 0 else ctx.height
-    else:
-        display_width, display_height = intrinsic_w, intrinsic_h
-
-    return create_img_tag(
-        display_width,
-        display_height,
-        image_mime_type=ctx.image_mime_type,
-        image_bytes=image_bytes,
-        wrap_svg=not ctx.auto_scale
-    )
+    return oeimage_to_html(_render_display_image(disp, ctx), ctx=ctx, logical_width=disp.GetWidth(), logical_height=disp.GetHeight())
 
 
 def render_empty_molecule(*, ctx: CNotebookContext) -> str:
@@ -155,10 +152,7 @@ def render_empty_molecule(*, ctx: CNotebookContext) -> str:
     :param ctx: Render context
     :return: Image tag
     """
-    min_width = ctx.min_width
-    min_height = ctx.min_height
-    assert min_width is not None
-    assert min_height is not None
+    min_width, min_height = placeholder_size(ctx)
 
     image = oedepict.OEImage(min_width, min_height)
     image.DrawText(
@@ -188,10 +182,7 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
     :param ctx: Render context
     :return: Image tag
     """
-    min_width = ctx.min_width
-    min_height = ctx.min_height
-    assert min_width is not None
-    assert min_height is not None
+    min_width, min_height = placeholder_size(ctx)
 
     image = oedepict.OEImage(min_width, min_height)
     image.DrawText(
@@ -229,10 +220,7 @@ def _create_exceeds_heavy_atoms_image(
     :param ctx: Render context.
     :returns: Placeholder image.
     """
-    min_width = ctx.min_width
-    min_height = ctx.min_height
-    assert min_width is not None
-    assert min_height is not None
+    min_width, min_height = placeholder_size(ctx)
 
     image = oedepict.OEImage(min_width, min_height)
 
@@ -289,10 +277,7 @@ def render_exceeds_max_heavy_atoms(
     :returns: HTML image tag.
     """
     image = _create_exceeds_heavy_atoms_image(mol, ctx=ctx)
-    min_width = ctx.min_width
-    min_height = ctx.min_height
-    assert min_width is not None
-    assert min_height is not None
+    min_width, min_height = placeholder_size(ctx)
 
     return create_img_tag(
         min_width,
@@ -346,10 +331,7 @@ def oemol_to_image(
         return image
 
     if mol.NumAtoms() == 0:
-        min_width = ctx.min_width
-        min_height = ctx.min_height
-        assert min_width is not None
-        assert min_height is not None
+        min_width, min_height = placeholder_size(ctx)
 
         image = oedepict.OEImage(min_width, min_height)
         image.DrawText(
@@ -366,10 +348,7 @@ def oemol_to_image(
         return image
 
     # Invalid molecule with atoms
-    min_width = ctx.min_width
-    min_height = ctx.min_height
-    assert min_width is not None
-    assert min_height is not None
+    min_width, min_height = placeholder_size(ctx)
 
     image = oedepict.OEImage(min_width, min_height)
     image.DrawText(
@@ -445,10 +424,7 @@ def oedu_to_image(
         return image
 
     # Apo case: no ligand
-    min_width = ctx.min_width
-    min_height = ctx.min_height
-    assert min_width is not None
-    assert min_height is not None
+    min_width, min_height = placeholder_size(ctx)
 
     image = oedepict.OEImage(min_width, min_height)
     _draw_du_label(image)
@@ -474,6 +450,11 @@ def oemol_to_html(mol: oechem.OEMolBase, *, ctx: CNotebookContext) -> str:
     :param ctx: Render context.
     :returns: HTML image tag.
     """
+    # Valid molecules within heavy-atom limit use depictions (oversampled)
+    if mol.IsValid() and (ctx.max_heavy_atoms is None or oechem.OECount(mol, oechem.OEIsHeavy()) <= ctx.max_heavy_atoms):
+        return make_depiction(mol, ctx=ctx).to_html(ctx)
+
+    # Placeholders (empty, invalid, exceeds limit) are not oversampled
     return oeimage_to_html(oemol_to_image(mol, ctx=ctx), ctx=ctx)
 
 
@@ -493,18 +474,20 @@ def oedu_to_html(du: oechem.OEDesignUnit, *, ctx: CNotebookContext) -> str:
 
 
 @pass_cnotebook_context
-def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext) -> str:
+def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext, logical_width: int | None = None, logical_height: int | None = None) -> str:
     """
     Convert an OEImage to HTML
     :param ctx: Render context
     :param image: Image to render
+    :param logical_width: Logical display width (pre-oversampling), defaults to image width
+    :param logical_height: Logical display height (pre-oversampling), defaults to image height
     :return: HTML string
     """
     # Convert the image to an <img> tag
     image_bytes = oedepict.OEWriteImageToString(ctx.image_format, image)
 
     # Resolve display dimensions: prefer ctx when set, else intrinsic
-    intrinsic_w, intrinsic_h = image.GetWidth(), image.GetHeight()
+    intrinsic_w, intrinsic_h = (logical_width or image.GetWidth()), (logical_height or image.GetHeight())
     if ctx.width > 0 and ctx.height > 0:
         display_width, display_height = ctx.width, ctx.height
     elif ctx.width > 0:
@@ -515,6 +498,14 @@ def oeimage_to_html(image: oedepict.OEImage, *, ctx: CNotebookContext) -> str:
         display_width = intrinsic_w * (ctx.height / intrinsic_h) if intrinsic_h > 0 else ctx.height
     else:
         display_width, display_height = intrinsic_w, intrinsic_h
+
+    # Clamp to max dimensions
+    if ctx.max_width is not None and display_width > ctx.max_width:
+        display_height = display_height * (ctx.max_width / display_width) if display_width else display_height
+        display_width = ctx.max_width
+    if ctx.max_height is not None and display_height > ctx.max_height:
+        display_width = display_width * (ctx.max_height / display_height) if display_height else display_width
+        display_height = ctx.max_height
 
     return create_img_tag(
         display_width,

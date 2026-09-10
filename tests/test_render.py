@@ -1,6 +1,8 @@
 import base64
+import re
 from unittest.mock import MagicMock, patch
 
+import pytest
 from openeye import oechem, oedepict
 
 from cnotebook.context import CNotebookContext
@@ -108,7 +110,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img>test</img>'
 
-        ctx = CNotebookContext(image_format="png")
+        ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0)
 
         # Test that the function exists and can be called
         result = oedisp_to_html(mock_disp, ctx=ctx)
@@ -138,7 +140,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=150, height=150)
+        ctx = CNotebookContext(image_format="png", width=150, height=150, device_pixel_ratio=1.0)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -163,7 +165,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=150, height=0)
+        ctx = CNotebookContext(image_format="png", width=150, height=0, device_pixel_ratio=1.0)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -185,7 +187,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=150)
+        ctx = CNotebookContext(image_format="png", width=0, height=150, device_pixel_ratio=1.0)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -207,7 +209,7 @@ class TestOedispToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=0)
+        ctx = CNotebookContext(image_format="png", width=0, height=0, device_pixel_ratio=1.0)
 
         oedisp_to_html(mock_disp, ctx=ctx)
 
@@ -529,23 +531,25 @@ class TestOemolToImage:
 class TestOemolToHtml:
     """Test the oemol_to_html function"""
 
-    @patch('cnotebook.core.render.oeimage_to_html')
-    @patch('cnotebook.core.render.oemol_to_image')
-    def test_oemol_to_html_delegates(self, mock_to_image, mock_image_to_html):
-        """Test that oemol_to_html delegates to oemol_to_image + oeimage_to_html"""
-        mock_mol = MagicMock(spec=oechem.OEMolBase)
+    @patch('cnotebook.core.render.make_depiction')
+    def test_oemol_to_html_delegates(self, mock_make_depiction):
+        """Test that oemol_to_html delegates to make_depiction for valid molecules"""
+        # Use a real molecule to avoid issues with OECount
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "CCO")
 
-        mock_image = MagicMock()
-        mock_to_image.return_value = mock_image
-        mock_image_to_html.return_value = '<img>molecule</img>'
+        # Create a mock Depiction with a to_html method
+        mock_depiction = MagicMock()
+        mock_depiction.to_html.return_value = '<img>'
+        mock_make_depiction.return_value = mock_depiction
 
         ctx = CNotebookContext()
 
-        result = oemol_to_html(mock_mol, ctx=ctx)
+        result = oemol_to_html(mol, ctx=ctx)
 
-        mock_to_image.assert_called_once_with(mock_mol, ctx=ctx)
-        mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx)
-        assert result == '<img>molecule</img>'
+        mock_make_depiction.assert_called_once_with(mol, ctx=ctx)
+        mock_depiction.to_html.assert_called_once_with(ctx)
+        assert result == '<img>'
 
 
 
@@ -660,7 +664,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img>image</img>'
 
-        ctx = CNotebookContext(image_format="png")
+        ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0)
 
         result = oeimage_to_html(mock_image, ctx=ctx)
 
@@ -684,7 +688,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=200, height=200)
+        ctx = CNotebookContext(image_format="png", width=200, height=200, device_pixel_ratio=1.0)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -703,7 +707,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=200, height=0)
+        ctx = CNotebookContext(image_format="png", width=200, height=0, device_pixel_ratio=1.0)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -722,7 +726,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=100)
+        ctx = CNotebookContext(image_format="png", width=0, height=100, device_pixel_ratio=1.0)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -741,7 +745,7 @@ class TestOeimageToHtml:
         mock_write_image.return_value = b'fake_image_bytes'
         mock_create_img.return_value = '<img />'
 
-        ctx = CNotebookContext(image_format="png", width=0, height=0)
+        ctx = CNotebookContext(image_format="png", width=0, height=0, device_pixel_ratio=1.0)
 
         oeimage_to_html(mock_image, ctx=ctx)
 
@@ -850,3 +854,78 @@ def test_oedu_to_disp_apo_returns_none():
             return False
 
     assert oedu_to_disp(ApoDU(), ctx=CNotebookContext()) is None
+
+
+def _png_size(html: str) -> tuple[int, int]:
+    import base64
+    b64 = re.search(r"base64,([^']+)'", html).group(1)
+    data = base64.b64decode(b64)
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def _css_width(html: str) -> int:
+    return int(re.search(r"width:(\d+)px", html).group(1))
+
+
+def test_placeholder_size_falls_back_to_defaults():
+    from cnotebook.core.render import placeholder_size
+    ctx = CNotebookContext()
+    ctx.min_width = None
+    ctx.min_height = None
+    assert placeholder_size(ctx) == (200, 200)
+    ctx.min_width = 120.7
+    assert placeholder_size(ctx) == (120, 200)
+
+
+def test_placeholders_with_none_or_zero_min_sizes():
+    from cnotebook.core.render import (
+        render_empty_molecule,
+        render_exceeds_max_heavy_atoms,
+        render_invalid_molecule,
+    )
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=1.0)
+    ctx.min_width = None
+    ctx.min_height = None
+    for html in (
+        render_empty_molecule(ctx=ctx),
+        render_invalid_molecule(ctx=ctx),
+        render_exceeds_max_heavy_atoms(oechem.OEGraphMol(), ctx=ctx),
+    ):
+        assert _png_size(html) == (200, 200)
+    with pytest.raises(ValueError, match="min_width"):
+        ctx.min_width = 0
+
+
+def test_png_rendered_at_device_pixel_ratio():
+    from cnotebook.core.render import oemol_to_html
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    html = oemol_to_html(mol, ctx=ctx)
+    width_px, _ = _png_size(html)
+    assert width_px == 2 * _css_width(html)
+
+
+def test_svg_ignores_device_pixel_ratio():
+    from cnotebook.core.render import oemol_to_html
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    ctx = CNotebookContext(image_format="svg", device_pixel_ratio=2.0)
+    html = oemol_to_html(mol, ctx=ctx)
+    assert "<svg" in html
+
+
+def test_html_wrapper_respects_max_dimensions():
+    from cnotebook.core.render import oeimage_to_html
+    image = oedepict.OEImage(800, 600)
+    ctx = CNotebookContext(auto_scale=True, width=800, height=600, max_width=300, max_height=250, device_pixel_ratio=1.0)
+    html = oeimage_to_html(image, ctx=ctx)
+    assert _css_width(html) == 300
+
+
+def test_oeimage_to_html_uses_logical_size():
+    from cnotebook.core.render import oeimage_to_html
+    image = oedepict.OEImage(400, 400)
+    ctx = CNotebookContext(device_pixel_ratio=1.0)
+    html = oeimage_to_html(image, ctx=ctx, logical_width=200, logical_height=200)
+    assert _css_width(html) == 200
