@@ -21,8 +21,9 @@ from cnotebook.core.errors import warn
 from cnotebook.core.helpers import create_structure_highlighter
 from cnotebook.core.render import Depiction, make_depiction
 
-# Cell values may hold several SMARTS patterns separated by pipes, commas, or whitespace
-SMARTS_DELIMITER_RE = re.compile(r"\s*[|\r\n\t,]+\s*")
+# Cell values may hold several SMARTS patterns separated by pipes, newlines or tabs. Commas are
+# not delimiters: they are valid SMARTS, as in the atom list [C,N].
+SMARTS_DELIMITER_RE = re.compile(r"\s*[|\r\n\t]+\s*")
 
 _PATTERN_TYPES = (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)
 _OVERLAY_STYLES = ("overlay_default", "overlay_ball_and_stick")
@@ -209,11 +210,14 @@ def set_render_options(col: ColumnAdapter, **options: Any) -> None:
 
     :param col: Column adapter.
     :param options: ``CNotebookContext`` attribute names and values.
-    :raises TypeError: If an option is not a context attribute.
+    :raises TypeError: If an option is not a writable context attribute.
     """
     for name in options:
-        if not isinstance(getattr(CNotebookContext, name, None), property):
+        attribute = getattr(CNotebookContext, name, None)
+        if not isinstance(attribute, property):
             raise TypeError(f"Unknown render option {name!r}")
+        if attribute.fset is None:
+            raise TypeError(f"Render option {name!r} is read-only")
     ctx = _column_context(col)
     for name, value in options.items():
         setattr(ctx, name, value)

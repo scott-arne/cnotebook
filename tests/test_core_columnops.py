@@ -1,4 +1,5 @@
 import gc
+import warnings
 
 import pytest
 from openeye import oechem, oedepict
@@ -112,6 +113,12 @@ def test_render_options_reset_and_clear():
     assert col.get_context(create=False) is None
 
 
+def test_set_render_options_rejects_read_only_options():
+    col = ListColumnAdapter([_mol("CCO")])
+    with pytest.raises(TypeError, match="read-only"):
+        columnops.set_render_options(col, effective_scale=1.0)
+
+
 def test_recalculate_depiction_coordinates_replaces_copies():
     mol = _mol("CCO")
     col = ListColumnAdapter([mol, None])
@@ -140,6 +147,22 @@ def test_build_highlight_column_overlay_and_int_style():
     sticks = columnops.build_highlight_column(mols, ["c1ccccc1"], style=oedepict.OEHighlightStyle_Stick, ctx=ctx)
     assert "<svg" in overlaid[0].to_html(ctx) and "<svg" in sticks[0].to_html(ctx)
     assert mols[0].GetDimension() == 0
+
+
+def test_parse_patterns_keeps_commas_inside_smarts():
+    single = columnops._parse_patterns("[C,N]")
+    assert len(single) == 1 and single[0].IsValid()
+    delimited = columnops._parse_patterns("[C,N] | [OH]")
+    assert len(delimited) == 2 and all(search.IsValid() for search in delimited)
+
+
+def test_build_highlight_column_highlights_bracketed_alternatives():
+    ctx = CNotebookContext(image_format="svg")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        highlighted = columnops.build_highlight_column([_mol("CCN")], ["[C,N]"], ctx=ctx)
+    plain = columnops.build_highlight_column([_mol("CCN")], [None], ctx=ctx)
+    assert len(highlighted[0].to_html(ctx)) > len(plain[0].to_html(ctx))
 
 
 def test_build_highlight_column_warns_for_unsupported_pattern():
