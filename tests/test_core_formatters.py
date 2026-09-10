@@ -6,6 +6,7 @@ from openeye import oechem
 from cnotebook.core.context import CNotebookContext
 from cnotebook.core.formatters import (
     design_unit_cell_html,
+    design_unit_cell_image,
     display_cell_html,
     display_cell_image,
     molecule_cell_html,
@@ -54,7 +55,7 @@ def test_display_cell_html_copies_display():
     ctx.add_callback(lambda disp: touched.append(disp))
     html = display_cell_html(dep.display, ctx)
     assert "<svg" in html
-    assert touched and touched[0] is not dep.display
+    assert not touched  # Prepared display: callbacks NOT re-applied
     assert display_cell_html(None, ctx) == ""
     assert display_cell_html("x<y", ctx) == "x&lt;y"
 
@@ -67,10 +68,37 @@ def test_molecule_cell_image_logical_size():
     assert molecule_cell_image(None, ctx) is None
 
 
+def test_molecule_cell_image_placeholders_have_logical_size():
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    # Invalid molecule
+    invalid = oechem.OEGraphMol()
+    invalid.NewAtom(oechem.OEElemNo_C)
+    image = molecule_cell_image(invalid, ctx)
+    assert hasattr(image, "_cnotebook_logical_size")
+    # Over-limit molecule
+    big = _mol("C" * 120)
+    ctx.max_heavy_atoms = 10
+    image = molecule_cell_image(big, ctx)
+    assert hasattr(image, "_cnotebook_logical_size")
+
+
 def test_display_cell_image_returns_image():
     ctx = CNotebookContext()
     dep = make_depiction(_mol(), ctx=ctx)
-    assert display_cell_image(dep.display, ctx).GetWidth() > 0
+    touched = []
+    ctx.add_callback(lambda disp: touched.append(disp))
+    image = display_cell_image(dep.display, ctx)
+    assert image.GetWidth() > 0
+    assert hasattr(image, "_cnotebook_logical_size")
+    assert not touched  # Prepared display: callbacks NOT re-applied
+
+
+def test_display_cell_image_hidpi():
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    dep = make_depiction(_mol(), ctx=ctx)
+    image = display_cell_image(dep.display, ctx)
+    width, height = image._cnotebook_logical_size
+    assert image.GetWidth() == 2 * width and image.GetHeight() == 2 * height
 
 
 @pytest.mark.skipif(not os.path.exists(_DU_PATH), reason="design unit asset missing")
@@ -80,3 +108,25 @@ def test_design_unit_cell_html():
     html = design_unit_cell_html(du, CNotebookContext(image_format="svg"))
     assert "<svg" in html
     assert design_unit_cell_html(None, CNotebookContext()) == ""
+    assert design_unit_cell_html("x<y", CNotebookContext()) == "x&lt;y"
+
+
+@pytest.mark.skipif(not os.path.exists(_DU_PATH), reason="design unit asset missing")
+def test_design_unit_cell_image_hidpi():
+    du = oechem.OEDesignUnit()
+    assert oechem.OEReadDesignUnit(_DU_PATH, du)
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    image = design_unit_cell_image(du, ctx)
+    width, height = image._cnotebook_logical_size
+    assert image.GetWidth() == 2 * width and image.GetHeight() == 2 * height
+
+
+def test_design_unit_cell_image_apo():
+    # Apo design unit (no ligand) - just create empty DU
+    du = oechem.OEDesignUnit()
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    image = design_unit_cell_image(du, ctx)
+    assert hasattr(image, "_cnotebook_logical_size")
+    # Apo placeholder is not oversampled
+    width, height = image._cnotebook_logical_size
+    assert image.GetWidth() == width and image.GetHeight() == height

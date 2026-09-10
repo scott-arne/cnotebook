@@ -1,7 +1,8 @@
 """Cell formatters shared by the pandas, polars and marimo adapters.
 
 Every function is pure with respect to its inputs: molecules are depicted on
-copies and displays are copied before callbacks run.
+copies, and displays are copied for safety (callbacks are never re-applied to
+prepared displays).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from cnotebook.core.context import CNotebookContext
 from cnotebook.core.render import (
     _render_display_image,
     make_depiction,
+    oedu_to_disp,
     oedu_to_image,
     oeimage_to_html,
     oemol_to_image,
@@ -55,7 +57,9 @@ def molecule_cell_html(value: Any, ctx: CNotebookContext) -> str:
 
 
 def display_cell_html(value: Any, ctx: CNotebookContext) -> str:
-    """HTML for one display-object cell; the display is copied before callbacks run.
+    """HTML for one display-object cell; the display is copied for safety.
+
+    Prepared displays already had callbacks applied when created; they are rendered as-is.
 
     :param value: ``OE2DMolDisplay``, ``None`` or any other object.
     :param ctx: Column render context.
@@ -68,8 +72,6 @@ def display_cell_html(value: Any, ctx: CNotebookContext) -> str:
     owner = getattr(value, "_cnotebook_owner", None)
     copy = oedepict.OE2DMolDisplay(value)
     copy._cnotebook_owner = owner  # type: ignore[attr-defined]
-    for callback in ctx.callbacks:
-        callback(copy)
     return oeimage_to_html(
         _render_display_image(copy, ctx), ctx=ctx,
         logical_width=copy.GetWidth(), logical_height=copy.GetHeight(),
@@ -109,14 +111,15 @@ def molecule_cell_image(value: Any, ctx: CNotebookContext) -> oedepict.OEImage |
 
 
 def display_cell_image(value: Any, ctx: CNotebookContext) -> oedepict.OEImage | None:
-    """Image for one display cell (marimo path)."""
+    """Image for one display cell (marimo path).
+
+    Prepared displays already had callbacks applied when created; they are rendered as-is.
+    """
     if value is None or not isinstance(value, oedepict.OE2DMolDisplay) or not value.IsValid():
         return None
     owner = getattr(value, "_cnotebook_owner", None)
     copy = oedepict.OE2DMolDisplay(value)
     copy._cnotebook_owner = owner  # type: ignore[attr-defined]
-    for callback in ctx.callbacks:
-        callback(copy)
     return _tag(_render_display_image(copy, ctx), copy.GetWidth(), copy.GetHeight())
 
 
@@ -124,5 +127,14 @@ def design_unit_cell_image(value: Any, ctx: CNotebookContext) -> oedepict.OEImag
     """Image for one design-unit cell (marimo path)."""
     if value is None or not isinstance(value, oechem.OEDesignUnit):
         return None
-    image = oedu_to_image(value, ctx=ctx)
-    return _tag(image, image.GetWidth(), image.GetHeight())
+    dep = oedu_to_disp(value, ctx=ctx, apply_callbacks=False)
+    if dep is not None:
+        # Ligand case: apply callbacks exactly once and reuse the depiction
+        for callback in ctx.callbacks:
+            callback(dep.display)
+        image = oedu_to_image(value, ctx=ctx, dep=dep)
+        return _tag(image, dep.display.GetWidth(), dep.display.GetHeight())
+    else:
+        # Apo case: placeholder (not oversampled)
+        image = oedu_to_image(value, ctx=ctx, dep=dep)
+        return _tag(image, image.GetWidth(), image.GetHeight())
