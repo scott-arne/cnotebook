@@ -244,6 +244,52 @@ def test_results_for_unknown_settled_or_malformed_commands_are_ignored():
     assert widget.commands == []
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"id": 1.9, "ok": True, "output": []},
+        {"id": 1.0, "ok": True, "output": []},
+        {"id": True, "ok": True, "output": []},
+        {"id": "1", "ok": True, "output": []},
+        {"id": 1, "ok": "false", "output": []},
+        {"id": 1, "ok": 1, "output": []},
+        {"id": 1, "ok": None, "output": []},
+        {"id": 1, "ok": True, "output": "Zoomed"},
+        {"id": 1, "ok": True, "output": [1, 2]},
+        {"id": 1, "ok": True, "output": None},
+    ],
+)
+def test_malformed_command_results_settle_nothing(entry, caplog):
+    """Nothing is coerced: a bad entry leaves the handle pending and the command queued.
+
+    Truncating ``1.9`` would settle command 1, and ``"false"`` is truthy, so a coerced
+    failure would be reported as a success.
+    """
+    widget = C3DWidget(payload="{}")
+    handle = widget.submit("zoom")
+    assert handle.id == 1
+    with caplog.at_level(logging.DEBUG, logger="cnotebook"):
+        widget.command_results = [entry]
+    assert not handle.done
+    assert [c["id"] for c in widget.commands] == [1]
+    assert "malformed" in caplog.text
+
+
+def test_a_result_without_output_means_no_output():
+    widget = C3DWidget(payload="{}")
+    handle = widget.submit("zoom")
+    widget.command_results = [{"id": handle.id, "ok": True}]
+    assert handle.result == CommandResult(True, [])
+
+
+def test_a_malformed_result_does_not_stop_the_entries_after_it():
+    """traitlets rejects a non-mapping entry today; the observer must survive one anyway."""
+    widget = C3DWidget(payload="{}")
+    handle = widget.submit("zoom")
+    widget._on_results({"new": ["not a mapping", {"id": handle.id, "ok": True, "output": []}]})
+    assert handle.result == CommandResult(True, [])
+
+
 def test_handle_is_awaitable():
     widget = C3DWidget(payload="{}")
 
@@ -313,6 +359,27 @@ def test_pick_callback_error_is_logged_and_later_callbacks_still_run(caplog):
     # The observer survived, so the next pick is still delivered.
     widget.picked = {"seq": 8, "atom": {"serial": 2}, "modifiers": {}}
     assert [event.seq for event in events] == [7, 8]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"seq": True, "atom": {}, "modifiers": {}},
+        {"seq": 2.5, "atom": {}, "modifiers": {}},
+        {"seq": "3", "atom": {}, "modifiers": {}},
+        {"atom": {}, "modifiers": {}},
+        {"seq": 1, "atom": "LIG", "modifiers": {}},
+        {"seq": 1, "atom": {}, "modifiers": ["shift"]},
+    ],
+)
+def test_malformed_picks_are_ignored(message, caplog):
+    widget = C3DWidget(payload="{}")
+    events = []
+    widget.on_pick(events.append)
+    with caplog.at_level(logging.DEBUG, logger="cnotebook"):
+        widget.picked = message
+    assert events == [] and widget.last_pick is None
+    assert "malformed" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +538,88 @@ def test_request_screenshot_requires_a_running_loop():
     # A failed request must not leave the front end capturing a frame nobody awaits.
     assert widget.screenshot_request == 0
     assert widget._screenshot_futures == {}
+
+
+def test_unanswered_screenshot_requests_do_not_accumulate():
+    """A viewer that never answers is the timeout case; it must not leak one future each."""
+    widget = C3DWidget(payload="{}")
+
+    async def scenario():
+        for _ in range(100):
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(widget.request_screenshot(), 0)
+        await asyncio.sleep(0)  # let any queued done callbacks run
+        assert widget.screenshot_request == 100
+        assert widget._screenshot_futures == {}
+
+    asyncio.run(scenario())
+
+
+def test_a_later_request_survives_an_older_futures_cleanup():
+    """Cleanup is keyed to the exact future, so a request under a reused key is kept."""
+    widget = C3DWidget(payload="{}")
+
+    async def scenario():
+        stale = widget.request_screenshot()
+        stale.cancel()
+        await asyncio.sleep(0)
+        assert widget._screenshot_futures == {}
+        fresh = widget.request_screenshot()
+        assert widget._screenshot_futures == {2: fresh}
+        # An older future's callback replayed against a reused sequence is a no-op.
+        widget._forget_screenshot(2, stale)
+        assert widget._screenshot_futures == {2: fresh}
+        widget.screenshot = {"seq": 2, "png_base64": base64.b64encode(b"ok").decode()}
+        assert await asyncio.wait_for(fresh, 1) == b"ok"
+
+    asyncio.run(scenario())
+
+
+def test_close_fails_pending_screenshot_requests():
+    widget = C3DWidget(payload="{}")
+
+    async def scenario():
+        future = widget.request_screenshot()
+        widget.close()
+        assert widget._screenshot_futures == {}
+        # The rejection is read inside close(), so a caller who never awaits it gets no
+        # "Future exception was never retrieved" traceback in the kernel log.
+        assert future.done() and future._log_traceback is False
+        with pytest.raises(CNotebookError, match="widget closed"):
+            await future
+        widget.close()  # closing twice settles nothing and must not raise
+
+    asyncio.run(scenario())
+
+
+def test_close_leaves_a_request_whose_loop_has_gone():
+    """Settling a future on a closed loop would raise out of close()."""
+    widget = C3DWidget(payload="{}")
+    holder = []
+
+    async def request():
+        holder.append(widget.request_screenshot())
+
+    asyncio.run(request())
+    assert list(widget._screenshot_futures) == [1]
+    widget.close()
+    assert widget._screenshot_futures == {}
+    assert not holder[0].done()
+
+
+@pytest.mark.parametrize("seq", [True, 1.0, "1", None])
+def test_screenshots_without_a_plain_integer_sequence_are_ignored(seq, caplog):
+    widget = C3DWidget(payload="{}")
+
+    async def scenario():
+        future = widget.request_screenshot()
+        with caplog.at_level(logging.DEBUG, logger="cnotebook"):
+            widget.screenshot = {"seq": seq, "png_base64": base64.b64encode(b"png").decode()}
+        assert not future.done() and widget._screenshot_futures == {1: future}
+        assert "without a sequence" in caplog.text
+        future.cancel()
+
+    asyncio.run(scenario())
 
 
 # ---------------------------------------------------------------------------

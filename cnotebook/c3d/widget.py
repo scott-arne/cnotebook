@@ -7,6 +7,7 @@ import base64
 import logging
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -72,42 +73,20 @@ def _run_callback(fn: Callable[[Any], None], value: Any, kind: str) -> None:
         log.exception("cnotebook: C3D %s raised", kind)
 
 
-def _as_int(value: Any) -> int | None:
-    """Coerce a protocol integer field published by the front end.
+def _protocol_int(value: Any) -> int | None:
+    """Read a protocol id or sequence number exactly as the transport delivers one.
+
+    A JSON integer always arrives as an :class:`int`, so nothing is coerced: a float such
+    as ``1.9`` would truncate onto a different command's id, a numeric string means the
+    front end sent the wrong type, and :class:`bool` is an ``int`` in Python but never a
+    sequence number. Each of those is rejected instead.
 
     :param value: The raw trait member.
-    :returns: The integer, or ``None`` when the value cannot be one.
+    :returns: The integer, or ``None`` when the value is not a plain integer.
     """
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, bool) or not isinstance(value, int):
         return None
-
-
-def _command_id(item: Any) -> int | None:
-    """Extract the command id from a front-end result entry.
-
-    :param item: One entry of the ``command_results`` trait.
-    :returns: The id, or ``None`` when the entry carries no usable one.
-    """
-    if not isinstance(item, dict):
-        return None
-    return _as_int(item.get("id"))
-
-
-def _output_lines(value: Any) -> list[str]:
-    """Coerce a front-end ``output`` field to terminal lines.
-
-    :param value: The ``output`` member of a result entry.
-    :returns: The lines, empty when the entry carried none.
-    """
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, (list, tuple)):
-        return [str(line) for line in value]
-    return [str(value)]
+    return value
 
 
 def _retrieve_exception(future: asyncio.Future[bytes]) -> None:
@@ -170,6 +149,29 @@ class PickEvent:
     seq: int
     atom: dict[str, Any]
     modifiers: dict[str, Any]
+
+
+def _parse_result(item: Any) -> tuple[int, CommandResult] | None:
+    """Validate one ``command_results`` entry.
+
+    Nothing is coerced, because every plausible coercion is a silent protocol bug:
+    ``1.9`` would settle command 1, and the string ``"false"`` is truthy, so a failed
+    command would be reported as a success. A missing ``output`` is the only latitude
+    given, and it means no terminal output.
+
+    :param item: One entry of the ``command_results`` trait.
+    :returns: The command id and its result, or ``None`` when the entry is malformed.
+    """
+    if not isinstance(item, dict):
+        return None
+    command_id = _protocol_int(item.get("id"))
+    ok = item.get("ok")
+    output = item.get("output", [])
+    if command_id is None or not isinstance(ok, bool):
+        return None
+    if not isinstance(output, list) or not all(isinstance(line, str) for line in output):
+        return None
+    return command_id, CommandResult(ok, list(output))
 
 
 class CommandHandle:
@@ -323,16 +325,19 @@ class C3DWidget(anywidget.AnyWidget):
         """
         done_ids: set[int] = set()
         for item in change["new"]:
-            command_id = _command_id(item)
-            if command_id is None:
-                log.debug("cnotebook: ignoring C3D command result without an id: %r", item)
+            parsed = _parse_result(item)
+            if parsed is None:
+                log.debug("cnotebook: ignoring malformed C3D command result: %r", item)
                 continue
+            command_id, result = parsed
             done_ids.add(command_id)
             handle = self._handles.pop(command_id, None)
             if handle is not None:
-                handle._resolve(CommandResult(bool(item.get("ok")), _output_lines(item.get("output"))))
+                handle._resolve(result)
         if done_ids:
-            self.commands = [c for c in self.commands if _command_id(c) not in done_ids]
+            self.commands = [
+                c for c in self.commands if _protocol_int(c.get("id")) not in done_ids
+            ]
 
     def on_pick(self, fn: Callable[[PickEvent], None]) -> None:
         """Register *fn* to receive :class:`PickEvent` objects.
@@ -349,15 +354,13 @@ class C3DWidget(anywidget.AnyWidget):
         data = change["new"] or {}
         if not data:
             return
-        try:
-            event = PickEvent(
-                int(data.get("seq", 0)),
-                dict(data.get("atom") or {}),
-                dict(data.get("modifiers") or {}),
-            )
-        except (TypeError, ValueError):
+        seq = _protocol_int(data.get("seq"))
+        atom = data.get("atom", {})
+        modifiers = data.get("modifiers", {})
+        if seq is None or not isinstance(atom, dict) or not isinstance(modifiers, dict):
             log.debug("cnotebook: ignoring malformed C3D pick: %r", data)
             return
+        event = PickEvent(seq, dict(atom), dict(modifiers))
         self.last_pick = event
         for fn in list(self._pick_callbacks):
             _run_callback(fn, event, "pick callback")
@@ -380,12 +383,47 @@ class C3DWidget(anywidget.AnyWidget):
                 "async code (a Jupyter or marimo notebook cell already runs one)."
             ) from exc
         future: asyncio.Future[bytes] = loop.create_future()
-        future.add_done_callback(_retrieve_exception)
         seq = self.screenshot_request + 1
+        future.add_done_callback(partial(self._forget_screenshot, seq))
         # Register before publishing the request so an answer can never arrive first.
         self._screenshot_futures[seq] = future
         self.screenshot_request = seq
         return future
+
+    def _forget_screenshot(self, seq: int, future: asyncio.Future[bytes]) -> None:
+        """Drop a settled screenshot request from the registry.
+
+        Runs on every completion, including the cancellation :func:`asyncio.wait_for`
+        performs when a request times out. Without it a viewer that never connects - the
+        very case that produces those timeouts - would leave one dead future registered
+        per request. The entry is removed only while it still holds *this* future, so a
+        later request that reused the sequence key survives an older callback.
+
+        :param seq: The sequence number the future was registered under.
+        :param future: The settled future.
+        """
+        if self._screenshot_futures.get(seq) is future:
+            del self._screenshot_futures[seq]
+        _retrieve_exception(future)
+
+    def close(self) -> None:
+        """Close the widget, failing every screenshot request it can no longer answer.
+
+        The front end goes away with the comm, so an outstanding request would otherwise
+        hang until its timeout. Futures that are already settled, or whose event loop has
+        gone, are left alone.
+        """
+        pending = list(self._screenshot_futures.items())
+        self._screenshot_futures.clear()
+        for seq, future in pending:
+            if future.done() or future.get_loop().is_closed():
+                continue
+            future.set_exception(CNotebookError("Screenshot failed: widget closed"))
+            # The done callback that would retrieve this is queued on the loop, which may
+            # never turn again after a close; read it now so asyncio logs no traceback.
+            _retrieve_exception(future)
+            log.debug("cnotebook: failed C3D screenshot request %d, the widget closed", seq)
+        super().close()
 
     def _on_screenshot(self, change: dict[str, Any]) -> None:
         """Resolve every screenshot request the front end's answer covers.
@@ -395,7 +433,7 @@ class C3DWidget(anywidget.AnyWidget):
         data = change["new"] or {}
         if not data:
             return
-        acknowledged = _as_int(data.get("seq"))
+        acknowledged = _protocol_int(data.get("seq"))
         if acknowledged is None:
             log.debug("cnotebook: ignoring C3D screenshot without a sequence: %r", data)
             return
