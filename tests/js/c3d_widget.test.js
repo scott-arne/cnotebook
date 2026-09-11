@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildSrcdoc, escapeScriptJson } from "../../cnotebook/c3d/static/c3d_widget.js";
+import {
+  buildSrcdoc,
+  createController,
+  escapeScriptJson,
+} from "../../cnotebook/c3d/static/c3d_widget.js";
 
 // Paths are resolved from this file rather than with new URL(..., import.meta.url): Vite
 // rewrites that static pattern into an asset URL against the happy-dom window location,
@@ -192,8 +196,6 @@ describe("the asset substitution sentinel", () => {
     expect(before.slice(before.lastIndexOf("\n"))).not.toContain("//");
   });
 });
-
-import { createController } from "../../cnotebook/c3d/static/c3d_widget.js";
 
 class FakeModel {
   constructor(state) {
@@ -429,5 +431,276 @@ describe("createController teardown", () => {
     await flush();
     expect(model.get("status")).toBe("loading");
     expect(model.saved).toBe(0);
+  });
+});
+
+/**
+ * Fake host API that reports view changes the way the GUI does: not while `setView` runs
+ * but on its own, 150 ms after the camera settled (spec C1).
+ */
+function viewFakeApi() {
+  const listeners = {};
+  return {
+    ready: Promise.resolve(),
+    executed: [],
+    view: [0, 0, 0, 1, 0, 0, 0, 1],
+    execute(command) { this.executed.push(command); return { ok: true, output: [] }; },
+    getView() { return this.view; },
+    setView(view) { this.view = Array.from(view); },
+    pngDataUrl() { return "data:image/png;base64,QUJD"; },
+    on(event, handler) { (listeners[event] ||= []).push(handler); return () => {}; },
+    // The handler gets the host's own array, as the real emitter does, so a test can show
+    // that what reaches the trait is a copy.
+    report() { (listeners.view || []).forEach((h) => h(this.view)); },
+  };
+}
+
+/** Fake host API whose unsubscribe functions record that they ran. */
+function detachableFakeApi() {
+  const listeners = {};
+  return {
+    ready: Promise.resolve(),
+    executed: [],
+    subscribed: [],
+    unsubscribed: [],
+    execute(command) { this.executed.push(command); return { ok: true, output: [] }; },
+    getView() { return [0, 0, 0, 1, 0, 0, 0, 1]; },
+    setView(view) { this.lastSet = view; },
+    pngDataUrl() { return "data:image/png;base64,QUJD"; },
+    on(event, handler) {
+      this.subscribed.push(event);
+      (listeners[event] ||= []).push(handler);
+      return () => {
+        this.unsubscribed.push(event);
+        listeners[event] = listeners[event].filter((h) => h !== handler);
+      };
+    },
+    fire(event, payload) { (listeners[event] || []).forEach((h) => h(payload)); },
+  };
+}
+
+/** FakeModel with the `off` an anywidget model has, recording what was removed. */
+class DetachableFakeModel extends FakeModel {
+  constructor(state) {
+    super(state);
+    this.removed = [];
+  }
+  off(event, handler) {
+    this.removed.push(event);
+    this.handlers[event] = (this.handlers[event] || []).filter((h) => h !== handler);
+  }
+}
+
+/** Connect a controller to a ready api and return once the connection has settled. */
+async function started(model, api) {
+  const controller = createController(model, document.createElement("div"), {
+    connect: () => Promise.resolve(api),
+  });
+  await flush();
+  return controller;
+}
+
+describe("createController view echoes", () => {
+  it("does not send a python view back when the frame reports it later", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = viewFakeApi();
+    await started(model, api);
+    model.state.view_origin = "python";
+    model.emit("view", [9, 9, 9]);
+    expect(api.view).toEqual([9, 9, 9]);
+
+    const saves = model.saved;
+    api.report();
+    // The debounced echo of an applied view is not news, and publishing it would relabel
+    // the kernel's own camera as browser-originated.
+    expect(model.saved).toBe(saves);
+    expect(model.get("view_origin")).toBe("python");
+
+    api.view = [1, 2, 3];
+    api.report();
+    expect(model.get("view")).toEqual([1, 2, 3]);
+    expect(model.get("view_origin")).toBe("js");
+
+    // Suppression is spent once a real change arrives: returning to the kernel's vector
+    // by hand is a user action like any other.
+    api.view = [9, 9, 9];
+    api.report();
+    expect(model.get("view")).toEqual([9, 9, 9]);
+    expect(model.get("view_origin")).toBe("js");
+  });
+
+  it("publishes a copy of the frame's view array", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = viewFakeApi();
+    await started(model, api);
+    api.view = [1, 2, 3];
+    api.report();
+    api.view[0] = 99;
+    // Traits cross the boundary as whole containers; sharing the host's array would let
+    // the next camera move rewrite a value the kernel has already been told about.
+    expect(model.get("view")).toEqual([1, 2, 3]);
+  });
+
+  it("applies a view the kernel set before the frame connected, before capturing", async () => {
+    const model = new FakeModel({
+      payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "zoom" }],
+      view: [7, 7, 7], view_origin: "python", screenshot_request: 1,
+    });
+    const api = viewFakeApi();
+    const order = [];
+    api.execute = function (command) { order.push("execute"); this.executed.push(command); return { ok: true, output: [] }; };
+    api.setView = function (view) { order.push("setView"); this.view = Array.from(view); };
+    api.pngDataUrl = function () { order.push("pngDataUrl"); return "data:image/png;base64,QUJD"; };
+    await started(model, api);
+    // The observer dropped this view (no frame yet) and Python will not resend an
+    // identical vector, so the connect drain has to apply it - after the queued commands
+    // and before the capture that was waiting for them.
+    expect(order).toEqual(["execute", "setView", "pngDataUrl"]);
+    expect(api.view).toEqual([7, 7, 7]);
+  });
+
+  it("does not re-apply the kernel's view on a later drain", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, view: [7, 7, 7], view_origin: "python" });
+    const api = viewFakeApi();
+    await started(model, api);
+    expect(api.view).toEqual([7, 7, 7]);
+    // A camera move whose echo has not been debounced yet, then a second command drain:
+    // the stale trait must not be pushed back over what the user just did.
+    api.view = [1, 2, 3];
+    model.emit("commands", [{ id: 1, command: "zoom" }]);
+    expect(api.view).toEqual([1, 2, 3]);
+  });
+});
+
+describe("createController teardown detaches its subscriptions", () => {
+  it("removes every host subscription and every trait observer", async () => {
+    const model = new DetachableFakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = detachableFakeApi();
+    const el = document.createElement("div");
+    const controller = createController(model, el, { connect: () => Promise.resolve(api) });
+    await flush();
+    const observed = Object.keys(model.handlers);
+    expect(observed).toEqual([
+      "change:commands",
+      "change:screenshot_request",
+      "change:view",
+      "change:width",
+      "change:height",
+    ]);
+    expect(api.subscribed).toEqual(["pick", "view"]);
+
+    controller.destroy();
+    expect(api.unsubscribed).toEqual(["pick", "view"]);
+    expect(model.removed).toEqual(observed);
+    for (const event of observed) expect(model.handlers[event]).toEqual([]);
+    expect(el.contains(controller.iframe)).toBe(false);
+
+    // Nothing can reach the controller any more, so nothing it would publish can either.
+    api.fire("pick", { atom: { serial: 1 }, modifiers: {} });
+    api.fire("view", [4, 5, 6]);
+    model.emit("commands", [{ id: 1, command: "zoom" }]);
+    model.emit("screenshot_request", 4);
+    expect(api.executed).toEqual([]);
+    expect(model.get("picked")).toEqual({});
+    expect(model.get("screenshot")).toEqual({});
+  });
+});
+
+describe("createController protocol shapes", () => {
+  it("continues the pick sequence the trait already carries", async () => {
+    const model = new FakeModel({
+      payload: "{}", width: 100, height: 80, picked: { seq: 5, atom: {}, modifiers: {} },
+    });
+    const api = fakeApi();
+    await started(model, api);
+    // A second view of the same model must not restart at 1: traitlets would drop the
+    // repeat of a sequence the kernel has already seen.
+    api.fire("pick", { atom: { serial: 7 }, modifiers: { shift: true } });
+    expect(model.get("picked")).toEqual({ seq: 6, atom: { serial: 7 }, modifiers: { shift: true } });
+  });
+
+  it("never publishes a pick with a missing atom or modifiers", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    await started(model, api);
+    // Python drops a pick whose members are not mappings, and a dropped pick is a lost
+    // user event.
+    api.fire("pick", {});
+    expect(model.get("picked")).toEqual({ seq: 1, atom: {}, modifiers: {} });
+  });
+
+  it("skips ids that are not integers without adopting them", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    await started(model, api);
+    model.emit("commands", [{ id: "9", command: "string id" }, { id: 1, command: "first" }]);
+    expect(api.executed).toEqual(["first"]);
+    expect(model.get("command_results")).toEqual([{ id: 1, ok: true, output: ["ran first"] }]);
+
+    const saves = model.saved;
+    model.emit("commands", [
+      { id: 1.5, command: "fractional id" },
+      { id: true, command: "boolean id" },
+      { id: null, command: "null id" },
+      {},
+    ]);
+    expect(api.executed).toEqual(["first"]);
+    expect(model.saved).toBe(saves);
+
+    // None of them became the high-water mark, so ordinary ids keep flowing.
+    model.emit("commands", [{ id: 2, command: "second" }]);
+    expect(api.executed).toEqual(["first", "second"]);
+  });
+
+  it("runs the lowest unprocessed id first, whatever order the list is in", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    await started(model, api);
+    model.emit("commands", [{ id: 6, command: "sixth" }, { id: 5, command: "fifth" }]);
+    // Taking the list in order would run 6 first and then skip 5 as already covered.
+    expect(api.executed).toEqual(["fifth", "sixth"]);
+    expect(model.get("command_results").map((r) => r.id)).toEqual([5, 6]);
+  });
+
+  it("normalises command output to the list of strings Python accepts", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    api.execute = function (command) {
+      this.executed.push(command);
+      return command === "numbers" ? { ok: true, output: [1, 2] } : { ok: true };
+    };
+    await started(model, api);
+    // An entry whose output is not a list of strings is dropped by the kernel, which
+    // leaves its handle waiting for the full timeout.
+    model.emit("commands", [{ id: 1, command: "numbers" }, { id: 2, command: "silent" }]);
+    expect(model.get("command_results")).toEqual([
+      { id: 1, ok: true, output: ["1", "2"] },
+      { id: 2, ok: true, output: [] },
+    ]);
+  });
+
+  it("mirrors a synchronous failure the host API reports rather than throws", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    // What src/api.js actually does for a command that fails synchronously: it catches,
+    // prints to the terminal and returns ok false with the message appended.
+    api.execute = function (command) {
+      this.executed.push(command);
+      return { ok: false, output: ["partial output", "Unknown selection \"x\""] };
+    };
+    await started(model, api);
+    model.emit("commands", [{ id: 1, command: "zoom x" }]);
+    expect(model.get("command_results")).toEqual([
+      { id: 1, ok: false, output: ["partial output", "Unknown selection \"x\""] },
+    ]);
+  });
+
+  it("clears stale error text when a connection succeeds", async () => {
+    const model = new FakeModel({
+      payload: "{}", width: 100, height: 80, status: "error", status_message: "no api",
+    });
+    await started(model, fakeApi());
+    expect(model.get("status")).toBe("ready");
+    expect(model.get("status_message")).toBe("");
   });
 });

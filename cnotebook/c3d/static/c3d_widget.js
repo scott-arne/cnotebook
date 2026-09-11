@@ -242,6 +242,7 @@ export function createController(model, el, { connect = connectDefault } = {}) {
   let drainAgain = false;
   let applyingView = false;
   let appliedView = null;
+  let initialViewApplied = false;
   // Both counters are seeded from the traits, not from zero: a re-rendered view of the same
   // model must not replay a pick sequence or answer a screenshot an earlier view served.
   const lastPick = model.get("picked") || {};
@@ -330,11 +331,12 @@ export function createController(model, el, { connect = connectDefault } = {}) {
   }
 
   /**
-   * End a drain: publish what it collected and answer a waiting screenshot request.
+   * End a drain: publish what it collected, then serve the state that was waiting for it.
    *
-   * The screenshot is taken here rather than when the request arrived so that a request
-   * raised before the frame connected sees the effect of the commands that were queued
-   * with it (spec D1: the same after-ready drain answers it).
+   * The view and the screenshot are handled here rather than when they arrived so that a
+   * request raised before the frame connected sees the effect of the commands that were
+   * queued with it (spec D1: the same after-ready drain answers it), and so the capture
+   * shows the view the kernel asked for rather than the frame's starting camera.
    *
    * @param {Array<object>} results
    */
@@ -345,6 +347,14 @@ export function createController(model, el, { connect = connectDefault } = {}) {
       drainAgain = false;
       drain();
       return;
+    }
+    if (!initialViewApplied) {
+      // A view the kernel set before the frame connected was dropped by the observer,
+      // and traitlets never resends an identical vector, so the trait is applied once
+      // here. Once only: a later drain must not put a stale camera back over a rotation
+      // the user has since made in the frame.
+      initialViewApplied = true;
+      applyPythonView();
     }
     answerScreenshot();
   }
@@ -494,9 +504,14 @@ export function createController(model, el, { connect = connectDefault } = {}) {
     if (destroyed) return;
     api = connected;
     unsubscribes.push(api.on("pick", handlePick), api.on("view", handleView));
-    publish("status", "ready");
-    // Drains commands queued before display, then answers a screenshot request raised
-    // before the frame connected (see finish).
+    model.set("status", "ready");
+    // Clear the message too: a view that recovers, or a second view of a model an earlier
+    // one failed to boot, must not keep showing the old error text next to "ready".
+    model.set("status_message", "");
+    model.save_changes();
+    // Drains commands queued before display, then applies a view the kernel set before
+    // the frame existed and answers a screenshot request raised before it connected
+    // (both in finish, so the order holds whether or not the drain went asynchronous).
     drain();
   }
 
