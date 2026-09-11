@@ -831,13 +831,33 @@ def _dataframe_molgrid(self, mol_col, title=True, tooltip_fields=None, **kwargs)
                    tooltip_fields=tooltip_fields, **kwargs)
 
 
+def _escape_cell_text(value: Any) -> str:
+    """The escaped text to display for a value written outside a cnotebook depiction.
+
+    Pandas' own ``escape="html"`` handling escapes only values that are already ``str`` and
+    stringifies everything else afterwards, so a non-string cell, label or axis name would
+    reach the document raw. Escaping the final text here keeps the trust boundary unqualified.
+
+    :param value: Cell value, axis label or axis name.
+    :returns: HTML-escaped display text.
+    """
+    if isinstance(value, str):
+        return html.escape(value)
+    # Replicate the two-line rule of pandas' private _default_formatter, so numeric cells still
+    # render exactly as ``df.style`` renders them: floats and complex numbers at the styler
+    # precision option, everything else as its plain string form.
+    if pd.api.types.is_float(value) or pd.api.types.is_complex(value):
+        return html.escape(f"{value:.{pd.get_option('styler.format.precision')}f}")
+    return html.escape(str(value))
+
+
 def _escaped_axis_names(names: Iterable[Hashable]) -> list[Hashable]:
-    """HTML-escape the string axis names of one axis, leaving other name types alone.
+    """HTML-escape the axis names of one axis, leaving unnamed levels unnamed.
 
     :param names: ``Index.names`` of one axis.
     :returns: Names to pass to ``DataFrame.rename_axis``.
     """
-    return [html.escape(name) if isinstance(name, str) else name for name in names]
+    return [None if name is None else _escape_cell_text(name) for name in names]
 
 
 def _dataframe_style(self):
@@ -848,9 +868,10 @@ def _dataframe_style(self):
     while the cnotebook adapters address columns by position. Use :func:`render_dataframe`
     for a frame with duplicate column labels. A duplicate index is fine.
 
-    Each column's render options are captured when ``style()`` is called, so options
-    changed afterwards only affect a Styler built after the change; cell values, by
-    contrast, are read when the Styler renders.
+    ``style()`` captures the frame and each column's render options when it is called: the
+    Styler holds a frame derived from the caller's that shares its data, so edits to the frame
+    or to its render options made afterwards show up only in a Styler built after the change.
+    Objects stored in cells are shared, so mutating one in place does show.
 
     :returns: ``pandas.io.formats.style.Styler``.
     :raises ValueError: If the frame's column labels are not unique.
@@ -868,8 +889,8 @@ def _dataframe_style(self):
     styler = styled.style
     ordinary = [label for pos, label in enumerate(adapter.columns()) if adapter.kind(pos) is ColumnKind.OTHER]
     if ordinary:
-        styler = styler.format(escape="html", subset=ordinary)
-    styler = styler.format_index(escape="html", axis=0).format_index(escape="html", axis=1)
+        styler = styler.format(_escape_cell_text, subset=ordinary)
+    styler = styler.format_index(_escape_cell_text, axis=0).format_index(_escape_cell_text, axis=1)
     for pos, label in enumerate(adapter.columns()):
         kind = adapter.kind(pos)
         if kind is ColumnKind.OTHER:

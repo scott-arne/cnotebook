@@ -2,6 +2,7 @@ import gc
 import io
 import threading
 from html import escape
+from pathlib import PurePosixPath
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -2706,7 +2707,7 @@ def test_style_escapes_axis_names():
     assert df.index.name == "<i>rows</i>" and df.columns.name == "<i>cols</i>"
 
 
-def test_style_escapes_multiindex_axis_names_and_leaves_other_name_types_alone():
+def test_style_escapes_multiindex_axis_names_and_keeps_unnamed_levels_unnamed():
     df = _frame(1, x=["v"])
     df.columns = pd.MultiIndex.from_tuples([("a", "mol"), ("a", "x")], names=["<i>top</i>", None])
     df.index = pd.Index(["r0"], name=7)
@@ -2714,7 +2715,7 @@ def test_style_escapes_multiindex_axis_names_and_leaves_other_name_types_alone()
 
     assert "<i>top</i>" not in html and "&lt;i&gt;top&lt;/i&gt;" in html
     assert "&amp;lt;" not in html
-    assert ">7<" in html  # a non-string name is passed through untouched
+    assert ">7<" in html  # a non-string name renders as its plain text
     assert "<img" in html
     assert list(df.columns.names) == ["<i>top</i>", None] and df.index.name == 7
 
@@ -2740,3 +2741,71 @@ def test_style_with_a_duplicate_index_renders_and_escapes():
     assert "<i>r</i>" not in html and html.count("&lt;i&gt;r&lt;/i&gt;") == 2
     assert "<b>a</b>" not in html and "&lt;b&gt;a&lt;/b&gt;" in html
     assert "<b>b</b>" not in html and "&lt;b&gt;b&lt;/b&gt;" in html
+
+
+def test_style_escapes_non_string_values_labels_and_axis_names():
+    """Pandas' escape="html" only touches values that are already str, so cnotebook escapes the text."""
+    hostile = PurePosixPath("<img src=x onerror=owned()>")
+    df = _frame(1, obj=[hostile], plain=["ok"])
+    df.columns = pd.Index(["mol", "obj", hostile], name=hostile)
+    df.index = pd.Index([hostile], name=hostile)
+
+    html = df.chem.style().to_html()
+
+    assert "<img src=x onerror=owned()>" not in html
+    # The cell value, the column label, the row label and both axis names.
+    assert html.count("&lt;img src=x onerror=owned()&gt;") == 5
+    assert "&amp;lt;" not in html
+    assert "<img src='data:" in html  # the molecule column still renders a depiction
+
+
+def test_style_escapes_tuple_labels_and_axis_names():
+    """A tuple label is not a str either, so pandas would write its repr raw."""
+    df = _frame(1, x=["v"])
+    df.columns = pd.Index(["mol", ("<script>a</script>", 7)], name=("<script>n</script>", 7), dtype=object)
+
+    html = df.chem.style().to_html()
+
+    assert "<script>" not in html
+    assert "&lt;script&gt;a&lt;/script&gt;" in html and "&lt;script&gt;n&lt;/script&gt;" in html
+    assert "&amp;lt;" not in html
+
+
+def test_style_escapes_multiindex_level_values_that_are_not_strings():
+    hostile = PurePosixPath("<img src=x onerror=owned()>")
+    df = _frame(1, x=["v"])
+    df.columns = pd.MultiIndex.from_tuples([(hostile, "mol"), (hostile, "x")], names=["lvl", None])
+    df.index = pd.MultiIndex.from_tuples([(hostile, "r0")], names=[hostile, None])
+
+    html = df.chem.style().to_html()
+
+    assert "<img src=x onerror=owned()>" not in html
+    # Sparsified column level, the index level value and the index axis name.
+    assert html.count("&lt;img src=x onerror=owned()&gt;") == 3
+    assert "&amp;lt;" not in html
+    assert "<img src='data:" in html
+
+
+def test_style_renders_numbers_and_missing_values_like_the_native_styler():
+    """Escaping the display text must not change how pandas formats ordinary scalars."""
+    df = pd.DataFrame({"i": [1, 2], "f": [1.5, float("nan")], "b": [True, False], "o": [None, "x"]})
+
+    assert _style_cells(df.chem.style().to_html()) == _style_cells(df.style.to_html())
+    assert _style_cells(df.style.to_html()) == ["1", "1.500000", "True", "nan", "2", "nan", "False", "x"]
+
+
+def test_style_captures_the_frame_when_called():
+    """style() snapshots the frame; only in-place mutation of a shared cell object shows through."""
+    df = _frame(1, x=["before"])
+    styler = df.chem.style()
+    df.loc[df.index[0], "x"] = "after"
+
+    html = styler.to_html()
+    assert "before" in html and "after" not in html
+
+    assert "after" in df.chem.style().to_html()
+
+    shared = df["mol"].iloc[0]
+    assert styler.data["mol"].iloc[0] is shared
+    shared.SetTitle("renamed")
+    assert styler.data["mol"].iloc[0].GetTitle() == "renamed"
