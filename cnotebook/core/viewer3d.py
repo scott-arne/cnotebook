@@ -113,17 +113,27 @@ def _script_safe_json(payload: dict[str, Any]) -> str:
     ``>``, ``&``, U+2028, and U+2029 prevents script-context breakout.
 
     The escaping is applied to the serialized text, never to *payload*, so the
-    parsed value is unchanged. ``ensure_ascii=False`` and compact separators
-    pin the output to what JavaScript's ``JSON.stringify`` produces, which is
-    what lets ``tests/js/fixtures/script_json_vectors.json`` hold both this
-    function and the widget's ``escapeScriptJson`` to one contract. With
-    ``ensure_ascii=False`` the separators arrive unescaped, so the last two
-    replacements below are the ones that make the text script-safe.
+    parsed value is unchanged.
+
+    ``ensure_ascii=True`` keeps the output pure ASCII, which matters because
+    molecule names can carry lone surrogates (``os.fsdecode`` of a non-UTF-8
+    filename yields them) and a document holding one raw cannot be encoded at
+    all: writing it to a file or returning it over HTTP would raise
+    ``UnicodeEncodeError``. Compact separators then match what JavaScript's
+    ``JSON.stringify`` emits, and the widget's ``escapeScriptJson`` replicates
+    this ``ensure_ascii`` pass, so the two sides produce the same bytes for the
+    vectors in ``tests/js/fixtures/script_json_vectors.json``. The known
+    divergences are floats, which Python writes as ``1.0`` where JavaScript
+    writes ``1``, and integer-like object keys, which JavaScript reorders.
+
+    The U+2028 and U+2029 replacements below are no-ops under
+    ``ensure_ascii=True``; they are kept so the escaping stays correct on its
+    own terms rather than by depending on the serializer's settings.
 
     :param payload: JSON-serializable payload.
     :returns: A JSON string safe to inline in HTML.
     """
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
     return (
         raw.replace("<", "\\u003c")
         .replace(">", "\\u003e")

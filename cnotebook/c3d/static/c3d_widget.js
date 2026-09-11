@@ -4,10 +4,38 @@
 // comment, so the unsubstituted template stays valid JavaScript for the vitest suite.
 const ASSETS = globalThis.__CNOTEBOOK_ASSETS__ || {"__cnotebook_assets__": null};
 
-// Built from a string rather than written as a regular expression literal because U+2028 and
-// U+2029 are JavaScript line terminators, so a literal one would end the literal. Keeping this
-// file pure ASCII also keeps the Python-side asset substitution byte-safe.
+// Both patterns are built from strings rather than written as regular expression literals
+// because U+2028 and U+2029 are JavaScript line terminators, so a literal one would end the
+// literal. Keeping this file pure ASCII also keeps the Python-side asset substitution byte-safe.
+//
+// NON_ASCII replicates Python's json.dumps(ensure_ascii=True). Measured against CPython, the
+// two serialisers already agree below U+007F: JSON.stringify emits the same \b \t \n \f \r
+// short forms and the same lowercase \u00XX escapes for the other C0 controls, and both escape
+// lone surrogates as \udXXX. The only code units left to escape are therefore U+007F and above.
+// The pattern deliberately has no `u` flag so it matches surrogate code units one at a time,
+// which turns an astral character into the two surrogate escapes that Python also writes.
+const NON_ASCII = new RegExp("[\\u007f-\\uffff]", "g");
 const SCRIPT_UNSAFE = new RegExp("[<>&\\u2028\\u2029]", "g");
+
+/** @param {string} ch @returns {string} the code unit as a lowercase \\uXXXX escape */
+const unicodeEscape = (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+
+/**
+ * Apply the script-safe escaping to JSON text that is already serialised.
+ *
+ * Idempotent: the result is printable ASCII with no <, > or &, so a second pass changes
+ * nothing. That is what lets buildSrcdoc accept either a payload object or JSON text without
+ * having to trust the caller to have escaped it.
+ *
+ * The U+2028 and U+2029 arms of SCRIPT_UNSAFE are no-ops after the ASCII pass; they are kept
+ * so the escaping stays correct on its own terms, exactly as the Python side keeps them.
+ *
+ * @param {string} json
+ * @returns {string}
+ */
+function escapeJsonText(json) {
+  return json.replace(NON_ASCII, unicodeEscape).replace(SCRIPT_UNSAFE, unicodeEscape);
+}
 
 /**
  * JSON text safe to inline inside a <script> block (mirrors Python's escape_script_json).
@@ -15,20 +43,19 @@ const SCRIPT_UNSAFE = new RegExp("[<>&\\u2028\\u2029]", "g");
  * The escaping is applied to the serialised JSON text, never to the payload, so the parsed
  * value is unchanged: JSON.parse(escapeScriptJson(v)) deep-equals v. All five characters that
  * can end a script element or a JavaScript line (< > & U+2028 U+2029) are replaced wherever
- * they occur, including inside object keys, each by its own \\uXXXX escape.
+ * they occur, including inside object keys, and the output is pure ASCII so it can always be
+ * encoded, even when a molecule name carries a lone surrogate.
  *
- * Whole floats are the one place the two serialisers disagree on text: Python renders 1.0
- * where JSON.stringify renders 1. Both parse to the same number, but a payload that has to be
- * byte-identical on the two sides should carry integers or strings.
+ * Byte-identity with Python holds for payloads whose numbers are integers or strings and whose
+ * object keys are not integer-like. The two known divergences: Python writes a whole float as
+ * 1.0 where JSON.stringify writes 1, and JavaScript reorders array-index keys ("0", "1", ...)
+ * to the front of an object where Python preserves insertion order.
  *
  * @param {unknown} value
  * @returns {string}
  */
 export function escapeScriptJson(value) {
-  return JSON.stringify(value).replace(
-    SCRIPT_UNSAFE,
-    (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"),
-  );
+  return escapeJsonText(JSON.stringify(value));
 }
 
 /**
@@ -50,6 +77,33 @@ function pixelDimension(value, name) {
 }
 
 /**
+ * Resolve the payload argument to escaped JSON text.
+ *
+ * A string is escaped rather than trusted. Callers reach for JSON.stringify before they reach
+ * for escapeScriptJson, and taking that text as-is would put an unescaped </script> straight
+ * into the script element. Because the escaping is idempotent, re-escaping text that was
+ * already escaped is free.
+ *
+ * @param {object|string} payload
+ * @returns {string}
+ * @throws {TypeError} when the payload is neither an object nor a non-blank string
+ */
+function resolvePayloadJson(payload) {
+  if (typeof payload === "string") {
+    if (payload.trim() === "") {
+      // An empty string would silently emit `window.__C3D_INIT__ = ;`, a syntax error that
+      // takes the whole inline script down.
+      throw new TypeError("payload text must not be empty");
+    }
+    return escapeJsonText(payload);
+  }
+  if (payload === null || typeof payload !== "object") {
+    throw new TypeError(`payload must be an object or JSON text, got ${String(payload)}`);
+  }
+  return escapeScriptJson(payload);
+}
+
+/**
  * Build the standalone viewer document (same structure as cnotebook.core.viewer3d.render_html).
  *
  * The return value is a raw HTML document, not an attribute value. A caller that mounts it as
@@ -59,16 +113,17 @@ function pixelDimension(value, name) {
  * the script element however hostile it is.
  *
  * @param {{threeDmol: string, gui: string, css: string}} assets
- * @param {object|string} payload - init payload object, or already-escaped JSON text
+ * @param {object|string} payload - init payload object, or JSON text (escaped either way)
  * @param {number} width
  * @param {number} height
  * @returns {string}
- * @throws {TypeError} when width or height is not a finite, non-negative number
+ * @throws {TypeError} when the payload is neither an object nor non-blank JSON text, or when
+ *   width or height is not a finite, non-negative number
  */
 export function buildSrcdoc(assets, payload, width, height) {
   const pixelWidth = pixelDimension(width, "width");
   const pixelHeight = pixelDimension(height, "height");
-  const payloadJson = typeof payload === "string" ? payload : escapeScriptJson(payload);
+  const payloadJson = resolvePayloadJson(payload);
   return [
     "<!DOCTYPE html>",
     '<html lang="en">',

@@ -39,7 +39,7 @@
           "k": "</SCRIPT >"
         }
       },
-      "expected": "{\"unicode\":\"caf\u00e9 \u00fc\",\"nested\":{\"k\":\"\\u003c/SCRIPT \\u003e\"}}"
+      "expected": "{\"unicode\":\"caf\\u00e9 \\u00fc\",\"nested\":{\"k\":\"\\u003c/SCRIPT \\u003e\"}}"
     },
     {
       "input": {
@@ -50,6 +50,33 @@
         "empty": null
       },
       "expected": "{\"\\u003c/script\\u003e\\u003ck\\u003e\":\"ok\",\"a\\u0026b\":{\"x\\u2028y\\u2029z\":true},\"empty\":null}"
+    },
+    {
+      "input": {
+        "c0": "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f",
+        "del": "\u007f",
+        "c1": "\u0080\u0081\u0082\u0083\u0084\u0085\u0086\u0087\u0088\u0089\u008a\u008b\u008c\u008d\u008e\u008f\u0090\u0091\u0092\u0093\u0094\u0095\u0096\u0097\u0098\u0099\u009a\u009b\u009c\u009d\u009e\u009f",
+        "nbsp": "\u00a0"
+      },
+      "expected": "{\"c0\":\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\",\"del\":\"\\u007f\",\"c1\":\"\\u0080\\u0081\\u0082\\u0083\\u0084\\u0085\\u0086\\u0087\\u0088\\u0089\\u008a\\u008b\\u008c\\u008d\\u008e\\u008f\\u0090\\u0091\\u0092\\u0093\\u0094\\u0095\\u0096\\u0097\\u0098\\u0099\\u009a\\u009b\\u009c\\u009d\\u009e\\u009f\",\"nbsp\":\"\\u00a0\"}"
+    },
+    {
+      "input": {
+        "astral": "\ud83d\ude00",
+        "bom": "\ufeff",
+        "accent": "caf\u00e9",
+        "backslash": "a\\b"
+      },
+      "expected": "{\"astral\":\"\\ud83d\\ude00\",\"bom\":\"\\ufeff\",\"accent\":\"caf\\u00e9\",\"backslash\":\"a\\\\b\"}"
+    },
+    {
+      "input": {
+        "surrogate": "mol_\udce9",
+        "pair_in_key": {
+          "\ud83d\ude00": "astral key"
+        }
+      },
+      "expected": "{\"surrogate\":\"mol_\\udce9\",\"pair_in_key\":{\"\\ud83d\\ude00\":\"astral key\"}}"
     }
   ]
 }

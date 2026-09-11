@@ -5,6 +5,9 @@
   "scripts": {
     "test": "vitest run"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "happy-dom": "20.6.1",
     "vitest": "3.2.4"

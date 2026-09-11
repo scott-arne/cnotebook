@@ -67,6 +67,12 @@ def _script_json_vectors():
     return json.loads(_VECTORS_PATH.read_text())
 
 
+def test_script_json_vectors_pin_the_forbidden_set():
+    # Dropping a character from the fixture must fail here and in the JS suite, not
+    # quietly weaken both.
+    assert _script_json_vectors()["forbidden"] == ["<", ">", "&", chr(0x2028), chr(0x2029)]
+
+
 def test_escape_script_json_vectors():
     spec = _script_json_vectors()
     for case in spec["cases"]:
@@ -82,6 +88,31 @@ def test_escape_script_json_matches_the_javascript_expectations():
     spec = _script_json_vectors()
     for case in spec["cases"]:
         assert viewer3d.escape_script_json(case["input"]) == case["expected"]
+
+
+def test_escape_script_json_is_pure_ascii_for_every_vector():
+    for case in _script_json_vectors()["cases"]:
+        out = viewer3d.escape_script_json(case["input"])
+        assert out.isascii(), f"non-ASCII survived in {out!r}"
+        assert out.isprintable()
+
+
+def test_render_html_stays_encodable_with_a_lone_surrogate_name():
+    # os.fsdecode of a non-UTF-8 filename produces lone surrogates. If they reached the
+    # payload text raw, the documented export (open(...).write(html)) and any HTTP
+    # consumer would raise UnicodeEncodeError.
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CNotebookWarning)
+        md = convert_molecule(mol, name="mol_\udce9")
+    payload = viewer3d.build_init_payload(
+        [md], [], ui=None, ui_explicit=False,
+        theme="auto", background=None, zoom_to=None, orient=None,
+    )
+    html = viewer3d.render_html(payload, width=640, height=480)
+    assert "\\udce9" in html
+    html.encode("utf-8")  # would raise UnicodeEncodeError on a raw surrogate
 
 
 def test_render_html_embeds_the_public_escaper_output():

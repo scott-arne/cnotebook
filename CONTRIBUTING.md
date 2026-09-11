@@ -38,7 +38,7 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 - Python 3.10 or higher
 - OpenEye Toolkits (requires license)
 - Git
-- Node.js and npm (only needed for updating 3dmol-js-gui assets)
+- Node.js 22 or higher and npm (needed to run the JavaScript test suite with `npm test`, and to update 3dmol-js-gui assets)
 
 ### Installing Dependencies
 

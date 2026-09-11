@@ -11,6 +11,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MODULE_PATH = join(HERE, "..", "..", "cnotebook", "c3d", "static", "c3d_widget.js");
 const vectors = JSON.parse(readFileSync(join(HERE, "fixtures", "script_json_vectors.json"), "utf8"));
 
+describe("the shared fixture", () => {
+  it("pins the forbidden set, so dropping one from the fixture fails both suites", () => {
+    expect(vectors.forbidden).toEqual([
+      "<",
+      ">",
+      "&",
+      String.fromCharCode(0x2028),
+      String.fromCharCode(0x2029),
+    ]);
+  });
+});
+
 describe("escapeScriptJson", () => {
   it("matches the shared vectors", () => {
     for (const { input } of vectors.cases) {
@@ -32,6 +44,24 @@ describe("escapeScriptJson", () => {
     const out = escapeScriptJson({ "</script>": "v", "a&b": 1 });
     expect(out).toBe('{"\\u003c/script\\u003e":"v","a\\u0026b":1}');
     expect(JSON.parse(out)).toEqual({ "</script>": "v", "a&b": 1 });
+  });
+
+  it("emits pure printable ASCII for every vector", () => {
+    // A lone surrogate reaches the payload whenever a molecule name came from os.fsdecode of a
+    // non-UTF-8 filename. Anything non-ASCII in the text would make the finished document
+    // impossible to encode, so writing it to a file or to an HTTP response would raise.
+    for (const { input } of vectors.cases) {
+      expect(escapeScriptJson(input)).toMatch(/^[\x20-\x7e]*$/);
+    }
+  });
+
+  it("escapes a lone surrogate rather than emitting it raw", () => {
+    const out = escapeScriptJson({ name: `mol_${String.fromCharCode(0xdce9)}` });
+    expect(out).toBe('{"name":"mol_\\udce9"}');
+  });
+
+  it("escapes an astral character as the surrogate pair Python writes", () => {
+    expect(escapeScriptJson({ e: String.fromCodePoint(0x1f600) })).toBe('{"e":"\\ud83d\\ude00"}');
   });
 });
 
@@ -66,6 +96,24 @@ describe("buildSrcdoc", () => {
     expect(buildSrcdoc(assets, payloadJson, 640, 480)).toBe(
       buildSrcdoc(assets, { name: "</script>" }, 640, 480),
     );
+  });
+
+  it("escapes a payload string that was only JSON.stringify'd", () => {
+    // The trap: reaching for JSON.stringify instead of escapeScriptJson. Trusting that text
+    // would drop a live </script> into the inline script.
+    const value = { name: "</script><img src=x onerror=alert(1)>" };
+    const html = buildSrcdoc(assets, JSON.stringify(value), 640, 480);
+    expect(html).toContain("\\u003c/script\\u003e\\u003cimg src=x onerror=alert(1)\\u003e");
+    expect(html.match(/<script/g)).toHaveLength(3);
+    expect(html.match(/<\/script>/g)).toHaveLength(3);
+    // Escaping raw JSON text gives the same document as escaping the value itself.
+    expect(html).toBe(buildSrcdoc(assets, value, 640, 480));
+  });
+
+  it("rejects a payload that is neither an object nor non-blank JSON text", () => {
+    for (const bad of ["", "   ", "\n\t", null, undefined, 42, true, "".concat()]) {
+      expect(() => buildSrcdoc(assets, bad, 640, 480)).toThrow(TypeError);
+    }
   });
 
   it("leaves srcdoc attribute escaping to the host that mounts the iframe", () => {
