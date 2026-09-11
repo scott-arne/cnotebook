@@ -98,7 +98,7 @@ describe("buildSrcdoc", () => {
     );
   });
 
-  it("escapes a payload string that was only JSON.stringify'd", () => {
+  it("accepts a payload string that was only JSON.stringify'd", () => {
     // The trap: reaching for JSON.stringify instead of escapeScriptJson. Trusting that text
     // would drop a live </script> into the inline script.
     const value = { name: "</script><img src=x onerror=alert(1)>" };
@@ -106,12 +106,40 @@ describe("buildSrcdoc", () => {
     expect(html).toContain("\\u003c/script\\u003e\\u003cimg src=x onerror=alert(1)\\u003e");
     expect(html.match(/<script/g)).toHaveLength(3);
     expect(html.match(/<\/script>/g)).toHaveLength(3);
-    // Escaping raw JSON text gives the same document as escaping the value itself.
+    // Raw JSON text gives the same document as the value itself.
     expect(html).toBe(buildSrcdoc(assets, value, 640, 480));
   });
 
-  it("rejects a payload that is neither an object nor non-blank JSON text", () => {
-    for (const bad of ["", "   ", "\n\t", null, undefined, 42, true, "".concat()]) {
+  it("accepts the Python escaper's output verbatim", () => {
+    // The fixture's expected strings are what cnotebook.core.viewer3d.escape_script_json
+    // produces, so a document assembled from a Python payload matches the object path.
+    for (const { input, expected } of vectors.cases) {
+      expect(buildSrcdoc(assets, expected, 640, 480)).toBe(buildSrcdoc(assets, input, 640, 480));
+    }
+  });
+
+  it("rejects payload text that is not JSON, so it can never be interpolated as code", () => {
+    // Escaping alone does not stop this: none of these carry <, > or & , so before the parse
+    // step they were copied verbatim after `window.__C3D_INIT__ =` and ran as statements.
+    const injections = [
+      "{};globalThis.__pwned__=true;//",
+      '{"ok":1};globalThis.__pwned__=true;//',
+      "1+1",
+      "foo",
+      '{"a":1} extra',
+      "[]",
+      "null",
+      '"text"',
+    ];
+    for (const injection of injections) {
+      expect(() => buildSrcdoc(assets, injection, 640, 480)).toThrow(TypeError);
+      // Nothing from a rejected payload reaches a document, and nothing ran on the way.
+      expect(globalThis.__pwned__).toBeUndefined();
+    }
+  });
+
+  it("rejects a payload that is neither a JSON object nor JSON text of one", () => {
+    for (const bad of ["", "   ", "\n\t", null, undefined, 42, true, [], [1, 2]]) {
       expect(() => buildSrcdoc(assets, bad, 640, 480)).toThrow(TypeError);
     }
   });

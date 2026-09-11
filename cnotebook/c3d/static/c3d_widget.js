@@ -21,23 +21,6 @@ const SCRIPT_UNSAFE = new RegExp("[<>&\\u2028\\u2029]", "g");
 const unicodeEscape = (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
 
 /**
- * Apply the script-safe escaping to JSON text that is already serialised.
- *
- * Idempotent: the result is printable ASCII with no <, > or &, so a second pass changes
- * nothing. That is what lets buildSrcdoc accept either a payload object or JSON text without
- * having to trust the caller to have escaped it.
- *
- * The U+2028 and U+2029 arms of SCRIPT_UNSAFE are no-ops after the ASCII pass; they are kept
- * so the escaping stays correct on its own terms, exactly as the Python side keeps them.
- *
- * @param {string} json
- * @returns {string}
- */
-function escapeJsonText(json) {
-  return json.replace(NON_ASCII, unicodeEscape).replace(SCRIPT_UNSAFE, unicodeEscape);
-}
-
-/**
  * JSON text safe to inline inside a <script> block (mirrors Python's escape_script_json).
  *
  * The escaping is applied to the serialised JSON text, never to the payload, so the parsed
@@ -51,11 +34,14 @@ function escapeJsonText(json) {
  * 1.0 where JSON.stringify writes 1, and JavaScript reorders array-index keys ("0", "1", ...)
  * to the front of an object where Python preserves insertion order.
  *
+ * The U+2028 and U+2029 arms of SCRIPT_UNSAFE are no-ops after the ASCII pass; they are kept
+ * so the escaping stays correct on its own terms, exactly as the Python side keeps them.
+ *
  * @param {unknown} value
  * @returns {string}
  */
 export function escapeScriptJson(value) {
-  return escapeJsonText(JSON.stringify(value));
+  return JSON.stringify(value).replace(NON_ASCII, unicodeEscape).replace(SCRIPT_UNSAFE, unicodeEscape);
 }
 
 /**
@@ -79,28 +65,36 @@ function pixelDimension(value, name) {
 /**
  * Resolve the payload argument to escaped JSON text.
  *
- * A string is escaped rather than trusted. Callers reach for JSON.stringify before they reach
- * for escapeScriptJson, and taking that text as-is would put an unescaped </script> straight
- * into the script element. Because the escaping is idempotent, re-escaping text that was
- * already escaped is free.
+ * Caller text is never interpolated. Escaping alone is not a defence here: it only rewrites
+ * characters that matter to HTML, so text such as `{};globalThis.pwned=true;//` passes through
+ * untouched and executes as statements after `window.__C3D_INIT__ =`. Parsing the string and
+ * re-serialising the parsed value is what makes the assignment a value rather than caller
+ * code, and the object shape check keeps `null`, arrays and bare literals out: the init payload
+ * is always a JSON object.
  *
- * @param {object|string} payload
+ * @param {object|string} payload - payload object, or JSON text of an object
  * @returns {string}
- * @throws {TypeError} when the payload is neither an object nor a non-blank string
+ * @throws {TypeError} when the payload is blank, is not valid JSON, or is not a JSON object
  */
 function resolvePayloadJson(payload) {
+  let value = payload;
   if (typeof payload === "string") {
     if (payload.trim() === "") {
       // An empty string would silently emit `window.__C3D_INIT__ = ;`, a syntax error that
       // takes the whole inline script down.
       throw new TypeError("payload text must not be empty");
     }
-    return escapeJsonText(payload);
+    try {
+      value = JSON.parse(payload);
+    } catch (cause) {
+      throw new TypeError(`payload text is not valid JSON: ${cause.message}`);
+    }
   }
-  if (payload === null || typeof payload !== "object") {
-    throw new TypeError(`payload must be an object or JSON text, got ${String(payload)}`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    const kind = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    throw new TypeError(`payload must be a JSON object, got ${kind}`);
   }
-  return escapeScriptJson(payload);
+  return escapeScriptJson(value);
 }
 
 /**
@@ -112,12 +106,17 @@ function resolvePayloadJson(payload) {
  * with html.escape. The payload itself carries no < > or &, so molecule data can never close
  * the script element however hostile it is.
  *
+ * A string payload is JSON text of an object. The module parses it and re-serialises the
+ * parsed value, so byte-identity with the caller's text is not promised - floats and
+ * integer-like keys can come back differently - while the escaping guarantees above are. Text
+ * that is not JSON, or JSON that is not an object, is rejected rather than interpolated.
+ *
  * @param {{threeDmol: string, gui: string, css: string}} assets
- * @param {object|string} payload - init payload object, or JSON text (escaped either way)
+ * @param {object|string} payload - init payload object, or JSON text of one
  * @param {number} width
  * @param {number} height
  * @returns {string}
- * @throws {TypeError} when the payload is neither an object nor non-blank JSON text, or when
+ * @throws {TypeError} when the payload is not a JSON object or JSON text of one, or when
  *   width or height is not a finite, non-negative number
  */
 export function buildSrcdoc(assets, payload, width, height) {
