@@ -6,7 +6,7 @@ import asyncio
 import base64
 import logging
 import math
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -105,8 +105,11 @@ def _validate_view(view: Any) -> list[float]:
     :raises ValueError: If the value is not a sequence of :data:`_VIEW_LENGTH` finite numbers.
     """
     # Every unusable view is a ValueError, wrong type included, so a caller restoring a
-    # saved camera has one exception to catch rather than two.
-    if isinstance(view, str | bytes) or not isinstance(view, Iterable):
+    # saved camera has one exception to catch rather than two. The three named types are
+    # iterable but not sequences of coordinates: a mapping iterates into its keys and
+    # str and bytes into characters and byte values, so each could pass the checks below
+    # and become a camera the caller never described.
+    if isinstance(view, str | bytes | Mapping) or not isinstance(view, Iterable):
         raise ValueError(  # noqa: TRY004
             f"view must be a sequence of {_VIEW_LENGTH} numbers, got {type(view).__name__}"
         )

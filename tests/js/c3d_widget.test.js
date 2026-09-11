@@ -744,7 +744,45 @@ describe("createController protocol shapes", () => {
   });
 });
 
-describe("createController coordinates every view of one model", () => {
+/**
+ * A per-view model proxy, built the way the notebook hosts build theirs.
+ *
+ * anywidget 0.11 (`modelProxy`) and marimo 0.24 both construct a fresh object literal for
+ * every view, closing over the same underlying model. Two views of one widget therefore
+ * never receive the same object, which is why nothing in the controller may be keyed on
+ * the model's identity: a WeakMap over it would give each view its own entry and
+ * coordinate nothing. Passing the model itself, as the earlier tests here did, hid that.
+ *
+ * @param {FakeModel} model - the model both views are looking at
+ * @returns {object} a view's own proxy
+ */
+function viewProxy(model) {
+  return {
+    get(name) { return model.get(name); },
+    set(name, value) { model.set(name, value); },
+    save_changes() { model.save_changes(); },
+    on(event, handler) { model.on(event, handler); },
+    off(event, handler) { if (typeof model.off === "function") model.off(event, handler); },
+  };
+}
+
+/** Connect a controller through its own proxy, as a host would, and wait for the boot. */
+function startedView(model, api) {
+  return started(viewProxy(model), api);
+}
+
+/** Record every value written to one trait, in order, as the kernel would receive them. */
+function writesTo(model, name) {
+  const writes = [];
+  const set = model.set.bind(model);
+  model.set = (trait, value) => {
+    if (trait === name) writes.push(value);
+    set(trait, value);
+  };
+  return writes;
+}
+
+describe("createController mirrors one model in every view", () => {
   it("does not run a command an earlier view already answered", async () => {
     const model = new FakeModel({
       payload: "{}", width: 100, height: 80,
@@ -752,7 +790,7 @@ describe("createController coordinates every view of one model", () => {
       command_results: [{ id: 1, ok: true, output: [] }],
     });
     const api = fakeApi();
-    await started(model, api);
+    await startedView(model, api);
     // Python keeps a command in the list until it reads the result, so a view that opens
     // in between sees an entry that is already answered.
     expect(api.executed).toEqual([]);
@@ -760,66 +798,91 @@ describe("createController coordinates every view of one model", () => {
     expect(api.executed).toEqual(["center"]);
   });
 
-  it("does not re-run commands when the same model is rendered again", async () => {
+  it("executes nothing when a view re-renders onto an answered command", async () => {
     const model = new FakeModel({ payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "zoom" }] });
     const first = fakeApi();
-    const controller = await started(model, first);
+    const controller = await startedView(model, first);
     expect(first.executed).toEqual(["zoom"]);
-
     controller.destroy();
-    // Even with the evidence gone from the traits, re-running the command is not allowed:
-    // the coordination state belongs to the model, not to the view that happened to run it.
-    model.state.command_results = [];
+
+    // Re-running the cell builds a new proxy over the same model. The queue still lists
+    // the command - Python drops it when it reads the result - so `command_results` is
+    // the only thing that says it has been answered.
+    expect(model.get("commands")).toEqual([{ id: 1, command: "zoom" }]);
     const second = fakeApi();
-    await started(model, second);
+    await startedView(model, second);
     expect(second.executed).toEqual([]);
   });
 
-  it("runs each command in one view only when two views share the model", async () => {
+  it("runs each command in every view and publishes one result from each", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const results = writesTo(model, "command_results");
+    const first = fakeApi();
+    const second = fakeApi();
+    await startedView(model, first);
+    await startedView(model, second);
+    model.emit("commands", [{ id: 1, command: "zoom" }]);
+    // Each view is its own viewer document: a command that ran in one frame has not run
+    // in the other, and skipping it there would leave the two showing different things.
+    expect(first.executed).toEqual(["zoom"]);
+    expect(second.executed).toEqual(["zoom"]);
+    // Both answers carry the same id. The kernel pops the handle on the first and drops
+    // the rest, so the duplicate settles nothing twice.
+    expect(results).toEqual([
+      [{ id: 1, ok: true, output: ["ran zoom"] }],
+      [{ id: 1, ok: true, output: ["ran zoom"] }],
+    ]);
+  });
+
+  it("does not let a command running in one view hold up the other", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const results = writesTo(model, "command_results");
+    const slow = asyncFakeApi();
+    const quick = fakeApi();
+    await startedView(model, slow);
+    await startedView(model, quick);
+    model.emit("commands", [{ id: 1, command: "load big.pdb" }]);
+    // The claim on a running id is this view's own, so it cannot stop the other view.
+    expect(slow.executed).toEqual(["load big.pdb"]);
+    expect(quick.executed).toEqual(["load big.pdb"]);
+    expect(results).toEqual([[{ id: 1, ok: true, output: ["ran load big.pdb"] }]]);
+
+    slow.settle[0].resolve();
+    await flush();
+    expect(results).toEqual([
+      [{ id: 1, ok: true, output: ["ran load big.pdb"] }],
+      [{ id: 1, ok: true, output: ["started load big.pdb"] }],
+    ]);
+  });
+
+  it("keys nothing on the model, so even one shared object gets both views' work", async () => {
+    // No host does this - anywidget and marimo each build a fresh proxy per view - but it
+    // is the only way to observe whether anything is keyed on the model's identity. State
+    // that coordinated here would coordinate nothing in production, where the two views
+    // hold different objects, so the tests would promise a guarantee users never get.
     const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
     const first = fakeApi();
     const second = fakeApi();
     await started(model, first);
     await started(model, second);
     model.emit("commands", [{ id: 1, command: "zoom" }]);
-    // Both views see the change. Running the command twice would apply it twice in one
-    // frame's terminal and publish two results for one handle.
     expect(first.executed).toEqual(["zoom"]);
-    expect(second.executed).toEqual([]);
-    expect(model.get("command_results")).toEqual([{ id: 1, ok: true, output: ["ran zoom"] }]);
+    expect(second.executed).toEqual(["zoom"]);
+    first.fire("pick", { atom: {}, modifiers: {} });
+    second.fire("pick", { atom: {}, modifiers: {} });
+    expect(model.get("picked").seq).toBe(2);
   });
 
-  it("does not hand a running command to the other view", async () => {
-    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
-    const slow = asyncFakeApi();
-    const other = fakeApi();
-    await started(model, slow);
-    await started(model, other);
-    model.emit("commands", [{ id: 1, command: "load big.pdb" }]);
-    expect(slow.executed).toEqual(["load big.pdb"]);
-    expect(other.executed).toEqual([]);
-
-    // A command that has started but not finished is not covered by "answered up to id N",
-    // so the claim is what stops the second view taking it while it runs.
-    model.emit("commands", [{ id: 1, command: "load big.pdb" }, { id: 2, command: "zoom" }]);
-    expect(slow.executed).toEqual(["load big.pdb"]);
-    expect(other.executed).toEqual(["zoom"]);
-    slow.settle[0].resolve();
-    await flush();
-    expect(slow.executed).toEqual(["load big.pdb"]);
-    expect(model.get("command_results").map((r) => r.id)).toEqual([1]);
-  });
-
-  it("gives two views of one model consecutive pick sequences", async () => {
+  it("gives two views' identical picks consecutive sequence numbers", async () => {
     const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
     const first = fakeApi();
     const second = fakeApi();
-    await started(model, first);
-    await started(model, second);
+    await startedView(model, first);
+    await startedView(model, second);
     first.fire("pick", { atom: { serial: 1 }, modifiers: {} });
     expect(model.get("picked")).toEqual({ seq: 1, atom: { serial: 1 }, modifiers: {} });
-    // The same atom picked in the other view: a repeated sequence would be dropped by
-    // traitlets and the second pick would never reach the kernel.
+    // The same atom picked in the other view: each view counts on its own, so only the
+    // reconcile against the published sequence keeps traitlets from dropping the repeat.
     second.fire("pick", { atom: { serial: 1 }, modifiers: {} });
     expect(model.get("picked")).toEqual({ seq: 2, atom: { serial: 1 }, modifiers: {} });
   });
@@ -837,20 +900,26 @@ describe("createController coordinates every view of one model", () => {
     expect(model.get("picked")).toEqual({ seq: 10, atom: { serial: 2 }, modifiers: {} });
   });
 
-  it("answers a screenshot request in one view only", async () => {
+  it("lets every view answer a screenshot request once, at the same sequence", async () => {
     const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const answers = writesTo(model, "screenshot");
     const first = fakeApi();
     const second = fakeApi();
-    let captures = 0;
-    first.pngDataUrl = () => { captures += 1; return "data:image/png;base64,QUJD"; };
-    second.pngDataUrl = () => { captures += 1; return "data:image/png;base64,WFla"; };
-    await started(model, first);
-    await started(model, second);
+    first.pngDataUrl = () => "data:image/png;base64,QUJD";
+    second.pngDataUrl = () => "data:image/png;base64,WFla";
+    await startedView(model, first);
+    await startedView(model, second);
     model.emit("screenshot_request", 1);
-    // Two captures would race to write the same sequence, and Python would resolve the
-    // future with whichever frame published last.
-    expect(captures).toBe(1);
-    expect(model.get("screenshot")).toEqual({ seq: 1, png_base64: "QUJD" });
+    // Neither view can know whether the other answered, so both do. Python settles the
+    // futures on the first answer and ignores every later one for the same sequence.
+    expect(answers).toEqual([
+      { seq: 1, png_base64: "QUJD" },
+      { seq: 1, png_base64: "WFla" },
+    ]);
+
+    // Once each, though: a repeat of the same request is not a new one.
+    model.emit("screenshot_request", 1);
+    expect(answers).toHaveLength(2);
   });
 });
 

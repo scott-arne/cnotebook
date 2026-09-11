@@ -627,6 +627,30 @@ def test_screenshots_without_a_plain_integer_sequence_are_ignored(seq, caplog):
     asyncio.run(scenario())
 
 
+def test_duplicate_answers_from_a_second_view_are_ignored():
+    """Every view mirrors every command and answers every screenshot request.
+
+    Two views of one widget are two independent viewer documents, so the kernel is told
+    each outcome once per view. The first answer settles the handle and the futures; the
+    later ones must be dropped rather than settle anything twice or raise in the observer.
+    """
+    widget = C3DWidget(payload="{}")
+    handle = widget.submit("zoom")
+
+    async def scenario():
+        future = widget.request_screenshot()
+        widget.command_results = [{"id": handle.id, "ok": True, "output": ["first view"]}]
+        widget.screenshot = {"seq": 1, "png_base64": base64.b64encode(b"first").decode()}
+        assert await asyncio.wait_for(future, 1) == b"first"
+
+        widget.command_results = [{"id": handle.id, "ok": False, "output": ["second view"]}]
+        widget.screenshot = {"seq": 1, "png_base64": base64.b64encode(b"second").decode()}
+        assert handle.result == CommandResult(True, ["first view"])
+        assert widget.commands == [] and widget._screenshot_futures == {}
+
+    asyncio.run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # View
 # ---------------------------------------------------------------------------
@@ -662,6 +686,10 @@ def test_set_view_counts_requests_so_an_unchanged_camera_still_reaches_the_frame
         [*_VIEW[:7], float("inf")],
         [*_VIEW[:7], True],
         "12345678",
+        # Both iterate into eight numbers: bytes yield their byte values and a mapping
+        # yields its keys, so either would be adopted as a camera nobody asked for.
+        b"12345678",
+        dict.fromkeys(range(8)),
         None,
         42,
     ],
@@ -678,3 +706,12 @@ def test_set_view_accepts_integer_coordinates():
     widget = C3DWidget(payload="{}")
     widget.set_view([1, 2, 3, 4, 0, 0, 0, 1])
     assert widget.view == _VIEW
+
+
+def test_set_view_accepts_any_sequence_of_eight_numbers():
+    """A saved camera is as likely to be a tuple or a numpy row as a list."""
+    numpy = pytest.importorskip("numpy")
+    for view in (tuple(_VIEW), (coordinate for coordinate in _VIEW), numpy.array(_VIEW)):
+        widget = C3DWidget(payload="{}")
+        widget.set_view(view)
+        assert widget.view == _VIEW and widget.view_request == 1
