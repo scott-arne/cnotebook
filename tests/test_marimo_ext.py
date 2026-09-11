@@ -1,4 +1,7 @@
+import json
 import logging
+import os
+import subprocess
 import sys
 import types
 import warnings
@@ -1063,3 +1066,280 @@ def test_column_width_consumes_only_the_sample():
 
     assert me._column_width(counting_column(), ColumnKind.MOLECULE, ctx) == 0
     assert consumed == me._WIDTH_SAMPLE
+
+
+########################################################################################################################
+# Fresh-process checks
+#
+# Marimo populates its own opinionated formatters lazily, at most once per process, on the
+# first ``get_formatter`` call made outside a kernel. That pass replaces whatever pandas
+# and polars are registered to, so which formatter finally wins can only be observed from
+# an interpreter where it has not happened yet.
+########################################################################################################################
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(me.__file__)))
+
+# Generous on purpose: a cold import of the OpenEye, pandas, polars and marimo stack can
+# take the better part of a minute on a loaded machine.
+_FRESH_PROCESS_TIMEOUT = 300
+
+# What every import-order script does once the session is set up: attach, then ask marimo
+# itself - not the registry - which formatter it would use.
+_LOOKUP_TAIL = """
+import cnotebook.marimo_ext as me
+me._attach()
+
+import pandas as pd
+import polars as pl
+from marimo._output.formatting import get_formatter
+
+print(get_formatter(pd.DataFrame({"a": [1]}), include_opinionated=True).__name__)
+print(get_formatter(pl.DataFrame({"a": [1]}), include_opinionated=True).__name__)
+"""
+
+_IMPORT_ORDERS = {
+    "marimo-first": "import marimo\nimport cnotebook\n",
+    "cnotebook-first": "import cnotebook\nimport marimo\n",
+    "frames-after-cnotebook": (
+        "import cnotebook\nimport marimo\nimport pandas\nimport oepandas\nimport polars\nimport oepolars\n"
+    ),
+}
+
+_HIGHLIGHT_SCRIPT = """
+import marimo
+import cnotebook
+import cnotebook.marimo_ext as me
+me._attach()
+
+import oepolars as oeplr
+import polars as pl
+from marimo._output.formatting import get_formatter
+from openeye import oechem
+
+mol = oechem.OEGraphMol()
+oechem.OESmilesToMol(mol, "c1ccccc1O")
+highlighted = pl.DataFrame([pl.Series("mol", [mol], dtype=oeplr.MoleculeType())]).chem.highlight("mol", "c1ccccc1")
+
+formatter = get_formatter(highlighted, include_opinionated=True)
+print(formatter.__name__)
+# Serialise before resetting: reset_depictions may reach the shared molecule objects.
+highlighted_html = formatter(highlighted)[1]
+plain = highlighted.chem.reset_depictions("mol")
+print(highlighted_html != get_formatter(plain, include_opinionated=True)(plain)[1])
+"""
+
+
+def _run_in_fresh_process(body: str) -> list[str]:
+    """Run *body* in an interpreter that has imported neither marimo nor cnotebook.
+
+    :param body: Python source to run.
+    :returns: The non-empty lines the script printed to stdout.
+    """
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (_REPO_ROOT, env.get("PYTHONPATH")) if part)
+    finished = subprocess.run(
+        [sys.executable, "-c", body],
+        capture_output=True,
+        text=True,
+        timeout=_FRESH_PROCESS_TIMEOUT,
+        env=env,
+        # ``python -c`` reads the working directory as sys.path[0], so both of these have
+        # to name the tree this test module was imported from or the child would answer
+        # for a different checkout.
+        cwd=_REPO_ROOT,
+        check=False,
+    )
+    assert finished.returncode == 0, f"fresh process failed:\n{finished.stdout}\n{finished.stderr}"
+    return [line for line in finished.stdout.splitlines() if line]
+
+
+@pytest.mark.parametrize("order", list(_IMPORT_ORDERS), ids=list(_IMPORT_ORDERS))
+def test_marimo_lazy_registration_cannot_displace_the_cnotebook_formatters(order):
+    """Marimo's own lookup returns cnotebook's table formatters, whatever the import order.
+
+    Writing the registry is not enough: marimo's lazy start-up pass runs later and puts its
+    own dataframe formatter back, so the adapter has to provoke that pass before it writes.
+    """
+    assert _run_in_fresh_process(_IMPORT_ORDERS[order] + _LOOKUP_TAIL) == [
+        "marimo_pandas_formatter",
+        "marimo_polars_formatter",
+    ]
+
+
+def test_a_highlight_survives_the_formatter_marimo_actually_looks_up():
+    """A highlighted frame and its reset sibling serialise differently through marimo's lookup."""
+    assert _run_in_fresh_process(_HIGHLIGHT_SCRIPT) == ["marimo_polars_formatter", "True"]
+
+
+########################################################################################################################
+# Column labels marimo cannot address
+#
+# Marimo names columns by string and rejects a frame whose names repeat, so a format
+# mapping keyed by the caller's own Pandas labels silently misses an integer or tuple
+# label and a duplicate label never reaches the table component at all.
+########################################################################################################################
+
+def _rendered_rows(mime_html: str) -> list:
+    """Decode the formatted cell values marimo put in its table payload.
+
+    Only the formatted values are of interest: marimo also ships the unformatted ones,
+    which for a molecule column are always the object's repr.
+
+    :param mime_html: The ``_mime_`` HTML of a marimo table.
+    :returns: One mapping of column name to formatted value per row.
+    """
+    import html
+    import re
+
+    encoded = re.search(r"data-data='([^']*)'", mime_html)
+    assert encoded is not None, "marimo's table payload has no data attribute"
+    # The attribute holds a JSON string that in turn holds the JSON row data.
+    return json.loads(json.loads(html.unescape(encoded.group(1))))
+
+
+@pytest.mark.parametrize(
+    ("labels", "names"),
+    [
+        ([7, 8], ["7", "8"]),
+        ([("a", "b"), ("a", "c")], ["('a', 'b')", "('a', 'c')"]),
+        (["same", "same"], ["same", "same (2)"]),
+    ],
+    ids=["integer", "tuple", "duplicate"],
+)
+def test_marimo_addresses_pandas_columns_whatever_their_labels(labels, names):
+    """A depiction column renders, and its neighbour stays text, for labels marimo cannot use."""
+    if not oepandas_available:
+        pytest.skip("oepandas not available")
+    me._attach()
+    df = pd.DataFrame({"mol": pd.Series([_mol()], dtype=oepd.MoleculeDtype())})
+    df["text"] = ["plain <b>text</b>"]
+    df.columns = labels
+
+    rows = _rendered_rows(me.marimo_pandas_formatter(df)[1])
+
+    depiction = rows[0][names[0]]
+    assert depiction["mimetype"] == "text/html"
+    assert "<img" in depiction["data"] or "<svg" in depiction["data"]
+    # Not a MIME object, so marimo escapes it instead of inserting it as markup.
+    assert rows[0][names[1]] == "plain <b>text</b>"
+    # The presentation names are the adapter's business; the caller's frame keeps its own.
+    assert list(df.columns) == labels
+
+
+########################################################################################################################
+# Registry access is inside the guard
+########################################################################################################################
+
+class _PickyFormatters(dict):
+    """A registry mapping that refuses to have one particular key written.
+
+    :param refuse: The key whose assignment raises.
+    """
+
+    def __init__(self, *args, refuse=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._refuse = refuse
+
+    def __setitem__(self, key, value):
+        if key is self._refuse:
+            raise RuntimeError("this registry entry is read-only")
+        super().__setitem__(key, value)
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        types.SimpleNamespace(),
+        types.SimpleNamespace(formatters=types.MappingProxyType({})),
+    ],
+    ids=["no-formatters", "not-a-mutable-mapping"],
+)
+def test_attach_leaves_marimo_alone_when_its_registry_is_unusable(monkeypatch, caplog, registry):
+    """A registry that has been hidden or frozen costs the integration and nothing else."""
+    import marimo._output.formatting as marimo_formatting
+
+    monkeypatch.setattr(marimo_formatting, "OPINIONATED_FORMATTERS", registry)
+    # Priming is the other half of the guarded block; this test is about the registry.
+    monkeypatch.setattr(me, "_marimo_owns_display", lambda: False)
+    monkeypatch.setattr(me, "_WARNED", False)
+    monkeypatch.setattr(me, "table", None)
+
+    with caplog.at_level(logging.DEBUG, logger="cnotebook"), warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        me._attach()
+
+    assert "marimo table integration disabled" in caplog.text
+    assert me.table is None
+    assert dict(getattr(registry, "formatters", {})) == {}
+
+
+def test_attach_does_not_half_register_when_the_registry_refuses_a_write(monkeypatch, caplog):
+    """A registry that accepts one write and refuses the next keeps marimo's own entries."""
+    import marimo._output.formatting as marimo_formatting
+
+    def marimo_pandas(frame):
+        return ("text/html", "marimo pandas")
+
+    def marimo_polars(frame):
+        return ("text/html", "marimo polars")
+
+    formatters = _PickyFormatters(
+        {pd.DataFrame: marimo_pandas, pl.DataFrame: marimo_polars}, refuse=pl.DataFrame
+    )
+    monkeypatch.setattr(marimo_formatting, "OPINIONATED_FORMATTERS", types.SimpleNamespace(formatters=formatters))
+    monkeypatch.setattr(me, "_marimo_owns_display", lambda: False)
+    monkeypatch.setattr(me, "_WARNED", False)
+    monkeypatch.setattr(me, "table", None)
+
+    with caplog.at_level(logging.DEBUG, logger="cnotebook"), warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        me._attach()
+
+    assert "marimo table integration disabled" in caplog.text
+    assert me.table is None
+    # Marimo keeps its own defaults or it keeps cnotebook's, never a mixture of the two.
+    assert formatters[pd.DataFrame] is marimo_pandas
+    assert formatters[pl.DataFrame] is marimo_polars
+
+
+def test_attach_survives_a_marimo_that_cannot_prime_its_registry(monkeypatch, caplog):
+    """Priming is marimo internals too, so its failure disables the integration quietly."""
+    import marimo._output.formatters.formatters as marimo_formatters
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("marimo could not register its formatters")
+
+    monkeypatch.setattr(marimo_formatters, "register_formatters", boom)
+    monkeypatch.setattr(me, "_marimo_owns_display", lambda: True)
+    monkeypatch.setattr(me, "_WARNED", False)
+    monkeypatch.setattr(me, "table", None)
+
+    with caplog.at_level(logging.DEBUG, logger="cnotebook"), warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        me._attach()
+
+    assert "marimo table integration disabled" in caplog.text
+    assert me.table is None
+
+
+@pytest.mark.parametrize(
+    ("shell", "owns"), [(None, True), (object(), False)], ids=["no-shell", "ipython-shell"]
+)
+def test_marimo_does_not_own_the_display_of_another_front_end(monkeypatch, shell, owns):
+    """A live IPython shell means Jupyter renders the output, so marimo must not be primed.
+
+    Priming swaps ``comm.create_comm`` for one that turns every non-anywidget comm into a
+    no-op and rewrites the Pandas display options. In Jupyter both are regressions, and
+    cnotebook gets here because its own environment detection leaves marimo importable.
+    """
+    import marimo._output.formatters.formatters as marimo_formatters
+    from IPython.core import getipython
+
+    monkeypatch.setattr(getipython, "get_ipython", lambda: shell)
+    assert me._marimo_owns_display() is owns
+
+    primed = []
+    monkeypatch.setattr(marimo_formatters, "register_formatters", lambda *a, **k: primed.append(1))
+    monkeypatch.setattr(me, "_WARNED", False)
+    me._attach()
+    assert bool(primed) is owns

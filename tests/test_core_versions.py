@@ -21,6 +21,12 @@ VERSION_CASES = [
     ("0.4.0.post1.dev1", True),
     ("0.4.0+corp", True),
     ("1!0.4.0", True),
+    # An epoch outranks the release, and an explicit epoch 0 is the same as none at all.
+    # 1!0.1 and 1!0.3.0 are the discriminating pair: their releases are below the floor.
+    ("1!0.1", True),
+    ("1!0.3.0", True),
+    ("0!0.3.0", False),
+    ("0!0.4.0", True),
     # Release segments shorter or longer than the floor, and the v prefix
     ("0.4", True),
     ("1", True),

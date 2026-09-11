@@ -12,7 +12,8 @@ Neither pandas nor polars is imported at module level: the formatters and
 """
 import logging
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, MutableMapping
+from contextlib import suppress
 from itertools import islice
 from typing import Any
 
@@ -245,19 +246,55 @@ def _make_style_cell(column_widths: dict[str, int]) -> Callable[[str, str, Any],
 # Frame formatters and registration
 ########################################################################################################################
 
+def _presentation_names(labels: Iterable[Any]) -> list[str]:
+    """Derive one unique string column name per column, positionally.
+
+    Marimo addresses columns by name: it stringifies the field names on the way to its
+    table component, and rejects a frame whose names repeat. A ``format_mapping`` keyed
+    by the caller's own labels therefore misses an integer or tuple label, and duplicate
+    labels never reach the component at all. Renaming a presentation copy is what keeps
+    every column addressable without touching the caller's frame.
+
+    :param labels: The frame's column labels, in positional order.
+    :returns: One unique string per column, in the same order.
+    """
+    names: list[str] = []
+    used: set[str] = set()
+    for label in labels:
+        base = str(label)
+        name = base
+        repeat = 1
+        # Keep counting up rather than settling on the first suffix: the frame may
+        # already carry the name that suffix would produce.
+        while name in used:
+            repeat += 1
+            name = f"{base} ({repeat})"
+        used.add(name)
+        names.append(name)
+    return names
+
+
 def _format_frame(
-    adapter: FrameAdapter, df: Any, values_for: Callable[[int], Iterable[Any]]
+    adapter: FrameAdapter,
+    values_for: Callable[[int], Iterable[Any]],
+    retitle: Callable[[list[str]], Any],
 ) -> tuple[str, str]:
     """Render a frame as a marimo table with depiction cells.
 
+    Kinds and contexts are resolved positionally through *adapter*, which wraps the
+    caller's own frame, while marimo sees a presentation copy carrying the names the
+    format mapping and the cell styles are keyed by.
+
     :param adapter: Frame adapter reporting each column's kind and render context.
-    :param df: The frame itself, handed to marimo unchanged.
     :param values_for: Callable returning the values of the column at one position.
+    :param retitle: Callable returning the frame to hand marimo, with its columns named
+        by the presentation names it is given. Must not modify the caller's frame.
     :returns: The table's ``_mime_`` pair.
     """
-    format_mapping: dict[Any, Any] = {}
+    names = _presentation_names(adapter.columns())
+    format_mapping: dict[str, Any] = {}
     widths: dict[str, int] = {}
-    for pos, label in enumerate(adapter.columns()):
+    for pos, name in enumerate(names):
         kind = adapter.kind(pos)
         factory = _FACTORIES.get(kind)
         if factory is None:
@@ -265,12 +302,14 @@ def _format_frame(
         # A copy, because the closure outlives this call and must not see later edits
         # to the column's stored context.
         ctx = adapter.context(pos).copy()
-        format_mapping[label] = factory(ctx)
+        format_mapping[name] = factory(ctx)
         width = _column_width(values_for(pos), kind, ctx)
         if width:
-            widths[str(label)] = width
+            widths[name] = width
     style_cell = _make_style_cell(widths) if widths else None
-    return table(df, selection=None, format_mapping=format_mapping, pagination=True, style_cell=style_cell)._mime_()
+    return table(
+        retitle(names), selection=None, format_mapping=format_mapping, pagination=True, style_cell=style_cell
+    )._mime_()
 
 
 def marimo_pandas_formatter(df: Any) -> tuple[str, str]:
@@ -282,7 +321,9 @@ def marimo_pandas_formatter(df: Any) -> tuple[str, str]:
     from cnotebook.pandas_ext import PandasFrameAdapter
 
     adapter = PandasFrameAdapter(df)
-    return _format_frame(adapter, df, lambda pos: df.iloc[:, pos])
+    # set_axis returns a new frame over the same column data, so the caller's labels and
+    # arrays are left alone.
+    return _format_frame(adapter, lambda pos: df.iloc[:, pos], lambda names: df.set_axis(names, axis="columns"))
 
 
 def marimo_polars_formatter(df: Any) -> tuple[str, str]:
@@ -294,7 +335,9 @@ def marimo_polars_formatter(df: Any) -> tuple[str, str]:
     from cnotebook.polars_ext import PolarsFrameAdapter
 
     adapter = PolarsFrameAdapter(df)
-    return _format_frame(adapter, df, lambda pos: df.to_series(pos))
+    # Polars already guarantees unique string column names, so the presentation names are
+    # the frame's own names and it needs no renaming.
+    return _format_frame(adapter, lambda pos: df.to_series(pos), lambda _names: df)
 
 
 # The registry and the table factory this module reaches into are marimo internals, so the
@@ -321,14 +364,63 @@ def _running_under_marimo() -> bool:
         return False
 
 
+def _marimo_owns_display() -> bool:
+    """Report whether marimo, and not another front end, is what renders this session.
+
+    Priming marimo's formatter registry is only safe where marimo is the front end:
+    doing it swaps ``comm.create_comm`` for one that turns every non-anywidget comm into
+    a no-op, and rewrites the Pandas display options. In a Jupyter session those are
+    regressions, and cnotebook reaches this code there because its own environment
+    detection leaves ``marimo`` in ``sys.modules``. A live IPython shell is the signal
+    that something else owns the display; a marimo notebook run as a plain script has no
+    shell, so it still counts as marimo's.
+
+    :returns: ``True`` when nothing but marimo is in a position to render output.
+    """
+    if _running_under_marimo():
+        return True
+    try:
+        from IPython.core.getipython import get_ipython
+    except ImportError:
+        return True
+    return get_ipython() is None
+
+
+def _install_formatters(
+    registry: MutableMapping[type, Any], pending: dict[type, Callable[[Any], tuple[str, str]]]
+) -> None:
+    """Write every formatter into marimo's registry, or leave the registry as it was.
+
+    :param registry: Marimo's opinionated formatter mapping.
+    :param pending: Formatter to install, keyed by the frame type it renders.
+    :raises Exception: Whatever the registry raised, after the registry is restored.
+    """
+    restore = {frame_type: registry[frame_type] for frame_type in pending if frame_type in registry}
+    written: list[type] = []
+    try:
+        for frame_type, formatter in pending.items():
+            registry[frame_type] = formatter
+            written.append(frame_type)
+    except Exception:
+        # A registry that refused one write must not be left holding the others: marimo
+        # keeps its own defaults or it keeps cnotebook's, never a mixture of the two.
+        for frame_type in written:
+            with suppress(Exception):
+                if frame_type in restore:
+                    registry[frame_type] = restore[frame_type]
+                else:
+                    del registry[frame_type]
+        raise
+
+
 def _attach() -> None:
     """Register the table formatters for the DataFrame libraries the session has imported.
 
     Safe to call repeatedly, and called again whenever pandas or polars support attaches,
     so a frame library imported after cnotebook still gets its formatter. A marimo that is
-    missing, too old, or no longer exposing the internals leaves marimo's own table
-    formatting in place; that is reported once, and only warns when the session really is
-    a marimo notebook, so an unrelated Jupyter session stays quiet.
+    missing, too old, or no longer exposing the internals it is patched through leaves
+    marimo's own table formatting in place; that is reported once, and only warns when the
+    session really is a marimo notebook, so an unrelated Jupyter session stays quiet.
     """
     global table, _WARNED
     try:
@@ -336,11 +428,37 @@ def _attach() -> None:
 
         if not _at_least(marimo.__version__, _MIN_MARIMO):
             raise ImportError(f"marimo {marimo.__version__} is older than {'.'.join(map(str, _MIN_MARIMO))}")
-        # Both of these are marimo internals; the version guard above is what stands
-        # in for the stability guarantee they do not give.
+        # Everything below this line is marimo internals; the version guard above is what
+        # stands in for the stability guarantee they do not give. Resolving and writing
+        # the registry inside the guard too is what keeps a marimo that has moved on from
+        # costing the session anything but the integration.
+        from marimo._output.formatters.formatters import register_formatters
         from marimo._output.formatting import OPINIONATED_FORMATTERS
         from marimo._plugins.ui._impl.table import table as marimo_table
-    except (ImportError, AttributeError, ValueError) as exc:
+
+        if _marimo_owns_display():
+            # Marimo fills its own opinionated formatters lazily, on the first
+            # get_formatter call made outside a kernel, and that pass would overwrite
+            # whatever pandas and polars are already registered to. Running it up front
+            # (it is idempotent) puts cnotebook's formatters after marimo's, where they
+            # survive.
+            register_formatters()
+
+        registry = OPINIONATED_FORMATTERS.formatters
+        if not isinstance(registry, MutableMapping):
+            raise TypeError(f"marimo's opinionated formatter registry is a {type(registry).__name__}")
+
+        pending: dict[type, Callable[[Any], tuple[str, str]]] = {}
+        if "pandas" in sys.modules and "oepandas" in sys.modules:
+            import pandas as pd
+
+            pending[pd.DataFrame] = marimo_pandas_formatter
+        if "polars" in sys.modules and "oepolars" in sys.modules:
+            import polars as pl
+
+            pending[pl.DataFrame] = marimo_polars_formatter
+        _install_formatters(registry, pending)
+    except Exception as exc:  # noqa: BLE001 - an unusable marimo costs the integration, nothing else
         # The reason cannot change within a session, so one report either way is enough.
         if not _WARNED:
             _WARNED = True
@@ -351,14 +469,6 @@ def _attach() -> None:
                 log.debug(message)
         return
     table = marimo_table
-    if "pandas" in sys.modules and "oepandas" in sys.modules:
-        import pandas as pd
-
-        OPINIONATED_FORMATTERS.formatters[pd.DataFrame] = marimo_pandas_formatter
-    if "polars" in sys.modules and "oepolars" in sys.modules:
-        import polars as pl
-
-        OPINIONATED_FORMATTERS.formatters[pl.DataFrame] = marimo_polars_formatter
 
 
 _attach()

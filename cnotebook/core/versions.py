@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import re
 
-# The optional segments of a PEP 440 version. The epoch is matched so that it can be
-# ignored: the guarded projects do not use one, and a project that starts using epochs
-# only ever moves forward, which is the side of the comparison that already attaches.
+# The optional segments of a PEP 440 version. The epoch outranks the release, so it has
+# to be captured rather than skipped: 1!0.1 is after 0.4.0, not before it.
 _VERSION_RE = re.compile(
     r"""
     v?
-    (?:\d+!)?                                                   # epoch, ignored
+    (?:(?P<epoch>\d+)!)?
     (?P<release>\d+(?:\.\d+)*)
     (?P<pre>[-._]?(?:a|b|c|rc|alpha|beta|pre|preview)[-._]?\d*)?
     (?P<post>[-._]?(?:post|rev|r)[-._]?\d*|-\d+)?
@@ -56,8 +55,11 @@ def at_least(version: str, minimum: tuple[int, ...] | str) -> bool:
         width = max(len(release), len(floor))
         padded = release + (0,) * (width - len(release))
         floor_release = floor + (0,) * (width - len(floor))
-        if padded != floor_release:
-            return padded > floor_release
+        # The floor is a bare release, so its epoch is the implicit 0; an explicit epoch
+        # on the installed version decides the comparison before the release does.
+        epoch = int(match.group("epoch") or 0)
+        if (epoch, padded) != (0, floor_release):
+            return (epoch, padded) > (0, floor_release)
         # At the floor's own release: a pre-release comes before it, and so does a
         # development build, unless it is a development build of a post-release.
         return not (match.group("pre") or (match.group("dev") and not match.group("post")))
