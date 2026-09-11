@@ -5,7 +5,7 @@ import typing
 import uuid
 from collections import OrderedDict
 from collections.abc import Hashable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import oepolars as oeplr  # pyright: ignore
@@ -43,8 +43,8 @@ class ColumnState:
     """
     Per-token column state.
 
-    The report is treated as immutable: forking a column shares the source's report object
-    rather than copying it, so nothing may write to a report once it has been stored.
+    Forks receive their own copy of the report, so a caller that writes into a report it
+    read from one frame cannot change what a sibling frame reports.
 
     :param context: Render context for every cell of the column.
     :param alignment_report: Outcome of the last depiction alignment, when one ran.
@@ -379,37 +379,56 @@ def render_polars_dataframe(
 _MIN_OEPOLARS = (0, 4, 0)
 _ATTACHED = False
 
-# Leading release segment of a version string, plus whatever follows it.
-_VERSION_RE = re.compile(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$", re.ASCII)
+# The optional segments of a PEP 440 version. The epoch is matched so that it can be
+# ignored: oepolars does not use one, and a project that starts using epochs only ever
+# moves forward, which is the side of the comparison that already attaches.
+_VERSION_RE = re.compile(
+    r"""
+    v?
+    (?:\d+!)?                                                   # epoch, ignored
+    (?P<release>\d+(?:\.\d+)*)
+    (?P<pre>[-._]?(?:a|b|c|rc|alpha|beta|pre|preview)[-._]?\d*)?
+    (?P<post>[-._]?(?:post|rev|r)[-._]?\d*|-\d+)?
+    (?P<dev>[-._]?dev[-._]?\d*)?
+    (?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?                         # local version
+    $
+    """,
+    re.VERBOSE | re.IGNORECASE | re.ASCII,
+)
 
 
-def _parse_release(version: str) -> tuple[tuple[int, ...], bool]:
+def _at_least(version: str, minimum: tuple[int, ...]) -> bool:
     """
-    Split a version string into its release numbers and a pre-release flag.
+    Check whether an installed version is *minimum* or later, in PEP 440 order.
 
-    ``packaging`` is not a declared dependency of cnotebook, so a small parse of the
-    leading release segment stands in when it cannot be imported.
+    ``packaging`` is not a declared dependency of cnotebook, so a smaller parse of the
+    same grammar stands in when it cannot be imported. The two agree on the spellings a
+    release can take: ``0.4.0.post1``, ``0.4.0-1`` and ``0.4.0-r1`` are all after
+    ``0.4.0``, while ``0.4.0rc1`` and ``0.4.0.dev1`` are before it.
 
-    :param version: Version string, normally PEP 440.
-    :returns: The release padded to three parts, and whether this build precedes that
-        release (a development or pre-release build).
-    :raises ValueError: When the string does not start with a release number.
+    :param version: Installed version string.
+    :param minimum: Release to compare against, as a tuple of numbers.
+    :returns: ``True`` when *version* is that release or later.
+    :raises ValueError: When the string cannot be read as a version.
     """
     try:
         from packaging.version import Version
     except ImportError:
-        match = _VERSION_RE.match(version.strip())
+        match = _VERSION_RE.fullmatch(version.strip())
         if match is None:
             raise ValueError(f"cannot read a release number from {version!r}") from None
-        release = tuple(int(part) if part else 0 for part in match.groups()[:3])
-        suffix = match.group(4)
-        # A local version (1.2.3+corp) and a post-release (1.2.3.post1) are that release or
-        # later; anything else (.dev1, rc2) precedes it. Epochs (1!1.2.3) are not read here,
-        # and oepolars does not use them.
-        return release, bool(suffix) and not suffix.startswith(("+", ".post"))
+        release = tuple(int(part) for part in match.group("release").split("."))
+        # 0.4 and 0.4.0 are the same release, so compare over a common length.
+        width = max(len(release), len(minimum))
+        padded = release + (0,) * (width - len(release))
+        floor_release = minimum + (0,) * (width - len(minimum))
+        if padded != floor_release:
+            return padded > floor_release
+        # At the floor's own release: a pre-release comes before it, and so does a
+        # development build, unless it is a development build of a post-release.
+        return not (match.group("pre") or (match.group("dev") and not match.group("post")))
     # InvalidVersion is a ValueError, so a malformed version reaches the caller's handler.
-    parsed = Version(version)
-    return (parsed.release + (0, 0, 0))[:3], parsed.is_prerelease or parsed.is_devrelease
+    return Version(version) >= Version(".".join(map(str, minimum)))
 
 
 def _require_molecule(
@@ -547,6 +566,37 @@ class PolarsColumnAdapter:
         self.frame = self.frame.chem.with_token(self.column, token)
 
 
+def _copy_report(report: AlignmentReport | None) -> AlignmentReport | None:
+    """
+    Copy an alignment report, including its mutable fields.
+
+    A report handed out by ``alignment_report`` is an ordinary object the caller may write
+    to, so forks cannot share one: ``failed`` is the only mutable field, and it is copied.
+
+    :param report: Report to copy, or ``None`` when the column was never aligned.
+    :returns: An equal report that shares nothing with *report*, or ``None``.
+    """
+    return None if report is None else replace(report, failed=list(report.failed))
+
+
+def _copied_state(df: pl.DataFrame, column: str, *, keep_report: bool) -> ColumnState:
+    """
+    Build the state a new column inherits from *column*.
+
+    :param df: Frame holding the source column.
+    :param column: Source column name.
+    :param keep_report: Carry a copy of the source's alignment report. A generated display
+        column has no alignment of its own, so it starts without one.
+    :returns: State copied from the source column, or a fresh one when it had none.
+    """
+    old = state_for_token(getattr(df.schema[column], "token", None))
+    if old is None:
+        return ColumnState(create_local_context())
+    # clone(), not copy(): an option the column left deferred has to stay deferred in the
+    # copy, so both frames keep following the global context for it.
+    return ColumnState(old.context.clone(), _copy_report(old.alignment_report) if keep_report else None)
+
+
 def fork_column(df: pl.DataFrame, column: str, method: str) -> PolarsColumnAdapter:
     """
     Copy-on-write: an adapter over *df* whose *column* carries a copy of its state.
@@ -563,15 +613,8 @@ def fork_column(df: pl.DataFrame, column: str, method: str) -> PolarsColumnAdapt
     :raises TypeError: When *column* does not hold molecules.
     """
     _require_molecule(df, column, method)
-    old = state_for_token(getattr(df.schema[column], "token", None))
-    # clone(), not copy(): an option the column left deferred has to stay deferred in the
-    # fork, so both frames keep following the global context for it.
-    state = ColumnState(
-        old.context.clone() if old is not None else create_local_context(),
-        old.alignment_report if old is not None else None,
-    )
     token = new_token()
-    store_state(token, state)
+    store_state(token, _copied_state(df, column, keep_report=True))
     return PolarsColumnAdapter(df.chem.with_token(column, token), column)
 
 
@@ -602,20 +645,21 @@ def _columns(df: pl.DataFrame, molecule_columns: str | Iterable[str] | None, met
     return found
 
 
-def _copied_token(df: pl.DataFrame, column: str) -> str:
+def _copied_token(df: pl.DataFrame, column: str, *, keep_report: bool = False) -> str:
     """
-    Mint a token whose state copies the current context of *column*.
+    Mint a token whose state copies the state of *column*.
 
-    Generated depiction columns render with the settings of the molecule column they came
+    Columns made from another column render with the settings of the column they came
     from, but changing one of them afterwards must not change the other.
 
     :param df: Frame holding the source column.
     :param column: Source column name.
+    :param keep_report: Carry a copy of the source's alignment report, as a copied
+        molecule column does. Generated display columns leave it out.
     :returns: A fresh token, already registered.
     """
-    old = state_for_token(getattr(df.schema[column], "token", None))
     token = new_token()
-    store_state(token, ColumnState(old.context.clone() if old is not None else create_local_context(), None))
+    store_state(token, _copied_state(df, column, keep_report=keep_report))
     return token
 
 
@@ -794,7 +838,8 @@ def _dataframe_copy_molecules(self, source_column: str, dest_column: str) -> pl.
     # CreateCopy() keeps the conformers of a multi-conformer molecule, which the graph
     # molecule constructor would drop.
     copies = [None if m is None else m.CreateCopy() for m in self._df.get_column(source_column).to_list()]
-    token = _copied_token(self._df, source_column)
+    # B6: the copy starts from the source's whole state, its alignment report included.
+    token = _copied_token(self._df, source_column, keep_report=True)
     return self._df.with_columns(pl.Series(dest_column, copies, dtype=oeplr.MoleculeType(token)))
 
 
@@ -1012,9 +1057,7 @@ def _attach() -> None:
     if _ATTACHED:
         return
     try:
-        release, prerelease = _parse_release(oeplr.__version__)
-        # A pre-release of the floor itself is still below it.
-        if release < _MIN_OEPOLARS or (prerelease and release == _MIN_OEPOLARS):
+        if not _at_least(oeplr.__version__, _MIN_OEPOLARS):
             raise ImportError(f"oepolars {oeplr.__version__} is older than {'.'.join(map(str, _MIN_OEPOLARS))}")
         from oepolars import extensions
     except (ImportError, AttributeError, ValueError) as exc:

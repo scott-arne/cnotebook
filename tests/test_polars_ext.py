@@ -689,62 +689,67 @@ class TestPolarsSeriesResetClear:
 class TestPolarsDataFrameRecalculateDepictions:
     """Test DataFrame-level recalculate_depiction_coordinates."""
 
-    def test_recalculate_all_columns(self):
-        """recalculate_depiction_coordinates() with no args should process all molecule columns."""
-        from unittest.mock import patch
-
-        from openeye import oechem
-
+    @staticmethod
+    def _two_molecule_frame():
+        """A frame of two freshly parsed molecule columns, so neither has 2D coordinates yet."""
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
         mol2 = oechem.OEMol()
         oechem.OESmilesToMol(mol2, "CCO")
-
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
-        df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
+        return df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
-        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
-            df.chem.recalculate_depiction_coordinates()
+    @staticmethod
+    def _assert_recalculated(source, out, columns):
+        """Check the copy-on-write contract of recalculate_depiction_coordinates()."""
+        assert out is not source
+        for name in columns:
+            assert out.schema[name].token is not None
+            assert out.schema[name].token != source.schema[name].token
+            before, after = source.get_column(name).to_list(), out.get_column(name).to_list()
+            # Fresh molecules have no 2D coordinates; the caller's must still have none
+            assert all(m.GetDimension() == 0 for m in before)
+            assert all(m.GetDimension() == 2 for m in after)
+            assert all(a is not b for a, b in zip(after, before, strict=True))
+        for name in set(source.columns) - set(columns):
+            assert out.schema[name].token == source.schema[name].token
+            assert all(m.GetDimension() == 0 for m in out.get_column(name).to_list())
 
-        assert mock_prepare.call_count == 2
+    def test_recalculate_all_columns(self):
+        """recalculate_depiction_coordinates() with no args should process all molecule columns."""
+        df = self._two_molecule_frame()
+
+        out = df.chem.recalculate_depiction_coordinates()
+
+        self._assert_recalculated(df, out, ["mol1", "mol2"])
 
     def test_recalculate_string_column(self):
         """recalculate_depiction_coordinates() should accept molecule_columns as a string."""
-        from unittest.mock import patch
+        df = self._two_molecule_frame()
 
-        from openeye import oechem
+        out = df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
 
-        mol1 = oechem.OEMol()
-        oechem.OESmilesToMol(mol1, "c1ccccc1")
-        mol2 = oechem.OEMol()
-        oechem.OESmilesToMol(mol2, "CCO")
-
-        df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
-        df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
-
-        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
-            df.chem.recalculate_depiction_coordinates(molecule_columns="mol1")
-
-        mock_prepare.assert_called_once()
+        self._assert_recalculated(df, out, ["mol1"])
 
     def test_recalculate_list_column(self):
         """recalculate_depiction_coordinates() should accept molecule_columns as a list."""
-        from unittest.mock import patch
+        df = self._two_molecule_frame()
 
-        from openeye import oechem
+        out = df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
 
-        mol1 = oechem.OEMol()
-        oechem.OESmilesToMol(mol1, "c1ccccc1")
-        mol2 = oechem.OEMol()
-        oechem.OESmilesToMol(mol2, "CCO")
+        self._assert_recalculated(df, out, ["mol1"])
 
-        df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
-        df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
+    def test_recalculate_series_returns_a_new_column(self):
+        """The Series accessor follows the same contract as the DataFrame one."""
+        series = self._two_molecule_frame().get_column("mol1")
 
-        with patch('cnotebook.polars_ext.oedepict.OEPrepareDepiction') as mock_prepare:
-            df.chem.recalculate_depiction_coordinates(molecule_columns=["mol1"])
+        out = series.chem.recalculate_depiction_coordinates()
 
-        mock_prepare.assert_called_once()
+        assert out is not series and out.name == series.name
+        assert out.dtype.token is not None and out.dtype.token != series.dtype.token
+        assert all(m.GetDimension() == 0 for m in series.to_list())
+        assert all(m.GetDimension() == 2 for m in out.to_list())
+        assert all(a is not b for a, b in zip(out.to_list(), series.to_list(), strict=True))
 
     def test_recalculate_non_molecule_warns(self):
         """recalculate_depiction_coordinates() should warn for non-molecule column."""
@@ -1425,6 +1430,39 @@ def test_series_accessors_work_on_an_unnamed_series():
     assert aligned.name == "" and aligned.dtype.token is not None
     laid_out = unnamed.chem.recalculate_depiction_coordinates()
     assert laid_out.name == "" and laid_out.dtype.token is not None
+    # The molecules really were laid out again, on copies
+    assert all(m.GetDimension() == 0 for m in unnamed.to_list())
+    assert all(m.GetDimension() == 2 for m in laid_out.to_list())
+
+
+def test_alignment_reports_are_not_shared_between_forks():
+    """A report read from one fork is the fork's own; writing to it must not reach a sibling."""
+    aligned = _pframe(2).chem.align_depictions("mol", "c1ccccc1")
+    sibling = aligned.filter(pl.col("mol").is_not_null())
+    forked = aligned.chem.set_render_options("mol", width=210)
+
+    report = forked.chem.alignment_report("mol")
+    assert report is not sibling.chem.alignment_report("mol")
+    report.failed.append(99)
+    report.aligned = -1
+
+    for other in (aligned, sibling):
+        untouched = other.chem.alignment_report("mol")
+        assert untouched.failed == [] and untouched.aligned == 2
+
+
+def test_copy_molecules_carries_the_alignment_report():
+    """B6: the copy starts from the source's whole state, report included, but shares nothing."""
+    aligned = _pframe(2).chem.align_depictions("mol", "c1ccccc1")
+    copied = aligned.chem.copy_molecules("mol", "mol_copy")
+
+    source_report = aligned.chem.alignment_report("mol")
+    copy_report = copied.chem.alignment_report("mol_copy")
+    assert copy_report == source_report
+    assert copy_report is not source_report
+
+    copy_report.failed.append(7)
+    assert aligned.chem.alignment_report("mol").failed == []
 
 
 def test_reset_depictions_keeps_sibling_state():
@@ -1488,15 +1526,31 @@ def test_polars_attach_is_idempotent_and_guarded(monkeypatch):
     assert not hasattr(pe, "_dataframe_column_contexts")
 
 
+@pytest.mark.parametrize("without_packaging", [False, True], ids=["packaging", "fallback"])
 @pytest.mark.parametrize(("version", "attaches"), [
     ("0.4.0", True),
     ("0.3.9", False),
     ("0.4.0.dev1", False),
+    ("0.4.0rc1", False),
+    ("0.4.0.post1", True),
+    ("0.4.0-1", True),
+    ("0.4.0post1", True),
+    ("0.4.0-r1", True),
+    ("0.4.0.post1.dev1", True),
     ("0.4.0+corp", True),
+    ("1!0.4.0", True),
     ("not-a-version", False),
+    # Release segments shorter or longer than the floor, and the v prefix
+    ("0.4", True),
+    ("1", True),
+    ("v0.4.0", True),
 ])
-def test_polars_attach_version_guard(monkeypatch, version, attaches):
-    """The floor is compared on the release segment; a pre-release of the floor is below it."""
+def test_polars_attach_version_guard(monkeypatch, version, attaches, without_packaging):
+    """PEP 440 ordering decides: pre-releases and dev builds of the floor are below it,
+    post-releases are not. The packaging-less fallback must reach the same verdict."""
+    if without_packaging:
+        # A None entry in sys.modules makes the import of packaging fail
+        monkeypatch.setitem(sys.modules, "packaging.version", None)
     monkeypatch.setattr(oeplr, "__version__", version)
     monkeypatch.setattr(pe, "_ATTACHED", False)
     if attaches:
@@ -1510,28 +1564,11 @@ def test_polars_attach_version_guard(monkeypatch, version, attaches):
         assert not pe._ATTACHED
 
 
-@pytest.mark.parametrize(("version", "expected"), [
-    ("0.4.0", ((0, 4, 0), False)),
-    ("0.3.9", ((0, 3, 9), False)),
-    ("0.4.0.dev1", ((0, 4, 0), True)),
-    ("0.4.0+corp", ((0, 4, 0), False)),
-    ("0.4.0.post1", ((0, 4, 0), False)),
-    ("1", ((1, 0, 0), False)),
-])
-def test_parse_release_reads_the_same_version_without_packaging(monkeypatch, version, expected):
-    """packaging is not a declared dependency, so the fallback parser must agree with it."""
-    assert pe._parse_release(version) == expected
-
-    # A None entry in sys.modules makes the import inside _parse_release fail
-    monkeypatch.setitem(sys.modules, "packaging.version", None)
-    assert pe._parse_release(version) == expected
-
-
-def test_parse_release_without_packaging_rejects_an_unreadable_version(monkeypatch):
+def test_at_least_without_packaging_rejects_an_unreadable_version(monkeypatch):
     """The fallback parser reports a version it cannot read, like packaging does."""
     monkeypatch.setitem(sys.modules, "packaging.version", None)
     with pytest.raises(ValueError, match="release number"):
-        pe._parse_release("not-a-version")
+        pe._at_least("not-a-version", (0, 4, 0))
 
 
 def _spy_on_highlight_column(monkeypatch) -> dict:
