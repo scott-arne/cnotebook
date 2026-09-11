@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from collections.abc import Callable, Generator
+import math
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -25,6 +26,9 @@ _STATIC = Path(__file__).parent / "static"
 _CORE_STATIC = Path(__file__).parent.parent / "core" / "static"
 _ASSET_SENTINEL = '{"__cnotebook_assets__": null}'
 _DEFAULT_TIMEOUT = 30.0
+# 3Dmol's viewer.getView() returns [x, y, z, zoom, qx, qy, qz, qw]. An array of any other
+# length is not a camera, and setView would leave the frame in an undefined state.
+_VIEW_LENGTH = 8
 
 
 def _load_esm() -> str:
@@ -87,6 +91,40 @@ def _protocol_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _validate_view(view: Any) -> list[float]:
+    """Coerce a 3Dmol view array, rejecting anything the viewer could not apply.
+
+    The check belongs here rather than in the browser: ``setView`` with an out-of-shape
+    array leaves the camera in an undefined state, and the front end has no way to report
+    that back to the caller that asked for it.
+
+    :param view: Candidate view array.
+    :returns: The coordinates as floats.
+    :raises ValueError: If the value is not a sequence of :data:`_VIEW_LENGTH` finite numbers.
+    """
+    # Every unusable view is a ValueError, wrong type included, so a caller restoring a
+    # saved camera has one exception to catch rather than two.
+    if isinstance(view, str | bytes) or not isinstance(view, Iterable):
+        raise ValueError(  # noqa: TRY004
+            f"view must be a sequence of {_VIEW_LENGTH} numbers, got {type(view).__name__}"
+        )
+    values = list(view)
+    if len(values) != _VIEW_LENGTH:
+        raise ValueError(
+            f"view must have {_VIEW_LENGTH} numbers (3Dmol's getView array), got {len(values)}"
+        )
+    coordinates: list[float] = []
+    for value in values:
+        # bool is an int in Python, but a JSON true is not a coordinate.
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError(f"view coordinates must be numbers, got {value!r}")  # noqa: TRY004
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"view coordinates must be finite, got {value!r}")
+        coordinates.append(number)
+    return coordinates
 
 
 def _retrieve_exception(future: asyncio.Future[bytes]) -> None:
@@ -283,6 +321,12 @@ class C3DWidget(anywidget.AnyWidget):
     command_results = traitlets.List(traitlets.Dict()).tag(sync=True, echo_update=False)
     view = traitlets.List(traitlets.Float()).tag(sync=True)
     view_origin = traitlets.Unicode("js").tag(sync=True)
+    # The camera itself cannot carry a request. traitlets drops an assignment equal to the
+    # trait's current value, so restoring a saved view after the user or a command moved
+    # the camera would notify nobody, and the front end debounces its own view events by
+    # 150 ms, so it cannot tell a missing request from a late echo either. This counter is
+    # what the front end observes; set_view always moves it.
+    view_request = traitlets.Int(0).tag(sync=True)
     picked = traitlets.Dict().tag(sync=True, echo_update=False)
     screenshot_request = traitlets.Int(0).tag(sync=True)
     screenshot = traitlets.Dict().tag(sync=True, echo_update=False)
@@ -467,7 +511,12 @@ class C3DWidget(anywidget.AnyWidget):
     def set_view(self, view: list[float]) -> None:
         """Push a 3Dmol view array to the front end.
 
-        :param view: The 3Dmol view array to apply.
+        The camera and its origin are assigned first and the request counter last, so a
+        front end woken by the counter always reads the view that goes with it.
+
+        :param view: The 3Dmol view array to apply, as :meth:`getView` returns it.
+        :raises ValueError: If the view is not a sequence of eight finite numbers.
         """
+        self.view = _validate_view(view)
         self.view_origin = "python"
-        self.view = [float(v) for v in view]
+        self.view_request += 1

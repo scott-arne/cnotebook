@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
+import widgetModule, {
   buildSrcdoc,
+  connectDefault,
   createController,
   escapeScriptJson,
 } from "../../cnotebook/c3d/static/c3d_widget.js";
@@ -75,7 +76,7 @@ describe("buildSrcdoc", () => {
   it("inlines assets and the escaped payload in the same structure as the Python renderer", () => {
     const html = buildSrcdoc(assets, { molecules: [{ name: "</script>" }] }, 640, 480);
     expect(html).toContain('<div id="app">');
-    expect(html).toContain("#app { width: 640px; height: 480px; }");
+    expect(html).toContain("#app { width: 100%; height: 100%; }");
     expect(html).toContain("window.__C3D_INIT__ = ");
     expect(html).not.toContain("</script><");
     expect(html).toContain("\\u003c/script\\u003e");
@@ -177,8 +178,16 @@ describe("buildSrcdoc", () => {
     expect(() => buildSrcdoc(assets, {}, "0}#app{background:url(javascript:1)", 480)).toThrow(TypeError);
   });
 
-  it("truncates fractional dimensions", () => {
-    expect(buildSrcdoc(assets, {}, 640.9, 0)).toContain("#app { width: 640px; height: 0px; }");
+  it("bakes no pixel size into the document, whatever size is asked for", () => {
+    // The GUI resizes itself from a ResizeObserver on its container. A pixel size written
+    // into the document would never change, so the frame would grow while the viewer
+    // inside it kept the size it was born with.
+    for (const [width, height] of [[640.9, 0], [640, 480], [1, 1]]) {
+      const html = buildSrcdoc(assets, {}, width, height);
+      expect(html).toContain("html, body { margin: 0; padding: 0; width: 100%; height: 100%; }");
+      expect(html).toContain("#app { width: 100%; height: 100%; }");
+      expect(html).not.toMatch(/#app \{[^}]*px/);
+    }
   });
 });
 
@@ -199,7 +208,7 @@ describe("the asset substitution sentinel", () => {
 
 class FakeModel {
   constructor(state) {
-    this.state = { commands: [], command_results: [], view: [], view_origin: "js", picked: {}, screenshot_request: 0, screenshot: {}, status: "loading", status_message: "", ...state };
+    this.state = { commands: [], command_results: [], view: [], view_origin: "js", view_request: 0, picked: {}, screenshot_request: 0, screenshot: {}, status: "loading", status_message: "", ...state };
     this.handlers = {};
     this.saved = 0;
   }
@@ -258,8 +267,37 @@ describe("createController", () => {
     expect(model.get("view")).toEqual([1, 2, 3]);
     expect(model.get("view_origin")).toBe("js");
     model.state.view_origin = "python";
-    model.emit("view", [9, 9, 9]);
+    model.state.view = [9, 9, 9];
+    model.emit("view_request", 1);
     expect(api.lastSet).toEqual([9, 9, 9]);
+  });
+
+  it("applies a view request whose vector the kernel has sent before", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    await started(model, api);
+    model.state.view_origin = "python";
+    model.state.view = [9, 9, 9];
+    model.emit("view_request", 1);
+    expect(api.lastSet).toEqual([9, 9, 9]);
+
+    // The user moves the camera, then the kernel restores the saved view. traitlets sends
+    // no `view` change - the value it already holds is the value being set - so only the
+    // request counter says anything happened.
+    api.lastSet = null;
+    model.emit("view_request", 2);
+    expect(api.lastSet).toEqual([9, 9, 9]);
+  });
+
+  it("ignores a view change that carries no request", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    await started(model, api);
+    // `view` is bidirectional and `view_origin` can already read "python" from an earlier
+    // request, so neither is a trigger; only a fresh request number is one.
+    model.state.view_origin = "python";
+    model.emit("view", [9, 9, 9]);
+    expect(api.lastSet).toBe(undefined);
   });
 
   it("answers the highest screenshot request pending at connect, exactly once", async () => {
@@ -506,7 +544,8 @@ describe("createController view echoes", () => {
     const api = viewFakeApi();
     await started(model, api);
     model.state.view_origin = "python";
-    model.emit("view", [9, 9, 9]);
+    model.state.view = [9, 9, 9];
+    model.emit("view_request", 1);
     expect(api.view).toEqual([9, 9, 9]);
 
     const saves = model.saved;
@@ -544,7 +583,7 @@ describe("createController view echoes", () => {
   it("applies a view the kernel set before the frame connected, before capturing", async () => {
     const model = new FakeModel({
       payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "zoom" }],
-      view: [7, 7, 7], view_origin: "python", screenshot_request: 1,
+      view: [7, 7, 7], view_origin: "python", view_request: 1, screenshot_request: 1,
     });
     const api = viewFakeApi();
     const order = [];
@@ -560,7 +599,7 @@ describe("createController view echoes", () => {
   });
 
   it("does not re-apply the kernel's view on a later drain", async () => {
-    const model = new FakeModel({ payload: "{}", width: 100, height: 80, view: [7, 7, 7], view_origin: "python" });
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, view: [7, 7, 7], view_origin: "python", view_request: 1 });
     const api = viewFakeApi();
     await started(model, api);
     expect(api.view).toEqual([7, 7, 7]);
@@ -583,7 +622,7 @@ describe("createController teardown detaches its subscriptions", () => {
     expect(observed).toEqual([
       "change:commands",
       "change:screenshot_request",
-      "change:view",
+      "change:view_request",
       "change:width",
       "change:height",
     ]);
@@ -702,5 +741,204 @@ describe("createController protocol shapes", () => {
     await started(model, fakeApi());
     expect(model.get("status")).toBe("ready");
     expect(model.get("status_message")).toBe("");
+  });
+});
+
+describe("createController coordinates every view of one model", () => {
+  it("does not run a command an earlier view already answered", async () => {
+    const model = new FakeModel({
+      payload: "{}", width: 100, height: 80,
+      commands: [{ id: 1, command: "zoom" }],
+      command_results: [{ id: 1, ok: true, output: [] }],
+    });
+    const api = fakeApi();
+    await started(model, api);
+    // Python keeps a command in the list until it reads the result, so a view that opens
+    // in between sees an entry that is already answered.
+    expect(api.executed).toEqual([]);
+    model.emit("commands", [{ id: 2, command: "center" }]);
+    expect(api.executed).toEqual(["center"]);
+  });
+
+  it("does not re-run commands when the same model is rendered again", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "zoom" }] });
+    const first = fakeApi();
+    const controller = await started(model, first);
+    expect(first.executed).toEqual(["zoom"]);
+
+    controller.destroy();
+    // Even with the evidence gone from the traits, re-running the command is not allowed:
+    // the coordination state belongs to the model, not to the view that happened to run it.
+    model.state.command_results = [];
+    const second = fakeApi();
+    await started(model, second);
+    expect(second.executed).toEqual([]);
+  });
+
+  it("runs each command in one view only when two views share the model", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const first = fakeApi();
+    const second = fakeApi();
+    await started(model, first);
+    await started(model, second);
+    model.emit("commands", [{ id: 1, command: "zoom" }]);
+    // Both views see the change. Running the command twice would apply it twice in one
+    // frame's terminal and publish two results for one handle.
+    expect(first.executed).toEqual(["zoom"]);
+    expect(second.executed).toEqual([]);
+    expect(model.get("command_results")).toEqual([{ id: 1, ok: true, output: ["ran zoom"] }]);
+  });
+
+  it("does not hand a running command to the other view", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const slow = asyncFakeApi();
+    const other = fakeApi();
+    await started(model, slow);
+    await started(model, other);
+    model.emit("commands", [{ id: 1, command: "load big.pdb" }]);
+    expect(slow.executed).toEqual(["load big.pdb"]);
+    expect(other.executed).toEqual([]);
+
+    // A command that has started but not finished is not covered by "answered up to id N",
+    // so the claim is what stops the second view taking it while it runs.
+    model.emit("commands", [{ id: 1, command: "load big.pdb" }, { id: 2, command: "zoom" }]);
+    expect(slow.executed).toEqual(["load big.pdb"]);
+    expect(other.executed).toEqual(["zoom"]);
+    slow.settle[0].resolve();
+    await flush();
+    expect(slow.executed).toEqual(["load big.pdb"]);
+    expect(model.get("command_results").map((r) => r.id)).toEqual([1]);
+  });
+
+  it("gives two views of one model consecutive pick sequences", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const first = fakeApi();
+    const second = fakeApi();
+    await started(model, first);
+    await started(model, second);
+    first.fire("pick", { atom: { serial: 1 }, modifiers: {} });
+    expect(model.get("picked")).toEqual({ seq: 1, atom: { serial: 1 }, modifiers: {} });
+    // The same atom picked in the other view: a repeated sequence would be dropped by
+    // traitlets and the second pick would never reach the kernel.
+    second.fire("pick", { atom: { serial: 1 }, modifiers: {} });
+    expect(model.get("picked")).toEqual({ seq: 2, atom: { serial: 1 }, modifiers: {} });
+  });
+
+  it("never publishes a pick sequence the trait has already carried", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    await started(model, api);
+    api.fire("pick", { atom: { serial: 1 }, modifiers: {} });
+    expect(model.get("picked")).toEqual({ seq: 1, atom: { serial: 1 }, modifiers: {} });
+    // The trait is the record of what the kernel has been told. Whatever moved it on, the
+    // next pick has to continue from there rather than from the counter's own idea.
+    model.state.picked = { seq: 9, atom: {}, modifiers: {} };
+    api.fire("pick", { atom: { serial: 2 }, modifiers: {} });
+    expect(model.get("picked")).toEqual({ seq: 10, atom: { serial: 2 }, modifiers: {} });
+  });
+
+  it("answers a screenshot request in one view only", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const first = fakeApi();
+    const second = fakeApi();
+    let captures = 0;
+    first.pngDataUrl = () => { captures += 1; return "data:image/png;base64,QUJD"; };
+    second.pngDataUrl = () => { captures += 1; return "data:image/png;base64,WFla"; };
+    await started(model, first);
+    await started(model, second);
+    model.emit("screenshot_request", 1);
+    // Two captures would race to write the same sequence, and Python would resolve the
+    // future with whichever frame published last.
+    expect(captures).toBe(1);
+    expect(model.get("screenshot")).toEqual({ seq: 1, png_base64: "QUJD" });
+  });
+});
+
+describe("createController resizing", () => {
+  it("resizes the frame and leaves the document fluid", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const { iframe } = await started(model, fakeApi());
+    expect(iframe.style.width).toBe("100px");
+    model.emit("width", 640);
+    model.emit("height", 480);
+    expect(iframe.style.width).toBe("640px");
+    expect(iframe.style.height).toBe("480px");
+    // The GUI tracks its container with a ResizeObserver, so the frame is the only thing
+    // with a size: a document that carried its own would never see the change.
+    expect(iframe.srcdoc).toContain("#app { width: 100%; height: 100%; }");
+    expect(iframe.srcdoc).not.toMatch(/#app \{[^}]*px/);
+  });
+});
+
+describe("connectDefault", () => {
+  /** An iframe in the document, which is what gives happy-dom a contentWindow to reach. */
+  function mounted() {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    return iframe;
+  }
+
+  it("resolves with the host API once the frame has loaded and the GUI is ready", async () => {
+    const iframe = mounted();
+    const api = { ready: Promise.resolve() };
+    iframe.contentWindow.c3d = api;
+    const connected = connectDefault(iframe);
+    iframe.dispatchEvent(new Event("load"));
+    await expect(connected).resolves.toBe(api);
+    iframe.remove();
+  });
+
+  it("waits for the load event rather than reading the frame straight away", async () => {
+    const iframe = document.createElement("iframe");
+    let settled = false;
+    connectDefault(iframe).then(() => { settled = true; }, () => { settled = true; });
+    await flush();
+    // A frame that has not loaded has no contentWindow at all, and the GUI defines
+    // window.c3d while the document runs: reading eagerly would report a failure for a
+    // frame that is merely still booting.
+    expect(settled).toBe(false);
+  });
+
+  it("rejects when the frame exposes no host API", async () => {
+    const iframe = mounted();
+    const connected = connectDefault(iframe);
+    iframe.dispatchEvent(new Event("load"));
+    await expect(connected).rejects.toThrow(/c3d host API/);
+    iframe.remove();
+  });
+
+  it("rejects when the GUI never becomes ready", async () => {
+    const iframe = mounted();
+    iframe.contentWindow.c3d = { ready: Promise.reject(new Error("gui boot failed")) };
+    const connected = connectDefault(iframe);
+    iframe.dispatchEvent(new Event("load"));
+    await expect(connected).rejects.toThrow("gui boot failed");
+    iframe.remove();
+  });
+});
+
+describe("the anywidget entry point", () => {
+  it("mounts a controller and returns a teardown that detaches it", async () => {
+    const model = new DetachableFakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = detachableFakeApi();
+    const el = document.createElement("div");
+    const cleanup = widgetModule.render({ model, el });
+    const iframe = el.querySelector("iframe");
+    // The mount point stays out of the document so happy-dom never runs the srcdoc: what
+    // is under test is the default export's own wiring through connectDefault, with the
+    // frame's window standing in for the one the GUI bundle would have populated.
+    Object.defineProperty(iframe, "contentWindow", { value: { c3d: api }, configurable: true });
+    iframe.dispatchEvent(new Event("load"));
+    await flush();
+    expect(model.get("status")).toBe("ready");
+    expect(api.subscribed).toEqual(["pick", "view"]);
+
+    expect(typeof cleanup).toBe("function");
+    cleanup();
+    expect(el.querySelector("iframe")).toBe(null);
+    expect(api.unsubscribed).toEqual(["pick", "view"]);
+    expect(model.removed).toEqual(Object.keys(model.handlers));
+    model.emit("commands", [{ id: 1, command: "zoom" }]);
+    expect(api.executed).toEqual([]);
   });
 });

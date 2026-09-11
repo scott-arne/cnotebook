@@ -111,17 +111,22 @@ function resolvePayloadJson(payload) {
  * integer-like keys can come back differently - while the escaping guarantees above are. Text
  * that is not JSON, or JSON that is not an object, is rejected rather than interpolated.
  *
+ * The document has no size of its own: it fills whatever viewport it is given, so the
+ * GUI's ResizeObserver sees the frame's new size when the widget resizes it. The width and
+ * height arguments size that frame, not this document; they are still validated here
+ * because they are the same values a caller would interpolate into a style block.
+ *
  * @param {{threeDmol: string, gui: string, css: string}} assets
  * @param {object|string} payload - init payload object, or JSON text of one
- * @param {number} width
- * @param {number} height
+ * @param {number} width - frame width in pixels, validated but not written out
+ * @param {number} height - frame height in pixels, validated but not written out
  * @returns {string}
  * @throws {TypeError} when the payload is not a JSON object or JSON text of one, or when
  *   width or height is not a finite, non-negative number
  */
 export function buildSrcdoc(assets, payload, width, height) {
-  const pixelWidth = pixelDimension(width, "width");
-  const pixelHeight = pixelDimension(height, "height");
+  pixelDimension(width, "width");
+  pixelDimension(height, "height");
   const payloadJson = resolvePayloadJson(payload);
   return [
     "<!DOCTYPE html>",
@@ -131,7 +136,12 @@ export function buildSrcdoc(assets, payload, width, height) {
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
     "<style>",
     assets.css,
-    `#app { width: ${pixelWidth}px; height: ${pixelHeight}px; }`,
+    // Written after the GUI stylesheet, which already sizes itself from the viewport, so
+    // the guarantee survives a change to the vendored bundle. A pixel size here would be
+    // frozen at the size the widget had when it was displayed: the frame would grow and
+    // the viewer inside it would not.
+    "html, body { margin: 0; padding: 0; width: 100%; height: 100%; }",
+    "#app { width: 100%; height: 100%; }",
     "</style>",
     "<script>",
     assets.threeDmol,
@@ -184,6 +194,60 @@ function sameView(a, b) {
 }
 
 /**
+ * Coordination state, one per model, shared by every controller mounted on it.
+ *
+ * A widget can be rendered more than once - a re-run of the cell, the same widget in a
+ * second output area - and every view sees the same traits. Anything that must happen once
+ * per model rather than once per view therefore lives here rather than in the closure:
+ * which command ids have run, which pick sequences have been handed out, which screenshot
+ * request has been answered. A WeakMap keyed by the model lets the entry go when the model
+ * does. Applying a camera is deliberately not here: that is per frame, and every view of
+ * the model has to follow the same request.
+ *
+ * @typedef {object} ModelState
+ * @property {number} lastProcessedId - highest id the model has published a result for
+ * @property {Set<number>} claimedIds - ids a view has started and not finished
+ * @property {number} pickSeq - last pick sequence handed out
+ * @property {number} lastScreenshotSeq - last screenshot request answered
+ *
+ * @type {WeakMap<object, ModelState>}
+ */
+const MODEL_STATE = new WeakMap();
+
+/**
+ * The coordination state of a model, seeded from its traits the first time it is needed.
+ *
+ * The seeds matter for a view that opens onto a model with history: `command_results`
+ * names the commands the kernel has already been answered for, and the two sequence
+ * numbers say how far the pick and screenshot streams have got. Starting from zero would
+ * replay work, and republishing a sequence the kernel has already seen is worse than
+ * doing nothing, because traitlets drops the repeat.
+ *
+ * @param {object} model - anywidget model
+ * @returns {ModelState}
+ */
+function modelState(model) {
+  const existing = MODEL_STATE.get(model);
+  if (existing) return existing;
+  let lastProcessedId = 0;
+  for (const result of model.get("command_results") || []) {
+    if (result && Number.isInteger(result.id) && result.id > lastProcessedId) {
+      lastProcessedId = result.id;
+    }
+  }
+  const pick = model.get("picked") || {};
+  const shot = model.get("screenshot") || {};
+  const state = {
+    lastProcessedId,
+    claimedIds: new Set(),
+    pickSeq: Number.isInteger(pick.seq) ? pick.seq : 0,
+    lastScreenshotSeq: Number.isInteger(shot.seq) ? shot.seq : 0,
+  };
+  MODEL_STATE.set(model, state);
+  return state;
+}
+
+/**
  * Default connector: wait for the iframe to load and for the GUI's host API to be ready.
  *
  * @param {HTMLIFrameElement} iframe
@@ -216,10 +280,12 @@ export function connectDefault(iframe) {
  *
  * - Each browser-to-kernel trait carries a sequence number the front end owns and always
  *   increments, because traitlets drops a notification whose value equals the previous one.
+ *   The same rule is why a kernel-to-browser camera arrives as a `view_request` count
+ *   rather than as the vector alone.
  * - The browser-to-kernel traits are declared `echo_update=False`, so a write is never
- *   reflected back; the controller therefore tracks the last command id and the last
- *   answered screenshot sequence itself, seeded from the traits so a second view of the
- *   same model does not redo work the first one already did.
+ *   reflected back; command ids, pick sequences and the answered screenshot sequence are
+ *   therefore tracked here, in state shared by every view of the model (see modelState),
+ *   so a second view neither redoes work nor reuses a sequence number.
  * - Every published value is a fresh object with the exact shape Python validates, since
  *   a malformed entry is dropped there rather than repaired.
  *
@@ -234,21 +300,19 @@ export function createController(model, el, { connect = connectDefault } = {}) {
   iframe.style.width = `${model.get("width")}px`;
   iframe.style.height = `${model.get("height")}px`;
 
+  // Everything one model must agree on across its views; everything below it belongs to
+  // this view alone.
+  const shared = modelState(model);
   let api = null;
   let destroyed = false;
   let booted = true;
-  let lastProcessedId = 0;
   let draining = false;
   let drainAgain = false;
   let applyingView = false;
   let appliedView = null;
-  let initialViewApplied = false;
-  // Both counters are seeded from the traits, not from zero: a re-rendered view of the same
-  // model must not replay a pick sequence or answer a screenshot an earlier view served.
-  const lastPick = model.get("picked") || {};
-  const lastShot = model.get("screenshot") || {};
-  let pickSeq = Number.isInteger(lastPick.seq) ? lastPick.seq : 0;
-  let lastScreenshotSeq = Number.isInteger(lastShot.seq) ? lastShot.seq : 0;
+  // Per view, and starting at zero even for a model that has been rendered before: a new
+  // frame opens on the payload's default camera, so it has to be told the kernel's.
+  let lastViewRequest = 0;
   const unsubscribes = [];
   const observers = [];
 
@@ -295,12 +359,18 @@ export function createController(model, el, { connect = connectDefault } = {}) {
    * because Python would drop any result published for it, and adopting it as the
    * high-water mark would break every comparison that follows.
    *
+   * Both filters are on the shared state. The high-water mark covers everything the model
+   * has finished, including before this view existed; the claim set covers what another
+   * view is running right now, which the mark cannot describe because a command is claimed
+   * long before its result exists.
+   *
    * @returns {object|null}
    */
   function nextCommand() {
     let next = null;
     for (const cmd of model.get("commands") || []) {
-      if (!cmd || !Number.isInteger(cmd.id) || cmd.id <= lastProcessedId) continue;
+      if (!cmd || !Number.isInteger(cmd.id)) continue;
+      if (cmd.id <= shared.lastProcessedId || shared.claimedIds.has(cmd.id)) continue;
       if (next === null || cmd.id < next.id) next = cmd;
     }
     return next;
@@ -315,6 +385,12 @@ export function createController(model, el, { connect = connectDefault } = {}) {
    * @returns {{id: number, ok: boolean, output: string[]}}
    */
   function commandResult(id, ok, output) {
+    // Every path that finishes a command comes through here exactly once, so this is where
+    // the id moves from "in flight" to "answered". The two are tracked separately because
+    // an asynchronous command is neither for as long as it runs: the mark cannot cover it
+    // without also covering ids that have not been claimed at all.
+    shared.claimedIds.delete(id);
+    shared.lastProcessedId = Math.max(shared.lastProcessedId, id);
     // Python drops an entry whose output is not a list of strings, and a dropped entry
     // leaves its handle outstanding until it times out, so the value is normalised here.
     const lines = Array.isArray(output) ? output.map((line) => String(line)) : [];
@@ -348,14 +424,11 @@ export function createController(model, el, { connect = connectDefault } = {}) {
       drain();
       return;
     }
-    if (!initialViewApplied) {
-      // A view the kernel set before the frame connected was dropped by the observer,
-      // and traitlets never resends an identical vector, so the trait is applied once
-      // here. Once only: a later drain must not put a stale camera back over a rotation
-      // the user has since made in the frame.
-      initialViewApplied = true;
-      applyPythonView();
-    }
+    // A request the kernel made before the frame connected was dropped by the observer,
+    // so it is applied here. The request counter makes this idempotent: a later drain
+    // finds nothing outstanding and cannot put a stale camera back over a rotation the
+    // user has since made in the frame.
+    applyPythonView();
     answerScreenshot();
   }
 
@@ -370,9 +443,11 @@ export function createController(model, el, { connect = connectDefault } = {}) {
     for (;;) {
       const cmd = nextCommand();
       if (cmd === null) break;
-      // Claim the id before running the command, so neither a re-entrant drain nor the
-      // continuation below can run it a second time.
-      lastProcessedId = cmd.id;
+      // Claim the id before running the command, so that neither a re-entrant drain, nor
+      // the continuation below, nor another view of the same model can run it again. A
+      // claim that is never answered - the frame was torn down mid-command - stays, which
+      // is the safe end: the command did run, in a frame that has gone.
+      shared.claimedIds.add(cmd.id);
       let outcome;
       try {
         outcome = api.execute(cmd.command) || {};
@@ -445,20 +520,33 @@ export function createController(model, el, { connect = connectDefault } = {}) {
     if (!api || destroyed) return;
     const seq = model.get("screenshot_request") || 0;
     // Requests coalesce: one capture answers every sequence up to the highest one asked
-    // for, and Python resolves each future at or below the sequence it gets back.
-    if (!Number.isInteger(seq) || seq <= lastScreenshotSeq) return;
-    lastScreenshotSeq = seq;
+    // for, and Python resolves each future at or below the sequence it gets back. The
+    // sequence is claimed in the shared state, so of two views that saw the request the
+    // first to get here answers it and the other stands down rather than racing it.
+    if (!Number.isInteger(seq) || seq <= shared.lastScreenshotSeq) return;
+    shared.lastScreenshotSeq = seq;
     publish("screenshot", capture(seq));
   }
 
-  /** Apply a view the kernel set, without sending it straight back. */
+  /** Apply the kernel's outstanding view request, without sending it straight back. */
   function applyPythonView() {
-    if (!api || destroyed || model.get("view_origin") !== "python") return;
+    if (!api || destroyed) return;
+    // The request counter, not the vector, is the trigger. traitlets drops an assignment
+    // equal to the current value, so a kernel restoring a camera the user has since moved
+    // changes nothing in `view`, and `view_origin` may already read "python" from an
+    // earlier request. Every set_view increments the counter, and each view of the model
+    // applies each request once, to its own frame.
+    const requested = model.get("view_request") || 0;
+    if (!Number.isInteger(requested) || requested <= lastViewRequest) return;
+    lastViewRequest = requested;
     const view = model.get("view");
+    // A request without a camera would put the frame into an undefined state; the kernel
+    // validates the vector, so this only catches a model that was built by hand.
+    if (!Array.isArray(view) || view.length === 0) return;
     // Remember what was applied: the GUI reports view changes 150 ms after setView (spec
     // C1), long after the synchronous guard below has been cleared, and that echo would
     // otherwise be published back to the kernel as a browser-originated change.
-    appliedView = Array.isArray(view) ? Array.from(view) : null;
+    appliedView = Array.from(view);
     applyingView = true;
     try {
       api.setView(view);
@@ -475,10 +563,20 @@ export function createController(model, el, { connect = connectDefault } = {}) {
   function handlePick(payload) {
     if (destroyed) return;
     const event = payload || {};
-    pickSeq += 1;
+    // The counter is shared by every view of the model and is reconciled with the trait at
+    // the moment of publishing, so two frames that both handled a click publish 1 and then
+    // 2. Reusing a sequence would lose the second pick outright: traitlets delivers an
+    // identical dict once.
+    const published = model.get("picked") || {};
+    const seen = Number.isInteger(published.seq) ? published.seq : 0;
+    shared.pickSeq = Math.max(shared.pickSeq, seen) + 1;
     // Neither member may be null: Python drops a pick whose atom or modifiers is not a
-    // mapping, and two identical picks would be delivered once without a new sequence.
-    publish("picked", { seq: pickSeq, atom: event.atom || {}, modifiers: event.modifiers || {} });
+    // mapping.
+    publish("picked", {
+      seq: shared.pickSeq,
+      atom: event.atom || {},
+      modifiers: event.modifiers || {},
+    });
   }
 
   /**
@@ -509,9 +607,10 @@ export function createController(model, el, { connect = connectDefault } = {}) {
     // one failed to boot, must not keep showing the old error text next to "ready".
     model.set("status_message", "");
     model.save_changes();
-    // Drains commands queued before display, then applies a view the kernel set before
-    // the frame existed and answers a screenshot request raised before it connected
-    // (both in finish, so the order holds whether or not the drain went asynchronous).
+    // Drains commands queued before display, then applies a view the kernel requested
+    // before the frame existed and answers a screenshot request raised before it
+    // connected (both in finish, so the order holds whether or not the drain went
+    // asynchronous).
     drain();
   }
 
@@ -543,7 +642,7 @@ export function createController(model, el, { connect = connectDefault } = {}) {
 
   observe("commands", drain);
   observe("screenshot_request", answerScreenshot);
-  observe("view", applyPythonView);
+  observe("view_request", applyPythonView);
   observe("width", () => {
     iframe.style.width = `${model.get("width")}px`;
   });

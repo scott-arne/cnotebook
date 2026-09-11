@@ -22,6 +22,10 @@ def _boom(_event):
     raise ValueError("callback exploded")
 
 
+# A well formed camera: 3Dmol's getView() returns [x, y, z, zoom, qx, qy, qz, qw].
+_VIEW = [1.0, 2.0, 3.0, 4.0, 0.0, 0.0, 0.0, 1.0]
+
+
 # ---------------------------------------------------------------------------
 # ESM assembly
 # ---------------------------------------------------------------------------
@@ -98,7 +102,7 @@ def test_widget_never_writes_into_core_static():
     }
     widget = C3DWidget(payload="{}")
     widget.submit("zoom")
-    widget.set_view([1, 2, 3])
+    widget.set_view(_VIEW)
     widget_module._load_esm()
     after = {path.name: path.stat() for path in sorted(widget_module._CORE_STATIC.iterdir())}
     assert set(before) == set(after)
@@ -125,6 +129,7 @@ _D1_TRAITS = {
     "command_results": (traitlets.List, traitlets.Dict, [], False),
     "view": (traitlets.List, traitlets.Float, [], None),
     "view_origin": (traitlets.Unicode, None, "js", None),
+    "view_request": (traitlets.Int, None, 0, None),
     "picked": (traitlets.Dict, None, {}, False),
     "screenshot_request": (traitlets.Int, None, 0, None),
     "screenshot": (traitlets.Dict, None, {}, False),
@@ -629,5 +634,47 @@ def test_screenshots_without_a_plain_integer_sequence_are_ignored(seq, caplog):
 
 def test_set_view_marks_origin():
     widget = C3DWidget(payload="{}")
-    widget.set_view([1, 2, 3])
-    assert widget.view == [1.0, 2.0, 3.0] and widget.view_origin == "python"
+    widget.set_view(_VIEW)
+    assert widget.view == _VIEW and widget.view_origin == "python"
+
+
+def test_set_view_counts_requests_so_an_unchanged_camera_still_reaches_the_frame():
+    widget = C3DWidget(payload="{}")
+    widget.set_view(_VIEW)
+    assert widget.view_request == 1
+    # traitlets drops an assignment equal to the current value, so re-applying a stored
+    # camera after the user moved it would notify nobody. The counter is what the front
+    # end observes, and it always moves.
+    seen = []
+    widget.observe(lambda change: seen.append(change["new"]), names="view_request")
+    widget.set_view(list(_VIEW))
+    assert widget.view_request == 2 and seen == [2]
+    assert widget.view == _VIEW and widget.view_origin == "python"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        [1.0, 2.0, 3.0],
+        [*_VIEW, 9.0],
+        [*_VIEW[:7], "1"],
+        [*_VIEW[:7], float("nan")],
+        [*_VIEW[:7], float("inf")],
+        [*_VIEW[:7], True],
+        "12345678",
+        None,
+        42,
+    ],
+)
+def test_set_view_rejects_a_view_the_frame_could_not_apply(bad):
+    widget = C3DWidget(payload="{}")
+    with pytest.raises(ValueError):
+        widget.set_view(bad)
+    # A rejected request leaves nothing half applied: no camera, no origin, no request.
+    assert widget.view == [] and widget.view_origin == "js" and widget.view_request == 0
+
+
+def test_set_view_accepts_integer_coordinates():
+    widget = C3DWidget(payload="{}")
+    widget.set_view([1, 2, 3, 4, 0, 0, 0, 1])
+    assert widget.view == _VIEW
