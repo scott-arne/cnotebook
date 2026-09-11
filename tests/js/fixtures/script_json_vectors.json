@@ -1,0 +1,55 @@
+{
+  "forbidden": [
+    "<",
+    ">",
+    "&",
+    "\u2028",
+    "\u2029"
+  ],
+  "cases": [
+    {
+      "input": {
+        "name": "</script><img src=x onerror=alert(1)>"
+      },
+      "expected": "{\"name\":\"\\u003c/script\\u003e\\u003cimg src=x onerror=alert(1)\\u003e\"}"
+    },
+    {
+      "input": {
+        "note": "a&b<c>d",
+        "n": 1,
+        "list": [
+          "<",
+          ">",
+          "&"
+        ]
+      },
+      "expected": "{\"note\":\"a\\u0026b\\u003cc\\u003ed\",\"n\":1,\"list\":[\"\\u003c\",\"\\u003e\",\"\\u0026\"]}"
+    },
+    {
+      "input": {
+        "sep": "line\u2028sep\u2029end",
+        "quote": "46\" onmouseover=\"x"
+      },
+      "expected": "{\"sep\":\"line\\u2028sep\\u2029end\",\"quote\":\"46\\\" onmouseover=\\\"x\"}"
+    },
+    {
+      "input": {
+        "unicode": "caf\u00e9 \u00fc",
+        "nested": {
+          "k": "</SCRIPT >"
+        }
+      },
+      "expected": "{\"unicode\":\"caf\u00e9 \u00fc\",\"nested\":{\"k\":\"\\u003c/SCRIPT \\u003e\"}}"
+    },
+    {
+      "input": {
+        "</script><k>": "ok",
+        "a&b": {
+          "x\u2028y\u2029z": true
+        },
+        "empty": null
+      },
+      "expected": "{\"\\u003c/script\\u003e\\u003ck\\u003e\":\"ok\",\"a\\u0026b\":{\"x\\u2028y\\u2029z\":true},\"empty\":null}"
+    }
+  ]
+}

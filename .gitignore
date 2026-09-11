@@ -77,6 +77,9 @@ target/
 /openeye/
 .git_backup/
 
+# Node
+node_modules/
+
 # Vendor submodule build artifacts
 vendor/3dmol-js-gui/node_modules/
 vendor/3dmol-js-gui/dist/

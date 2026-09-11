@@ -112,10 +112,18 @@ def _script_safe_json(payload: dict[str, Any]) -> str:
     the line/paragraph separators that break inline scripts. Escaping ``<``,
     ``>``, ``&``, U+2028, and U+2029 prevents script-context breakout.
 
+    The escaping is applied to the serialized text, never to *payload*, so the
+    parsed value is unchanged. ``ensure_ascii=False`` and compact separators
+    pin the output to what JavaScript's ``JSON.stringify`` produces, which is
+    what lets ``tests/js/fixtures/script_json_vectors.json`` hold both this
+    function and the widget's ``escapeScriptJson`` to one contract. With
+    ``ensure_ascii=False`` the separators arrive unescaped, so the last two
+    replacements below are the ones that make the text script-safe.
+
     :param payload: JSON-serializable payload.
     :returns: A JSON string safe to inline in HTML.
     """
-    raw = json.dumps(payload)
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return (
         raw.replace("<", "\\u003c")
         .replace(">", "\\u003e")
@@ -123,6 +131,15 @@ def _script_safe_json(payload: dict[str, Any]) -> str:
         .replace(chr(0x2028), "\\u2028")
         .replace(chr(0x2029), "\\u2029")
     )
+
+
+def escape_script_json(payload: dict[str, Any]) -> str:
+    """Public name for :func:`_script_safe_json`; the JS widget applies the same escaping.
+
+    :param payload: JSON-serializable payload.
+    :returns: JSON text safe to inline in a ``<script>`` block.
+    """
+    return _script_safe_json(payload)
 
 
 def render_html(payload: dict[str, Any], *, width: int, height: int) -> str:
@@ -137,7 +154,7 @@ def render_html(payload: dict[str, Any], *, width: int, height: int) -> str:
     :param height: Container height in pixels.
     :returns: Complete HTML document.
     """
-    payload_json = _script_safe_json(payload)
+    payload_json = escape_script_json(payload)
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
