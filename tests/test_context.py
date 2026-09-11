@@ -351,6 +351,28 @@ class TestCNotebookContext:
         clone.reset_callbacks()
         assert ctx.callbacks == (callback,)
 
+    def test_clone_carries_every_constructor_option(self):
+        """clone() lists its keywords by hand, so a new option must not slip past it."""
+        import inspect
+
+        options = [name for name in inspect.signature(CNotebookContext.__init__).parameters if name != "self"]
+        # A local context defers everything, so a dropped keyword shows up as a
+        # concrete default in the clone rather than as a deferral.
+        source = create_local_context()
+        source.width = 321
+        source.title = False
+
+        clone = source.clone()
+
+        assert clone.scope == source.scope
+        for name in options:
+            if name == "scope":
+                continue
+            mine, theirs = getattr(source, f"_{name}"), getattr(clone, f"_{name}")
+            assert theirs.is_deferred == mine.is_deferred, f"clone() dropped {name!r}"
+            if not mine.is_deferred:
+                assert theirs.get() == mine.get(), f"clone() changed {name!r}"
+
     def test_clone_follows_the_global_context_for_deferred_options(self):
         """Options left deferred still track the global context after cloning."""
         clone = create_local_context().clone()

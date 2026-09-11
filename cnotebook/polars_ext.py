@@ -43,6 +43,9 @@ class ColumnState:
     """
     Per-token column state.
 
+    The report is treated as immutable: forking a column shares the source's report object
+    rather than copying it, so nothing may write to a report once it has been stored.
+
     :param context: Render context for every cell of the column.
     :param alignment_report: Outcome of the last depiction alignment, when one ran.
     """
@@ -400,8 +403,10 @@ def _parse_release(version: str) -> tuple[tuple[int, ...], bool]:
             raise ValueError(f"cannot read a release number from {version!r}") from None
         release = tuple(int(part) if part else 0 for part in match.groups()[:3])
         suffix = match.group(4)
-        # A local version (1.2.3+corp) is still that release; anything else (.dev1, rc2) precedes it.
-        return release, bool(suffix) and not suffix.startswith("+")
+        # A local version (1.2.3+corp) and a post-release (1.2.3.post1) are that release or
+        # later; anything else (.dev1, rc2) precedes it. Epochs (1!1.2.3) are not read here,
+        # and oepolars does not use them.
+        return release, bool(suffix) and not suffix.startswith(("+", ".post"))
     # InvalidVersion is a ValueError, so a malformed version reaches the caller's handler.
     parsed = Version(version)
     return (parsed.release + (0, 0, 0))[:3], parsed.is_prerelease or parsed.is_devrelease
@@ -586,10 +591,12 @@ def _columns(df: pl.DataFrame, molecule_columns: str | Iterable[str] | None, met
     names = [molecule_columns] if isinstance(molecule_columns, str) else list(molecule_columns)
     found = []
     for name in names:
+        # stacklevel=3 steps over this helper and the accessor so the user's call is blamed.
         if name not in df.columns:
-            warn(f"{name!r} not found in DataFrame columns ({', '.join(df.columns)}); skipped by {method}")
+            warn(f"{name!r} not found in DataFrame columns ({', '.join(df.columns)}); skipped by {method}",
+                 stacklevel=3)
         elif not isinstance(df.schema[name], oeplr.MoleculeType):
-            warn(f"Column {name!r} does not have a MoleculeType; skipped by {method}")
+            warn(f"Column {name!r} does not have a MoleculeType; skipped by {method}", stacklevel=3)
         else:
             found.append(name)
     return found
@@ -918,9 +925,13 @@ def _series_align_depictions(
     series = self._series
     if not isinstance(series.dtype, oeplr.MoleculeType):
         raise TypeError("align_depictions only works on molecule columns (oepolars.MoleculeType).")
-    col = fork_column(pl.DataFrame([series]), series.name, "align_depictions")
+    # polars gives an unnamed Series a label of its own inside a frame, so work with the
+    # frame's label and put the Series' own name back on the way out.
+    frame = pl.DataFrame([series])
+    label = frame.columns[0]
+    col = fork_column(frame, label, "align_depictions")
     columnops.align_depictions(col, ref, method=method, **kwargs)
-    return col.frame.get_column(series.name)
+    return col.frame.get_column(label).rename(series.name)
 
 
 def _series_recalculate_depiction_coordinates(self, **options: Any) -> pl.Series:
@@ -934,9 +945,11 @@ def _series_recalculate_depiction_coordinates(self, **options: Any) -> pl.Series
     series = self._series
     if not isinstance(series.dtype, oeplr.MoleculeType):
         raise TypeError("recalculate_depiction_coordinates only works on molecule columns (oepolars.MoleculeType).")
-    col = fork_column(pl.DataFrame([series]), series.name, "recalculate_depiction_coordinates")
+    frame = pl.DataFrame([series])
+    label = frame.columns[0]
+    col = fork_column(frame, label, "recalculate_depiction_coordinates")
     columnops.recalculate_depiction_coordinates(col, **options)
-    return col.frame.get_column(series.name)
+    return col.frame.get_column(label).rename(series.name)
 
 
 def _series_molgrid(

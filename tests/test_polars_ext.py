@@ -750,15 +750,18 @@ class TestPolarsDataFrameRecalculateDepictions:
         """recalculate_depiction_coordinates() should warn for non-molecule column."""
         df = pl.DataFrame({"text": ["hello"]})
 
-        with pytest.warns(CNotebookWarning, match="MoleculeType"):
+        with pytest.warns(CNotebookWarning, match="MoleculeType") as caught:
             df.chem.recalculate_depiction_coordinates(molecule_columns=["text"])
+        # The warning is the caller's problem, so it must be blamed on the caller's line
+        assert caught[0].filename == __file__
 
     def test_recalculate_missing_column_warns(self):
         """recalculate_depiction_coordinates() should warn for missing column."""
         df = pl.DataFrame({"text": ["hello"]})
 
-        with pytest.warns(CNotebookWarning, match="not found"):
+        with pytest.warns(CNotebookWarning, match="not found") as caught:
             df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
+        assert caught[0].filename == __file__
 
 
 class TestPolarsHighlightUsingColumnExtended:
@@ -1389,6 +1392,7 @@ def test_context_changes_do_not_leak_to_sibling_frames():
     changed = base.chem.set_render_options("mol", width=321)
     assert changed.schema["mol"].token != base.schema["mol"].token
     # The sibling never saw the width, so it still follows the global context for it
+    assert pe.context_for_token(sibling.schema["mol"].token).width == 0
     assert pe.context_for_token(sibling.schema["mol"].token)._width.is_deferred
     assert pe.context_for_token(changed.schema["mol"].token).width == 321
 
@@ -1411,6 +1415,16 @@ def test_align_depictions_accepts_smarts_ref_without_mutation():
     assert all(m.GetDimension() == 2 for m in out.get_column("mol").to_list())
     series = df.get_column("mol").chem.align_depictions(oechem.OESubSearch("c1ccccc1"))
     assert isinstance(series, pl.Series) and series.dtype.token is not None
+
+
+def test_series_accessors_work_on_an_unnamed_series():
+    """polars labels an unnamed Series 'column_0' inside a frame; the name must survive."""
+    unnamed = pl.Series(_mols(2), dtype=oeplr.MoleculeType())
+    assert unnamed.name == ""
+    aligned = unnamed.chem.align_depictions("first")
+    assert aligned.name == "" and aligned.dtype.token is not None
+    laid_out = unnamed.chem.recalculate_depiction_coordinates()
+    assert laid_out.name == "" and laid_out.dtype.token is not None
 
 
 def test_reset_depictions_keeps_sibling_state():
@@ -1501,6 +1515,7 @@ def test_polars_attach_version_guard(monkeypatch, version, attaches):
     ("0.3.9", ((0, 3, 9), False)),
     ("0.4.0.dev1", ((0, 4, 0), True)),
     ("0.4.0+corp", ((0, 4, 0), False)),
+    ("0.4.0.post1", ((0, 4, 0), False)),
     ("1", ((1, 0, 0), False)),
 ])
 def test_parse_release_reads_the_same_version_without_packaging(monkeypatch, version, expected):

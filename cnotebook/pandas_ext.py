@@ -593,7 +593,9 @@ def _molecule_columns(df: pd.DataFrame, molecule_columns, method: str) -> list[i
     for label in names:
         matches = [pos for pos in range(len(df.columns)) if df.columns[pos] == label]
         if not matches:
-            warn(f"{label!r} not found in DataFrame columns ({', '.join(map(str, df.columns))}); skipped by {method}")
+            # stacklevel=3 steps over this helper and the accessor so the user's call is blamed.
+            warn(f"{label!r} not found in DataFrame columns ({', '.join(map(str, df.columns))}); skipped by {method}",
+                 stacklevel=3)
         else:
             for pos in matches:
                 if not _is_depictable_molecule_dtype(df.dtypes.iloc[pos]):

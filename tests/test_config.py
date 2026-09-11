@@ -1,9 +1,17 @@
+import inspect
 import warnings
 
 import pytest
 
 from cnotebook import config
+from cnotebook.core.context import DEFERRED, CNotebookContext, cnotebook_context
 from cnotebook.core.errors import CNotebookWarning
+
+# Every render option is stored on the context as a DeferredValue named after it.
+_RENDER_OPTIONS = tuple(
+    name for name in inspect.signature(CNotebookContext.__init__).parameters
+    if name not in ("self", "scope")
+)
 
 
 @pytest.fixture()
@@ -13,8 +21,21 @@ def fresh_config(monkeypatch, tmp_path):
     monkeypatch.delenv("CNOTEBOOK_DISPLAY_MODE", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(config, "_CONFIG", None)
+    # configure() writes render options straight onto the global context object, so without
+    # this snapshot a value set here would leak into every later test in the session. The
+    # raw value is kept, not the resolved one, so a deferred option stays deferred.
+    global_context = cnotebook_context.get()
+    saved = {}
+    for name in _RENDER_OPTIONS:
+        slot = getattr(global_context, f"_{name}")
+        value = DEFERRED if slot.is_deferred else slot.get()
+        saved[name] = list(value) if name == "callbacks" and isinstance(value, list) else value
+    saved_scope = global_context._scope
     yield config
     monkeypatch.setattr(config, "_CONFIG", None)
+    for name, value in saved.items():
+        getattr(global_context, f"_{name}").set(value)
+    global_context._scope = saved_scope
 
 
 def test_defaults_without_file(fresh_config):

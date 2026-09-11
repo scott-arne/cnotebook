@@ -1285,8 +1285,10 @@ class TestDataFrameRecalculateDepictions:
             "mol1": pd.Series([mol], dtype=oepd.MoleculeDtype()),
         })
 
-        with pytest.warns(CNotebookWarning, match="nonexistent.*not found"):
+        with pytest.warns(CNotebookWarning, match="nonexistent.*not found") as caught:
             df.chem.recalculate_depiction_coordinates(molecule_columns=["nonexistent"])
+        # The warning is the caller's problem, so it must be blamed on the caller's line
+        assert caught[0].filename == __file__
 
 
 class TestDataFrameResetDepictions:
