@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 from openeye import oechem, oedepict
-from pandas.io.formats.style import Styler
 
 import cnotebook.pandas_ext as pe
 from cnotebook.context import CNotebookContext
@@ -2671,10 +2670,10 @@ def test_style_renders_a_missing_molecule_cell_as_an_empty_cell():
     html = df.chem.style().to_html()
     cells = _style_cells(html)
 
+    # The empty first cell is what proves the missing molecule did not leak Pandas'
+    # own scalar text ("None" or "nan") into the document.
     assert [cells[0], cells[1], cells[3]] == ["", "&lt;script&gt;alert(1)&lt;/script&gt;", "plain"]
     assert cells[2].startswith("<img")
-    # A missing molecule must not leak Pandas' own scalar text into the cell.
-    assert ">None<" not in html and ">nan<" not in html
     assert "<script>alert(1)</script>" not in html
     assert "<b>label</b>" not in html and "&lt;b&gt;label&lt;/b&gt;" in html
 
@@ -2694,29 +2693,50 @@ def test_style_applies_column_callbacks_once_per_rendered_cell():
     assert [mol.GetDimension() for mol in df["mol"]] == [0, 0]
 
 
-@pytest.mark.skipif(not hasattr(Styler, "format_index_names"),
-                    reason="pandas older than 3.0 has no hook for escaping axis names")
 def test_style_escapes_axis_names():
     df = _frame(1, x=["v"])
     df.index = pd.Index(["r0"], name="<i>rows</i>")
     df.columns = pd.Index(["mol", "x"], name="<i>cols</i>")
     html = df.chem.style().to_html()
+
     assert "<i>rows</i>" not in html and "&lt;i&gt;rows&lt;/i&gt;" in html
     assert "<i>cols</i>" not in html and "&lt;i&gt;cols&lt;/i&gt;" in html
+    assert "&amp;lt;" not in html  # escaped exactly once
+    # The names are escaped on a derived frame, so the caller's own frame keeps the raw ones.
+    assert df.index.name == "<i>rows</i>" and df.columns.name == "<i>cols</i>"
 
 
-def test_style_with_duplicate_column_labels_keeps_every_value_escaped():
-    """Styler.format addresses columns by label, so same-labelled columns share one formatter."""
+def test_style_escapes_multiindex_axis_names_and_leaves_other_name_types_alone():
+    df = _frame(1, x=["v"])
+    df.columns = pd.MultiIndex.from_tuples([("a", "mol"), ("a", "x")], names=["<i>top</i>", None])
+    df.index = pd.Index(["r0"], name=7)
+    html = df.chem.style().to_html()
+
+    assert "<i>top</i>" not in html and "&lt;i&gt;top&lt;/i&gt;" in html
+    assert "&amp;lt;" not in html
+    assert ">7<" in html  # a non-string name is passed through untouched
+    assert "<img" in html
+    assert list(df.columns.names) == ["<i>top</i>", None] and df.index.name == 7
+
+
+def test_style_rejects_duplicate_column_labels():
+    """Styler.format resolves a subset by label, so duplicates would share one formatter."""
     df = pd.concat([
         pd.DataFrame({"mol": pd.Series(_mols(1), dtype=oepd.MoleculeDtype())}),
         pd.DataFrame({"mol": ["<script>alert(1)</script>"]}),
     ], axis=1)
 
-    styler = df.chem.style()
-    html = styler.to_html()
-    assert html.count("<img") == 1
-    assert "<script>alert(1)</script>" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    with pytest.raises(ValueError, match="unique column labels"):
+        df.chem.style()
 
-    # Pandas' own uniqueness guard lives in apply/map, not in format or to_html.
-    with pytest.raises(KeyError, match="non-unique"):
-        styler.map(lambda value: "color: red").to_html()
+
+def test_style_with_a_duplicate_index_renders_and_escapes():
+    """A duplicate index is fine: Styler addresses rows positionally when it renders."""
+    df = _frame(2, s=["<b>a</b>", "<b>b</b>"])
+    df.index = ["<i>r</i>", "<i>r</i>"]
+    html = df.chem.style().to_html()
+
+    assert html.count("<img") == 2
+    assert "<i>r</i>" not in html and html.count("&lt;i&gt;r&lt;/i&gt;") == 2
+    assert "<b>a</b>" not in html and "&lt;b&gt;a&lt;/b&gt;" in html
+    assert "<b>b</b>" not in html and "&lt;b&gt;b&lt;/b&gt;" in html

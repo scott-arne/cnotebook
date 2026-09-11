@@ -3,7 +3,7 @@ import logging
 import re
 import threading
 import typing
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterable
 from contextlib import ExitStack
 from typing import Any
 
@@ -831,28 +831,45 @@ def _dataframe_molgrid(self, mol_col, title=True, tooltip_fields=None, **kwargs)
                    tooltip_fields=tooltip_fields, **kwargs)
 
 
+def _escaped_axis_names(names: Iterable[Hashable]) -> list[Hashable]:
+    """HTML-escape the string axis names of one axis, leaving other name types alone.
+
+    :param names: ``Index.names`` of one axis.
+    :returns: Names to pass to ``DataFrame.rename_axis``.
+    """
+    return [html.escape(name) if isinstance(name, str) else name for name in names]
+
+
 def _dataframe_style(self):
     """A pandas Styler with molecule cells rendered by cnotebook and everything else escaped.
 
-    Formatters are registered by column label because that is how ``Styler.format``
-    addresses columns, so columns sharing a label share one formatter and one render
-    context. Pandas itself rejects a frame with a non-unique index or non-unique columns
-    only in ``Styler.apply`` and ``Styler.map``, which raise ``KeyError``; that error is
-    left to surface from pandas.
+    Columns must be uniquely labelled: ``Styler.format`` resolves its ``subset`` by label,
+    so same-labelled columns would all take the last one's formatter and render context,
+    while the cnotebook adapters address columns by position. Use :func:`render_dataframe`
+    for a frame with duplicate column labels. A duplicate index is fine.
+
+    Each column's render options are captured when ``style()`` is called, so options
+    changed afterwards only affect a Styler built after the change; cell values, by
+    contrast, are read when the Styler renders.
 
     :returns: ``pandas.io.formats.style.Styler``.
+    :raises ValueError: If the frame's column labels are not unique.
     """
     df = self._obj
+    if not df.columns.is_unique:
+        raise ValueError("style() requires unique column labels; rename the duplicated columns "
+                         "or use render_dataframe(), which addresses columns by position")
     adapter = PandasFrameAdapter(df)
-    styler = df.style
+    # Pandas writes the axis names into the header itself and escapes them on no version
+    # the project supports, so hand the Styler a frame whose names are already escaped.
+    # The frame shares the caller's data and leaves the caller's own names untouched.
+    styled = df.rename_axis(index=_escaped_axis_names(df.index.names),
+                            columns=_escaped_axis_names(df.columns.names))
+    styler = styled.style
     ordinary = [label for pos, label in enumerate(adapter.columns()) if adapter.kind(pos) is ColumnKind.OTHER]
     if ordinary:
         styler = styler.format(escape="html", subset=ordinary)
     styler = styler.format_index(escape="html", axis=0).format_index(escape="html", axis=1)
-    # Pandas writes the axis names into the header itself and only gained a hook for
-    # escaping them in 3.0, so on older pandas an axis name is left as pandas renders it.
-    if hasattr(styler, "format_index_names"):
-        styler = styler.format_index_names(escape="html", axis=0).format_index_names(escape="html", axis=1)
     for pos, label in enumerate(adapter.columns()):
         kind = adapter.kind(pos)
         if kind is ColumnKind.OTHER:
