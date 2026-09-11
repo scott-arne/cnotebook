@@ -54,11 +54,10 @@ def test_pandas_and_polars_render_identical_cells(image_format):
     pandas_cells = _images(_cells(render_dataframe(pdf, max_rows=0)))
     polars_cells = _images(_cells(render_polars_dataframe(plf, max_rows=0)))
     assert pandas_cells == polars_cells
+    assert "width:200px;height:200px" in pandas_cells[-1]
+    assert "width:200px;height:200px" in pandas_cells[2]
     if image_format == "svg":
         assert "Empty Molecule" in pandas_cells[-1] and "Exceeds Max Heavy Atoms" in pandas_cells[2]
-    else:
-        assert pandas_cells[-1].startswith("<img src='data:image/png")
-        assert pandas_cells[2].startswith("<img src='data:image/png")
 
 
 def test_marimo_formatters_match_table_renderers(monkeypatch):

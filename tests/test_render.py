@@ -225,32 +225,34 @@ class TestRenderEmptyMessage:
     def test_render_empty_molecule_basic(self, mock_create_img):
         """Test rendering empty molecule message"""
         mock_create_img.return_value = '<img>empty</img>'
-        
+
         ctx = CNotebookContext(min_width=200, min_height=150, image_format="png")
-        
+
         result = render_empty_molecule(ctx=ctx)
-        
+
         # Should call create_img_tag with correct dimensions
         mock_create_img.assert_called_once()
         call_args = mock_create_img.call_args
         assert call_args[0][0] == 200  # width
         assert call_args[0][1] == 150  # height
+        assert call_args.kwargs["explicit_height"] is True
         assert result == '<img>empty</img>'
     
     @patch('cnotebook.core.render.create_img_tag')
     def test_render_invalid_molecule_basic(self, mock_create_img):
         """Test rendering invalid molecule message"""
         mock_create_img.return_value = '<img>invalid</img>'
-        
+
         ctx = CNotebookContext(min_width=200, min_height=150, image_format="png")
-        
+
         result = render_invalid_molecule(ctx=ctx)
-        
+
         # Should call create_img_tag with correct dimensions
         mock_create_img.assert_called_once()
         call_args = mock_create_img.call_args
         assert call_args[0][0] == 200  # width
         assert call_args[0][1] == 150  # height
+        assert call_args.kwargs["explicit_height"] is True
         assert result == '<img>invalid</img>'
 
 
