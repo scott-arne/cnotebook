@@ -1,8 +1,12 @@
+import html as _html
 import logging
 import re
 import typing
+import uuid
 import weakref
-from collections.abc import Iterable
+from collections import OrderedDict
+from collections.abc import Hashable, Iterable
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import oepolars as oeplr  # pyright: ignore
@@ -13,17 +17,12 @@ from openeye import oechem, oedepict, oegrapheme, oegraphsim
 
 from .align import fingerprint_maker
 from .context import create_local_context, get_series_context, pass_cnotebook_context
+from .core import formatters as _fmt
+from .core.columnops import AlignmentReport
 from .core.errors import warn
-from .helpers import create_structure_highlighter, escape_brackets
-from .render import (
-    CNotebookContext,
-    oedisp_to_html,
-    oedu_to_html,
-    oemol_to_disp,
-    render_empty_molecule,
-    render_exceeds_max_heavy_atoms,
-    render_invalid_molecule,
-)
+from .core.table import ColumnKind, RowWindow, polars_row_window, render_table
+from .helpers import create_structure_highlighter
+from .render import CNotebookContext, oemol_to_disp
 
 get_ipython: Any = None
 
@@ -42,7 +41,316 @@ if typing.TYPE_CHECKING:
 
 log = logging.getLogger("cnotebook")
 
-# Global storage for DataFrame column contexts
+
+@dataclass
+class ColumnState:
+    """
+    Per-token column state.
+
+    :param context: Render context for every cell of the column.
+    :param alignment_report: Outcome of the last depiction alignment, when one ran.
+    """
+
+    context: CNotebookContext
+    alignment_report: AlignmentReport | None = None
+
+
+# Polars Series are ephemeral, so column state cannot live on the Series. It is keyed by
+# the token carried on the column dtype, which survives frame operations and copies.
+_STATES: "OrderedDict[str, ColumnState]" = OrderedDict()
+_MAX_STATES = 10_000
+
+
+def new_token() -> str:
+    """
+    Mint a fresh column token.
+
+    :returns: A token that has never been handed out before.
+    """
+    return uuid.uuid4().hex
+
+
+def store_state(token: str, state: ColumnState) -> None:
+    """
+    Store *state* under *token*, evicting the oldest entries beyond the cap.
+
+    :param token: Column token minted by :func:`new_token`.
+    :param state: State to associate with the token.
+    """
+    _STATES[token] = state
+    _STATES.move_to_end(token)
+    while len(_STATES) > _MAX_STATES:
+        _STATES.popitem(last=False)
+
+
+def state_for_token(token: str | None) -> ColumnState | None:
+    """
+    Return the state for *token*, or ``None`` when unknown.
+
+    :param token: Column token, or ``None`` for an untokenized column.
+    :returns: The stored state, or ``None``.
+    """
+    if token is None:
+        return None
+    state = _STATES.get(token)
+    if state is not None:
+        _STATES.move_to_end(token)
+    return state
+
+
+def context_for_token(token: str | None) -> CNotebookContext | None:
+    """
+    Return the render context stored for *token*.
+
+    :param token: Column token, or ``None`` for an untokenized column.
+    :returns: The stored context, or ``None`` when the token is unknown.
+    """
+    state = state_for_token(token)
+    return state.context if state is not None else None
+
+
+def clear_column_contexts() -> None:
+    """
+    Forget every stored column state.
+
+    Tokens still carried on frames then resolve to fresh local contexts.
+    """
+    _STATES.clear()
+
+
+def classify_dtype(dtype: Any) -> ColumnKind:
+    """
+    Map a Polars dtype to the kind of cell rendering it needs.
+
+    :param dtype: Polars dtype of a column.
+    :returns: Column kind; ``ColumnKind.OTHER`` for every dtype rendered as text.
+    """
+    if isinstance(dtype, oeplr.MoleculeType):
+        return ColumnKind.MOLECULE
+    if isinstance(dtype, oeplr.DisplayType):
+        return ColumnKind.DISPLAY
+    if isinstance(dtype, oeplr.DesignUnitType):
+        return ColumnKind.DESIGN_UNIT
+    return ColumnKind.OTHER
+
+
+def configured_max_rows() -> int | None:
+    """
+    Report Polars' configured table row limit.
+
+    :returns: ``POLARS_FMT_MAX_ROWS`` as an integer, or ``None`` when it is unset.
+    """
+    # Polars reports the key with a value of None when the option was never set.
+    value = pl.Config.state(if_set=True).get("POLARS_FMT_MAX_ROWS")
+    return int(value) if value is not None else None
+
+
+class PolarsFrameAdapter:
+    """
+    Frame adapter over a Polars DataFrame (positional column access).
+
+    Columns are addressed by position so that each column keeps one kind and one
+    render context, and the underlying Series are captured once per render.
+    """
+
+    def __init__(
+            self,
+            df: pl.DataFrame,
+            *,
+            ctx: CNotebookContext | None = None,
+            formatters: dict[Hashable, Any] | None = None
+    ):
+        """
+        Wrap a DataFrame for rendering.
+
+        :param df: Frame to render; never modified.
+        :param ctx: Context overriding every column context, or ``None`` to resolve
+            each column's context from its dtype token.
+        :param formatters: Optional caller formatters for ordinary columns, keyed by
+            column label; their output is escaped by the writer.
+        """
+        self.df = df
+        self._ctx = ctx
+        self._formatters = dict(formatters or {})
+        self._labels: list[Hashable] = list(df.columns)
+        self._series = [df.to_series(pos) for pos in range(df.width)]
+        self._kinds = [classify_dtype(s.dtype) for s in self._series]
+
+    def columns(self) -> list[Hashable]:
+        """
+        Report the column labels in order.
+
+        :returns: Column labels.
+        """
+        return list(self._labels)
+
+    def kind(self, pos: int) -> ColumnKind:
+        """
+        Report the kind of the column at *pos*.
+
+        :param pos: Column position.
+        :returns: Column kind.
+        """
+        return self._kinds[pos]
+
+    def nrows(self) -> int:
+        """
+        Report the frame length.
+
+        :returns: Number of rows.
+        """
+        return len(self.df)
+
+    def context(self, pos: int) -> CNotebookContext:
+        """
+        Resolve the render context of the column at *pos*.
+
+        Resolution order: the context passed to the adapter, the state stored for the
+        column's dtype token, the legacy id-keyed store, then a fresh local context.
+
+        :param pos: Column position.
+        :returns: Render context for every cell of the column.
+        """
+        if self._ctx is not None:
+            return self._ctx
+        token = getattr(self._series[pos].dtype, "token", None)
+        ctx = context_for_token(token)
+        if ctx is not None:
+            return ctx
+        legacy = get_dataframe_column_context(self.df, str(self._labels[pos]))  # removed in Task 17
+        return legacy if legacy is not None else create_local_context()
+
+    def window(self, max_rows: int | None) -> RowWindow:
+        """
+        Choose the rows to render.
+
+        :param max_rows: ``None`` for the Polars rule, ``<= 0`` for all rows, else the row budget.
+        :returns: The row window.
+        """
+        return polars_row_window(len(self.df), max_rows, configured_max_rows())
+
+    def cell(self, row: int, pos: int) -> Any:
+        """
+        Return the raw value of one cell.
+
+        :param row: Row position.
+        :param pos: Column position.
+        :returns: The cell value, or ``None`` for a missing cell.
+        """
+        return self._series[pos][row]
+
+    def other_cell_text(self, row: int, pos: int) -> str:
+        """
+        Return the display text of one ordinary cell.
+
+        The writer escapes the returned text, so caller formatters cannot inject markup.
+
+        :param row: Row position.
+        :param pos: Column position.
+        :returns: Unescaped display text; ``"null"`` for a missing cell, the Polars convention.
+        """
+        value = self._series[pos][row]
+        formatter = self._formatters.get(self._labels[pos])
+        if formatter is not None:
+            return str(formatter(value))
+        return "null" if value is None else str(value)
+
+    def index_text(self, row: int) -> str | None:
+        """
+        Report the index label of *row*; Polars frames have no index.
+
+        :param row: Row position.
+        :returns: Always ``None``.
+        """
+        return None
+
+    def header_extra_rows(self) -> list[list[str]]:
+        """
+        Report the extra header rows; Polars shows the column dtypes under the labels.
+
+        :returns: A single row of dtype names, escaped by the writer.
+        """
+        return [[str(dtype) for dtype in self.df.dtypes]]
+
+
+def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[Any], str]:
+    """
+    Closure that renders a molecule cell to HTML.
+
+    :param ctx: CNotebook rendering context.
+    :returns: Function that renders molecules to HTML.
+    """
+    return lambda value: _fmt.molecule_cell_html(value, ctx)
+
+
+@pass_cnotebook_context
+def create_disp_formatter(
+        *,
+        callbacks: list[typing.Callable[[oedepict.OE2DMolDisplay], None]] | None = None,
+        ctx: CNotebookContext
+) -> typing.Callable[[Any], str]:
+    """
+    Closure that renders an ``OE2DMolDisplay`` cell to HTML.
+
+    :param callbacks: Callbacks to apply to the depiction copy instead of the context's own.
+    :param ctx: CNotebook rendering context.
+    :returns: Function that renders display objects to HTML.
+    """
+    if callbacks is not None:
+        # The shared formatter applies ctx.callbacks exactly once on its copy, so the
+        # caller's callbacks replace the context's rather than running in addition.
+        ctx = ctx.copy()
+        ctx.reset_callbacks()
+        for callback in callbacks:
+            ctx.add_callback(callback)
+    return lambda value: _fmt.display_cell_html(value, ctx)
+
+
+def create_du_formatter(*, ctx: CNotebookContext) -> typing.Callable[[Any], str]:
+    """
+    Closure that renders an ``OEDesignUnit`` cell to HTML.
+
+    :param ctx: CNotebook rendering context.
+    :returns: Function that renders design units to HTML.
+    """
+    return lambda value: _fmt.design_unit_cell_html(value, ctx)
+
+
+def escape_formatter(obj: typing.Any) -> str:
+    """
+    Render an arbitrary value as escaped HTML text.
+
+    :param obj: Value to render; ``None`` becomes the empty string.
+    :returns: HTML-escaped text.
+    """
+    return _html.escape("" if obj is None else str(obj))
+
+
+def render_polars_dataframe(
+        df: pl.DataFrame,
+        formatters: dict | None = None,
+        col_space: dict[str, float | int] | None = None,
+        ctx: CNotebookContext | None = None,
+        max_rows: int | None = None,
+) -> str:
+    """
+    Render a Polars DataFrame with molecule-aware cells.
+
+    :param df: Frame to render (never modified).
+    :param formatters: Optional formatters for ordinary columns (output is escaped).
+    :param col_space: Accepted for compatibility; molecule columns take their width from their context.
+    :param ctx: Overrides every column context when given.
+    :param max_rows: ``None`` for Polars' configured limit, ``<= 0`` for all rows, else the row budget.
+    :returns: HTML table with a dtype header row.
+    """
+    del col_space
+    return render_table(PolarsFrameAdapter(df, ctx=ctx, formatters=formatters), ctx=ctx, max_rows=max_rows)
+
+
+########################################################################################################################
+# Legacy id-keyed column context store (superseded by the token registry above; removed in Task 17)
+########################################################################################################################
+
 # Structure: {id(DataFrame): (weakref(DataFrame), {column_name: CNotebookContext})}
 # We store a weak reference to the DataFrame to allow cleanup
 _dataframe_column_contexts: dict[int, tuple[weakref.ref, dict[str, CNotebookContext]]] = {}
@@ -86,257 +394,6 @@ def set_dataframe_column_context(df: pl.DataFrame, column: str, ctx: CNotebookCo
     if df_id not in _dataframe_column_contexts:
         _dataframe_column_contexts[df_id] = (weakref.ref(df), {})
     _dataframe_column_contexts[df_id][1][column] = ctx
-
-
-def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEMolBase], str]:
-    """
-    Closure that creates a function that renders an OEMol to HTML
-    :param ctx: CNotebook rendering context
-    :return: Function that renders molecules to HTML
-    """
-    def _oemol_to_html(mol: oechem.OEMolBase):
-        if isinstance(mol, oechem.OEMolBase):
-
-            # Render valid molecules
-            if mol.IsValid():
-                # Check heavy atom count
-                if (ctx.max_heavy_atoms is not None
-                        and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
-                    return render_exceeds_max_heavy_atoms(mol, ctx=ctx)
-
-                # Create the display object (callbacks applied by make_depiction)
-                disp = oemol_to_disp(mol, ctx=ctx)
-
-                # Render into the string stream
-                return oedisp_to_html(disp, ctx=ctx)
-
-            # Empty molecule
-            elif mol.NumAtoms() == 0:
-                return render_empty_molecule(ctx=ctx)
-
-            # Invalid molecule
-            else:
-                return render_invalid_molecule(ctx=ctx)
-
-        return str(mol)
-
-    return _oemol_to_html
-
-
-@pass_cnotebook_context
-def create_disp_formatter(
-        *,
-        callbacks: list[typing.Callable[[oedepict.OE2DMolDisplay], None]] | None = None,
-        ctx: CNotebookContext
-) -> typing.Callable[[oedepict.OE2DMolDisplay], str]:
-    """
-    Closure that creates a function that renders an OE2DMolDisplay to HTML
-    :param ctx: Render context
-    :param callbacks: List of callbacks to modify the rendering of the molecule
-    :return: Function that renders display objects to HTML
-    """
-
-    def _oedisp_to_html(disp: oedepict.OE2DMolDisplay) -> str:
-
-        if isinstance(disp, oedepict.OE2DMolDisplay) and disp.IsValid():
-            # Copy the display, as not to modify the original with callbacks
-            disp_to_render = oedepict.OE2DMolDisplay(disp)
-
-            # Apply display callbacks
-            if callbacks is not None:
-                for callback in callbacks:
-                    callback(disp_to_render)
-
-            return oedisp_to_html(disp_to_render, ctx=ctx)
-        return str(disp)
-
-    return _oedisp_to_html
-
-
-def create_du_formatter(*, ctx: CNotebookContext) -> typing.Callable[[oechem.OEDesignUnit], str]:
-    """
-    Closure that creates a function that renders an OEDesignUnit to HTML.
-
-    :param ctx: CNotebook rendering context.
-    :returns: Function that renders design units to HTML.
-    """
-    def _oedu_to_html(du: oechem.OEDesignUnit):
-        if isinstance(du, oechem.OEDesignUnit):
-            return oedu_to_html(du, ctx=ctx)
-        return str(du)
-
-    return _oedu_to_html
-
-
-def escape_formatter(obj: typing.Any) -> str:
-    return escape_brackets(str(obj))
-
-
-def render_polars_dataframe(
-        df: pl.DataFrame,
-        formatters: dict | None = None,
-        col_space: dict[str, float | int] | None = None,
-        ctx: CNotebookContext | None = None,
-        **kwargs
-) -> str:
-    """
-    Render a Polars DataFrame with molecules to HTML.
-
-    This is a native Polars implementation that renders molecule and display
-    columns directly without converting to pandas.
-
-    :param df: Polars DataFrame to render
-    :param formatters: Custom formatters for displaying columns
-    :param col_space: Custom column spacing
-    :param ctx: Local renering context (optional)
-    :param kwargs: Additional keyword arguments (currently unused, kept for API compatibility)
-    :return: HTML of rendered DataFrame
-    """
-    # Defaults are empty dictionaries for these
-    formatters = formatters or {}
-    col_space = col_space or {}
-
-    # Identify molecule and display columns
-    molecule_columns: set[str] = set()
-    display_columns: set[str] = set()
-
-    # Capture metadata from ORIGINAL DataFrame and create formatters
-    for col in df.columns:
-        dtype = df.schema[col]
-        if isinstance(dtype, oeplr.MoleculeType):
-            molecule_columns.add(col)
-
-            # First check for DataFrame-level column context (persists across column accesses)
-            df_col_ctx = get_dataframe_column_context(df, col)
-
-            if df_col_ctx is not None:
-                # Use DataFrame-level context
-                series_ctx = ctx if ctx is not None else df_col_ctx
-            else:
-                # Fall back to series metadata (might be empty due to Polars Series ephemeral nature)
-                series = df.get_column(col)
-                metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
-                series_ctx = ctx if ctx is not None else get_series_context(metadata)
-
-            if col in formatters:
-                warn(f'Overwriting existing formatter for {col} with a molecule formatter')
-
-            formatters[col] = create_mol_formatter(ctx=series_ctx)
-
-            # Record the column width
-            if col in col_space:
-                warn(f'Column spacing for {col} already defined, overwriting with molecule image width')
-
-            col_space[col] = float(series_ctx.width)
-
-        elif isinstance(dtype, oeplr.DisplayType):
-            display_columns.add(col)
-
-            # Get metadata from the original series via .chem.metadata
-            series = df.get_column(col)
-            metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
-
-            # Get the cnotebook options for this column (use passed ctx if provided)
-            series_ctx = ctx if ctx is not None else get_series_context(metadata)
-
-            if col in formatters:
-                warn(f'Overwriting existing formatter for {col} with a display formatter')
-
-            formatters[col] = create_disp_formatter(ctx=series_ctx)
-
-            # Calculate column width from display objects
-            if len(series) > 0:
-                max_width = 0
-                for disp in series:
-                    if isinstance(disp, oedepict.OE2DMolDisplay):
-                        max_width = max(max_width, disp.GetWidth())
-                col_space[col] = max(0, max_width)
-            else:
-                col_space[col] = 0
-
-    if len(molecule_columns) > 0:
-        log.debug(f'Detected molecule columns: {", ".join(molecule_columns)}')
-
-    if len(display_columns) > 0:
-        log.debug(f'Detected display columns: {", ".join(display_columns)}')
-
-    # Detect Design Unit columns
-    designunit_columns: set[str] = set()
-
-    for col in df.columns:
-        dtype = df.schema[col]
-        if isinstance(dtype, oeplr.DesignUnitType):
-            designunit_columns.add(col)
-
-            series = df.get_column(col)
-            metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
-            series_ctx = ctx if ctx is not None else get_series_context(metadata)
-
-            if col in formatters:
-                warn(f'Overwriting existing formatter for {col} with a design unit formatter')
-
-            formatters[col] = create_du_formatter(ctx=series_ctx)
-            col_space[col] = float(series_ctx.width)
-
-    if len(designunit_columns) > 0:
-        log.debug(f'Detected design unit columns: {", ".join(designunit_columns)}')
-
-    # All other columns get escape formatter
-    for col in df.columns:
-        if col not in display_columns and col not in molecule_columns and col not in designunit_columns:
-            if col not in formatters:
-                formatters[col] = escape_formatter
-
-    # Deep copy molecule columns to avoid modifying originals during rendering
-    # Create a dictionary mapping column name to deep-copied series
-    copied_molecule_series: dict[str, pl.Series] = {}
-    for col in molecule_columns:
-        series = df.get_column(col)
-        if hasattr(series, 'chem') and hasattr(series.chem, 'deepcopy'):  # pyright: ignore
-            # Use oepolars deepcopy to create copies of molecules
-            copied_series = series.chem.deepcopy()  # pyright: ignore
-            # Preserve metadata from original
-            if hasattr(series, 'chem') and hasattr(series.chem, 'metadata'):  # pyright: ignore
-                original_metadata = series.chem.metadata  # pyright: ignore
-                if original_metadata and hasattr(copied_series, 'chem'):
-                    copied_series.chem.metadata.update(original_metadata)  # pyright: ignore
-            copied_molecule_series[col] = copied_series
-
-    # Build HTML table natively
-    html_parts = ['<table border="1" class="dataframe">', '<thead><tr style="text-align: right;">']
-
-    # Header
-    for col in df.columns:
-        width_style = ""
-        if col in col_space:
-            width_style = f' style="min-width: {col_space[col]}px;"'
-        html_parts.append(f'<th{width_style}>{escape_brackets(str(col))}</th>')
-    html_parts.append('</tr></thead>')
-
-    # Body
-    html_parts.append('<tbody>')
-    for row_idx in range(len(df)):
-        html_parts.append('<tr>')
-        for col in df.columns:
-            # Use copied series for molecule columns, original for others
-            if col in copied_molecule_series:
-                value = copied_molecule_series[col][row_idx]
-            else:
-                value = df[col][row_idx]
-
-            # Apply formatter if available
-            if col in formatters:
-                cell_html = formatters[col](value)
-            else:
-                cell_html = escape_brackets(str(value))
-
-            html_parts.append(f'<td>{cell_html}</td>')
-        html_parts.append('</tr>')
-    html_parts.append('</tbody>')
-
-    html_parts.append('</table>')
-
-    return ''.join(html_parts)
 
 
 ########################################################################################################################

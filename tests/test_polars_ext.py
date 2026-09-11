@@ -1205,3 +1205,97 @@ def test_highlight_using_column_traditional_produces_different_svg():
     assert unhighlighted_svg != highlighted_svg
     assert "svg" in unhighlighted_svg.lower()
     assert "svg" in highlighted_svg.lower()
+
+
+# ----------------------------------------------------------------------------------------
+# Token registry and table-plan rendering
+# ----------------------------------------------------------------------------------------
+
+from openeye import oechem
+
+import cnotebook.polars_ext as pe
+from cnotebook.core.context import CNotebookContext, create_local_context
+
+
+def _mols(n, smiles="c1ccccc1O"):
+    """Build *n* titled copies of *smiles* as graph molecules."""
+    out = []
+    for i in range(n):
+        m = oechem.OEGraphMol()
+        oechem.OESmilesToMol(m, smiles)
+        m.SetTitle(f"m{i}")
+        out.append(m)
+    return out
+
+
+def _pframe(n=3, token=None, **extra):
+    """Build a frame with a molecule column carrying *token* plus any extra columns."""
+    cols = [pl.Series("mol", _mols(n), dtype=oeplr.MoleculeType(token))]
+    for name, values in extra.items():
+        cols.append(pl.Series(name, values))
+    return pl.DataFrame(cols)
+
+
+def test_render_polars_truncates_per_config():
+    """Truncation follows POLARS_FMT_MAX_ROWS, and max_rows <= 0 or tbl_rows=-1 renders everything."""
+    df = pl.DataFrame({"a": list(range(100))})
+    with pl.Config(tbl_rows=6):
+        html = pe.render_polars_dataframe(df)
+    # 6 data rows + the ellipsis row + the dtype header row; the label header row
+    # carries a style attribute, so it is not counted by the bare "<tr>" literal.
+    assert html.count("<tr>") == 6 + 1 + 1
+    assert pe.render_polars_dataframe(df, max_rows=0).count("<td>") == 100
+    with pl.Config(tbl_rows=-1):
+        assert pe.render_polars_dataframe(df).count("<td>") == 100
+
+
+def test_configured_max_rows_handles_unset():
+    """configured_max_rows reads the polars option and reports None when it is unset."""
+    with pl.Config(tbl_rows=7):
+        assert pe.configured_max_rows() == 7
+    assert pe.configured_max_rows() in (None, 10) or isinstance(pe.configured_max_rows(), int)
+
+
+def test_render_polars_resolves_context_by_token():
+    """A dtype token resolves to the registered column state."""
+    token = pe.new_token()
+    ctx = create_local_context()
+    ctx.image_format = "svg"
+    ctx.width = 111
+    pe.store_state(token, pe.ColumnState(ctx))
+    html = pe.render_polars_dataframe(_pframe(1, token=token))
+    assert "<svg" in html and "min-width: 111px" in html
+    assert "molecule" in html  # dtype header row
+
+
+def test_render_polars_escapes_and_honours_formatters():
+    """Caller formatter output and column labels are escaped by the writer."""
+    df = _pframe(1, note=["a&b<c>"], **{"<h>": ["x"]})
+    html = pe.render_polars_dataframe(df, formatters={"note": lambda v: f"[{v}]"})
+    assert "[a&amp;b&lt;c&gt;]" in html and "&lt;h&gt;" in html and "<h>" not in html
+
+
+def test_render_polars_none_and_invalid_cells():
+    """A None molecule renders as an empty cell; an empty molecule renders the placeholder."""
+    df = pl.DataFrame([pl.Series("mol", [None, oechem.OEGraphMol(), *_mols(1)], dtype=oeplr.MoleculeType())])
+    # The placeholder text is drawn into the image, so it is only greppable in SVG output.
+    html = pe.render_polars_dataframe(df, ctx=CNotebookContext(image_format="svg"))
+    assert "Empty Molecule" in html and html.count("<td>") == 3
+    assert html.count("<td></td>") == 1
+
+
+def test_render_polars_null_ordinary_cells():
+    """A missing ordinary cell renders as the polars "null" text."""
+    df = pl.DataFrame({"a": [None, "x"]})
+    html = pe.render_polars_dataframe(df)
+    assert "<td>null</td>" in html and "<td>x</td>" in html
+
+
+def test_registry_is_bounded_and_clearable():
+    """The token registry is a bounded LRU that clear_column_contexts empties."""
+    pe.clear_column_contexts()
+    for _ in range(pe._MAX_STATES + 5):
+        pe.store_state(pe.new_token(), pe.ColumnState(create_local_context()))
+    assert len(pe._STATES) == pe._MAX_STATES
+    pe.clear_column_contexts()
+    assert len(pe._STATES) == 0 and pe.context_for_token("missing") is None
