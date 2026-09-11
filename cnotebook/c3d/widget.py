@@ -30,9 +30,12 @@ def _load_esm() -> str:
     """Read the widget module template and inline the viewer assets.
 
     The bundles are serialized with :func:`~cnotebook.core.viewer3d.escape_script_json`,
-    the escaping the front end applies to its own payloads: the inlined text then carries
-    no ``<``, ``>``, ``&``, U+2028 or U+2029, so the module survives being embedded in a
-    ``<script>`` block, and it stays pure ASCII so it can always be encoded.
+    the escaping the front end applies to its own payloads: the inlined JSON object
+    literal then carries no ``<``, ``>``, ``&``, U+2028 or U+2029, and the module stays
+    pure ASCII so it can always be encoded. Only that literal is script-safe; the
+    template around it keeps raw ``<`` characters (``buildSrcdoc`` writes ``</script>``
+    literals of its own). That is sound because anywidget loads this file as an ES
+    module, never inside a script element.
 
     :returns: The ES module source with the asset sentinel replaced.
     :raises CNotebookError: If the template does not contain the sentinel exactly once.
@@ -105,6 +108,22 @@ def _output_lines(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(line) for line in value]
     return [str(value)]
+
+
+def _retrieve_exception(future: asyncio.Future[bytes]) -> None:
+    """Mark a rejected screenshot future's exception as seen.
+
+    A caller may request a screenshot and never await the future (a capture taken for
+    its side effect, or a cell that moved on). asyncio logs "Future exception was never
+    retrieved" when such a future is garbage collected, which would put a traceback in
+    the kernel log for a failure the caller chose to ignore. Reading the exception here
+    clears that flag; a caller who does await the future still gets the
+    :class:`~cnotebook.core.errors.CNotebookError`.
+
+    :param future: The settled screenshot future.
+    """
+    if not future.cancelled():
+        future.exception()
 
 
 def _decode_screenshot(data: dict[str, Any]) -> bytes:
@@ -248,18 +267,23 @@ class C3DWidget(anywidget.AnyWidget):
 
     _esm = _load_esm()
 
+    # ipywidgets echoes every browser-originated trait update straight back to the
+    # browser (JUPYTER_WIDGETS_ECHO is on by default), which would return a multi-megabyte
+    # base64 screenshot to the frame that just produced it. The traits only the front end
+    # writes therefore opt out; the ones Python writes, and the bidirectional view pair,
+    # keep the default so other views of the same widget stay in step.
     payload = traitlets.Unicode("{}").tag(sync=True)
     width = traitlets.Int(800).tag(sync=True)
     height = traitlets.Int(500).tag(sync=True)
-    status = traitlets.Unicode("loading").tag(sync=True)
-    status_message = traitlets.Unicode("").tag(sync=True)
+    status = traitlets.Unicode("loading").tag(sync=True, echo_update=False)
+    status_message = traitlets.Unicode("").tag(sync=True, echo_update=False)
     commands = traitlets.List(traitlets.Dict()).tag(sync=True)
-    command_results = traitlets.List(traitlets.Dict()).tag(sync=True)
+    command_results = traitlets.List(traitlets.Dict()).tag(sync=True, echo_update=False)
     view = traitlets.List(traitlets.Float()).tag(sync=True)
     view_origin = traitlets.Unicode("js").tag(sync=True)
-    picked = traitlets.Dict().tag(sync=True)
+    picked = traitlets.Dict().tag(sync=True, echo_update=False)
     screenshot_request = traitlets.Int(0).tag(sync=True)
-    screenshot = traitlets.Dict().tag(sync=True)
+    screenshot = traitlets.Dict().tag(sync=True, echo_update=False)
 
     def __init__(self, **kwargs: Any) -> None:
         """Create the widget.
@@ -356,6 +380,7 @@ class C3DWidget(anywidget.AnyWidget):
                 "async code (a Jupyter or marimo notebook cell already runs one)."
             ) from exc
         future: asyncio.Future[bytes] = loop.create_future()
+        future.add_done_callback(_retrieve_exception)
         seq = self.screenshot_request + 1
         # Register before publishing the request so an answer can never arrive first.
         self._screenshot_futures[seq] = future
@@ -389,6 +414,12 @@ class C3DWidget(anywidget.AnyWidget):
             # A future the caller already cancelled is skipped; popping it keeps every
             # request settled at most once, however many messages mention its sequence.
             if future.done():
+                continue
+            if future.get_loop().is_closed():
+                # The cell that asked has ended. Settling the future would schedule its
+                # callbacks on a dead loop, and that RuntimeError would escape this
+                # observer and abort the trait assignment for every other request.
+                log.debug("cnotebook: dropping C3D screenshot %d, its event loop is closed", seq)
                 continue
             if reason is None:
                 future.set_result(png)

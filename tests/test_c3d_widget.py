@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gc
 import json
 import logging
 
@@ -113,28 +114,89 @@ def test_widget_never_writes_into_core_static():
 # ---------------------------------------------------------------------------
 
 
+# name -> (trait type, element type or None, default, echo_update metadata or None)
+_D1_TRAITS = {
+    "payload": (traitlets.Unicode, None, "{}", None),
+    "width": (traitlets.Int, None, 800, None),
+    "height": (traitlets.Int, None, 500, None),
+    "status": (traitlets.Unicode, None, "loading", False),
+    "status_message": (traitlets.Unicode, None, "", False),
+    "commands": (traitlets.List, traitlets.Dict, [], None),
+    "command_results": (traitlets.List, traitlets.Dict, [], False),
+    "view": (traitlets.List, traitlets.Float, [], None),
+    "view_origin": (traitlets.Unicode, None, "js", None),
+    "picked": (traitlets.Dict, None, {}, False),
+    "screenshot_request": (traitlets.Int, None, 0, None),
+    "screenshot": (traitlets.Dict, None, {}, False),
+}
+
+
 def test_traits_match_the_d1_contract():
+    """Every D1 trait: type, element type, default, sync tag and echo policy."""
     traits = C3DWidget.class_traits()
-    expected = {
-        "payload": traitlets.Unicode,
-        "width": traitlets.Int,
-        "height": traitlets.Int,
-        "status": traitlets.Unicode,
-        "status_message": traitlets.Unicode,
-        "commands": traitlets.List,
-        "command_results": traitlets.List,
-        "view": traitlets.List,
-        "view_origin": traitlets.Unicode,
-        "picked": traitlets.Dict,
-        "screenshot_request": traitlets.Int,
-        "screenshot": traitlets.Dict,
-    }
-    for name, kind in expected.items():
-        assert isinstance(traits[name], kind), name
-        assert traits[name].metadata.get("sync") is True, name
     widget = C3DWidget()
-    assert widget.status == "loading" and widget.view_origin == "js"
-    assert (widget.width, widget.height) == (800, 500)
+    for name, (kind, element, default, echo) in _D1_TRAITS.items():
+        trait = traits[name]
+        assert isinstance(trait, kind), name
+        assert trait.metadata.get("sync") is True, name
+        assert trait.metadata.get("echo_update") is echo, name
+        if element is not None:
+            assert isinstance(trait._trait, element), name
+        assert getattr(widget, name) == default, name
+    # Only the traits the browser writes suppress the echo; echoing those would send a
+    # multi-megabyte screenshot straight back to the browser that produced it.
+    suppressed = {n for n, t in traits.items() if t.metadata.get("echo_update") is False}
+    assert suppressed == {"command_results", "picked", "screenshot", "status", "status_message"}
+
+
+def test_browser_written_traits_are_not_echoed_back(monkeypatch):
+    """The echo would return the screenshot to the very frame that produced it."""
+    from ipywidgets.widgets.widget import JUPYTER_WIDGETS_ECHO
+
+    if not JUPYTER_WIDGETS_ECHO:
+        pytest.skip("ipywidgets echo is disabled in this environment")
+    widget = C3DWidget(payload="{}")
+    sent = []
+    monkeypatch.setattr(widget, "_send", lambda msg, buffers=None: sent.append(msg))
+    widget.set_state(
+        {
+            "screenshot": {"seq": 1, "png_base64": base64.b64encode(b"png").decode()},
+            "picked": {"seq": 1, "atom": {"serial": 1}, "modifiers": {}},
+            "status": "ready",
+            "view": [1.0, 2.0],
+        }
+    )
+    echoed = [msg["state"] for msg in sent if msg.get("method") == "echo_update"]
+    # Only the bidirectional view trait is echoed; the browser-written ones are not.
+    assert [set(state) for state in echoed] == [{"view"}]
+
+
+def test_set_state_delivers_a_browser_message_batch():
+    """ipywidgets' real comm entry point drives every browser-to-kernel observer."""
+    widget = C3DWidget(payload="{}")
+
+    async def scenario():
+        handle = widget.submit("zoom")
+        picks = []
+        widget.on_pick(picks.append)
+        future = widget.request_screenshot()
+        widget.set_state(
+            {
+                "command_results": [{"id": handle.id, "ok": True, "output": ["Zoomed"]}],
+                "picked": {"seq": 4, "atom": {"serial": 9}, "modifiers": {"shift": True}},
+                "screenshot": {
+                    "seq": widget.screenshot_request,
+                    "png_base64": base64.b64encode(b"png").decode(),
+                },
+            }
+        )
+        assert handle.result == CommandResult(True, ["Zoomed"])
+        assert widget.commands == []
+        assert [pick.seq for pick in picks] == [4]
+        assert widget.last_pick is not None and widget.last_pick.modifiers == {"shift": True}
+        assert await asyncio.wait_for(future, 1) == b"png"
+
+    asyncio.run(scenario())
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +404,64 @@ def test_screenshot_failure_rejects_pending_futures_once(message):
         widget.screenshot = {**message, "seq": 3}
 
     asyncio.run(scenario())
+
+
+def test_screenshot_future_is_registered_before_the_request_is_published():
+    """The registry already holds the future when the front end sees the new sequence."""
+    widget = C3DWidget(payload="{}")
+    seen = []
+    widget.observe(
+        lambda change: seen.append((change["new"], dict(widget._screenshot_futures))),
+        names=["screenshot_request"],
+    )
+
+    async def scenario():
+        future = widget.request_screenshot()
+        ((seq, registry),) = seen
+        assert seq == 1 and list(registry) == [1] and registry[1] is future
+        future.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_screenshot_answer_after_its_loop_closed_is_dropped():
+    """A request that outlived its event loop must not raise out of the observer."""
+    widget = C3DWidget(payload="{}")
+    holder = []
+
+    async def request():
+        holder.append(widget.request_screenshot())
+
+    # The notebook cell ends with the request outstanding, so asyncio.run closes the
+    # loop the future belongs to; settling it later would raise "Event loop is closed".
+    asyncio.run(request())
+    assert list(widget._screenshot_futures) == [1] and holder[0].get_loop().is_closed()
+
+    async def answer():
+        widget.screenshot = {"seq": 1, "png_base64": base64.b64encode(b"late").decode()}
+
+    asyncio.run(answer())
+    assert widget._screenshot_futures == {}
+    assert not holder[0].done()
+
+
+def test_dropped_rejected_screenshot_future_is_not_logged_as_unretrieved(caplog):
+    """A fire-and-forget request that fails must not spam the kernel log at collection."""
+    widget = C3DWidget(payload="{}")
+    holder = []
+
+    async def scenario():
+        holder.append(widget.request_screenshot())
+        widget.screenshot = {"seq": 1, "error": "no canvas"}
+        await asyncio.sleep(0)  # let the loop run the future's done callbacks
+
+    with caplog.at_level(logging.ERROR, logger="asyncio"):
+        asyncio.run(scenario())
+        # asyncio keeps a rejected future flagged for logging until its exception is read.
+        assert holder[0]._log_traceback is False
+        holder.clear()
+        gc.collect()
+    assert "never retrieved" not in caplog.text
 
 
 def test_request_screenshot_requires_a_running_loop():
