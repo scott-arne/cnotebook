@@ -989,15 +989,15 @@ class TestPolarsCreateDispFormatter:
         assert len(callback_called) == 1
         assert isinstance(result, str)
 
-    def test_invalid_display_returns_str(self):
-        """create_disp_formatter with non-display input should return str()."""
+    def test_invalid_display_returns_escaped_str(self):
+        """create_disp_formatter with non-display input should return its escaped str()."""
         from cnotebook.context import CNotebookContext
         from cnotebook.polars_ext import create_disp_formatter
 
         ctx = CNotebookContext()
         formatter = create_disp_formatter(ctx=ctx)
-        result = formatter("not a display")
-        assert result == "not a display"
+        assert formatter("not a display") == "not a display"
+        assert formatter("<script>a&b</script>") == "&lt;script&gt;a&amp;b&lt;/script&gt;"
 
 
 class TestPolarsCreateDuFormatter:
@@ -1253,7 +1253,11 @@ def test_configured_max_rows_handles_unset():
     """configured_max_rows reads the polars option and reports None when it is unset."""
     with pl.Config(tbl_rows=7):
         assert pe.configured_max_rows() == 7
-    assert pe.configured_max_rows() in (None, 10) or isinstance(pe.configured_max_rows(), int)
+    with pl.Config(restore_defaults=True):
+        assert pe.configured_max_rows() is None
+        # An unset option falls back to the spec B1 default of 10: five head rows,
+        # the ellipsis row and five tail rows.
+        assert pe.render_polars_dataframe(pl.DataFrame({"a": list(range(11))})).count("<td>") == 11
 
 
 def test_render_polars_resolves_context_by_token():
@@ -1266,6 +1270,7 @@ def test_render_polars_resolves_context_by_token():
     html = pe.render_polars_dataframe(_pframe(1, token=token))
     assert "<svg" in html and "min-width: 111px" in html
     assert "molecule" in html  # dtype header row
+    assert token not in html  # the registry token is never printed
 
 
 def test_render_polars_escapes_and_honours_formatters():
@@ -1291,10 +1296,38 @@ def test_render_polars_null_ordinary_cells():
     assert "<td>null</td>" in html and "<td>x</td>" in html
 
 
+def test_render_polars_warns_when_a_formatter_targets_a_depiction_column():
+    """A caller formatter aimed at a depiction column is reported and never reaches the document."""
+    df = _pframe(1)
+    with pytest.warns(CNotebookWarning, match="Overwriting the formatter"):
+        html = pe.render_polars_dataframe(df, formatters={"mol": lambda v: "LEAKED"})
+    assert "LEAKED" not in html
+
+
+def test_render_polars_warns_when_col_space_is_ignored():
+    """A non-empty col_space is accepted for compatibility but reported as ignored."""
+    df = pl.DataFrame({"a": [1]})
+    with pytest.warns(CNotebookWarning, match="col_space"):
+        html = pe.render_polars_dataframe(df, col_space={"a": 200})
+    assert "min-width: 200px" not in html
+
+
 def test_registry_is_bounded_and_clearable():
     """The token registry is a bounded LRU that clear_column_contexts empties."""
     pe.clear_column_contexts()
-    for _ in range(pe._MAX_STATES + 5):
+    assert pe.context_for_token(None) is None
+    oldest = pe.new_token()
+    pe.store_state(oldest, pe.ColumnState(create_local_context()))
+    for _ in range(pe._MAX_STATES - 1):
+        pe.store_state(pe.new_token(), pe.ColumnState(create_local_context()))
+    # Reading the oldest token makes it the most recent, so the next insert evicts
+    # the untouched entry behind it instead.
+    assert pe.state_for_token(oldest) is not None
+    pe.store_state(pe.new_token(), pe.ColumnState(create_local_context()))
+    assert len(pe._STATES) == pe._MAX_STATES
+    assert pe.context_for_token(oldest) is not None
+
+    for _ in range(5):
         pe.store_state(pe.new_token(), pe.ColumnState(create_local_context()))
     assert len(pe._STATES) == pe._MAX_STATES
     pe.clear_column_contexts()

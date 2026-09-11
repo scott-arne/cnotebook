@@ -134,13 +134,27 @@ def classify_dtype(dtype: Any) -> ColumnKind:
     return ColumnKind.OTHER
 
 
+def _dtype_name(dtype: Any) -> str:
+    """
+    Name a Polars dtype the way the Polars table writer does.
+
+    :param dtype: Polars dtype of a column.
+    :returns: ``ext[<name>]`` for the OEPolars extension dtypes, whose ``str()`` would
+        otherwise print the internal registry token, and ``str(dtype)`` for the rest.
+    """
+    if isinstance(dtype, (oeplr.MoleculeType, oeplr.DisplayType, oeplr.DesignUnitType)):
+        return f"ext[{dtype.ext_name()}]"
+    return str(dtype)
+
+
 def configured_max_rows() -> int | None:
     """
     Report Polars' configured table row limit.
 
     :returns: ``POLARS_FMT_MAX_ROWS`` as an integer, or ``None`` when it is unset.
     """
-    # Polars reports the key with a value of None when the option was never set.
+    # `if_set=True` omits the key when the option was never set; some versions report it
+    # with a value of None instead, and `.get()` covers both.
     value = pl.Config.state(if_set=True).get("POLARS_FMT_MAX_ROWS")
     return int(value) if value is not None else None
 
@@ -167,7 +181,8 @@ class PolarsFrameAdapter:
         :param ctx: Context overriding every column context, or ``None`` to resolve
             each column's context from its dtype token.
         :param formatters: Optional caller formatters for ordinary columns, keyed by
-            column label; their output is escaped by the writer.
+            column label; their output is escaped by the writer. A formatter aimed at a
+            depiction column is reported and ignored.
         """
         self.df = df
         self._ctx = ctx
@@ -175,6 +190,11 @@ class PolarsFrameAdapter:
         self._labels: list[Hashable] = list(df.columns)
         self._series = [df.to_series(pos) for pos in range(df.width)]
         self._kinds = [classify_dtype(s.dtype) for s in self._series]
+        # Depiction cells go through cell_html, so a caller formatter on such a column is
+        # silently unused; say so rather than let the caller believe it took effect.
+        for label, kind in zip(self._labels, self._kinds, strict=True):
+            if kind is not ColumnKind.OTHER and label in self._formatters:
+                warn(f"Overwriting the formatter for column {label!r} with the depiction formatter")
 
     def columns(self) -> list[Hashable]:
         """
@@ -270,7 +290,7 @@ class PolarsFrameAdapter:
 
         :returns: A single row of dtype names, escaped by the writer.
         """
-        return [[str(dtype) for dtype in self.df.dtypes]]
+        return [[_dtype_name(dtype) for dtype in self.df.dtypes]]
 
 
 def create_mol_formatter(*, ctx: CNotebookContext) -> typing.Callable[[Any], str]:
@@ -292,7 +312,8 @@ def create_disp_formatter(
     """
     Closure that renders an ``OE2DMolDisplay`` cell to HTML.
 
-    :param callbacks: Callbacks to apply to the depiction copy instead of the context's own.
+    :param callbacks: Callbacks to apply to the depiction copy instead of the context's own,
+        or ``None`` to keep the context's own callbacks.
     :param ctx: CNotebook rendering context.
     :returns: Function that renders display objects to HTML.
     """
@@ -338,12 +359,15 @@ def render_polars_dataframe(
 
     :param df: Frame to render (never modified).
     :param formatters: Optional formatters for ordinary columns (output is escaped).
-    :param col_space: Accepted for compatibility; molecule columns take their width from their context.
+    :param col_space: Accepted for compatibility and ignored; depiction columns take their width
+        from their column context and ordinary columns are not given a minimum width.
     :param ctx: Overrides every column context when given.
     :param max_rows: ``None`` for Polars' configured limit, ``<= 0`` for all rows, else the row budget.
     :returns: HTML table with a dtype header row.
     """
-    del col_space
+    if col_space:
+        warn("render_polars_dataframe sizes depiction columns from their column context; "
+             "the col_space argument is ignored")
     return render_table(PolarsFrameAdapter(df, ctx=ctx, formatters=formatters), ctx=ctx, max_rows=max_rows)
 
 
