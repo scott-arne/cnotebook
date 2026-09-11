@@ -97,10 +97,8 @@ class TestPolarsDataFrameHighlight:
     """Test DataFrame highlight method."""
 
     def test_highlight_adds_callback(self):
-        """highlight() should add callback to DataFrame column context."""
+        """highlight() should add callback to the returned frame's column context."""
         from openeye import oechem
-
-        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -108,9 +106,9 @@ class TestPolarsDataFrameHighlight:
         df = pl.DataFrame({"mol": [mol]})
         df = df.chem.as_molecule("mol")
 
-        df.chem.highlight("mol", "c1ccccc1")
+        df = df.chem.highlight("mol", "c1ccccc1")
 
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None
         assert len(ctx.callbacks) > 0
 
@@ -119,8 +117,6 @@ class TestPolarsDataFrameHighlight:
         import warnings
 
         from openeye import oechem
-
-        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
@@ -131,9 +127,9 @@ class TestPolarsDataFrameHighlight:
         # Should not raise (may warn if default style incompatible with single color)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", CNotebookWarning)
-            df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
+            df = df.chem.highlight("mol", "c1ccccc1", color=oechem.OEColor(oechem.OERed))
 
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None
 
     def test_highlight_requires_molecule_type(self):
@@ -161,8 +157,6 @@ class TestPolarsDataFrameHighlight:
         """highlight() should accept multiple patterns."""
         from openeye import oechem
 
-        from cnotebook.polars_ext import get_dataframe_column_context
-
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
 
@@ -170,9 +164,9 @@ class TestPolarsDataFrameHighlight:
         df = df.chem.as_molecule("mol")
 
         # Should accept list of patterns
-        df.chem.highlight("mol", ["c1ccccc1", "[OH]"])
+        df = df.chem.highlight("mol", ["c1ccccc1", "[OH]"])
 
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None
         # Should have 2 callbacks (one for each pattern)
         assert len(ctx.callbacks) == 2
@@ -181,8 +175,6 @@ class TestPolarsDataFrameHighlight:
         """clear_formatting_rules() should clear DataFrame-level callbacks."""
         from openeye import oechem
 
-        from cnotebook.polars_ext import get_dataframe_column_context
-
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
 
@@ -190,26 +182,24 @@ class TestPolarsDataFrameHighlight:
         df = df.chem.as_molecule("mol")
 
         # Add highlight
-        df.chem.highlight("mol", "c1ccccc1")
+        df = df.chem.highlight("mol", "c1ccccc1")
 
         # Verify callback was added
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None
         assert len(ctx.callbacks) == 1
 
         # Clear formatting rules
-        df.chem.clear_formatting_rules("mol")
+        df = df.chem.clear_formatting_rules("mol")
 
         # Verify callback was cleared
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None  # Context should still exist
         assert len(ctx.callbacks) == 0  # But callbacks should be cleared
 
     def test_clear_formatting_rules_all_columns(self):
         """clear_formatting_rules() with no args should clear all columns."""
         from openeye import oechem
-
-        from cnotebook.polars_ext import get_dataframe_column_context
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -220,15 +210,15 @@ class TestPolarsDataFrameHighlight:
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
 
         # Add highlights to both columns
-        df.chem.highlight("mol1", "c1ccccc1")
-        df.chem.highlight("mol2", "CCO")
+        df = df.chem.highlight("mol1", "c1ccccc1")
+        df = df.chem.highlight("mol2", "CCO")
 
         # Clear all formatting rules
-        df.chem.clear_formatting_rules()
+        df = df.chem.clear_formatting_rules()
 
         # Verify both were cleared
-        ctx1 = get_dataframe_column_context(df, "mol1")
-        ctx2 = get_dataframe_column_context(df, "mol2")
+        ctx1 = pe.context_for_token(df.schema["mol1"].token)
+        ctx2 = pe.context_for_token(df.schema["mol2"].token)
         assert ctx1 is None or len(ctx1.callbacks) == 0
         assert ctx2 is None or len(ctx2.callbacks) == 0
 
@@ -309,12 +299,15 @@ class TestPolarsSeriesMethods:
         series = df["mol"]
 
         aligner = MagicMock(return_value=True)
-        with patch('cnotebook.align.create_aligner', return_value=aligner) as mock_create_aligner:
-            series.chem.align_depictions("first")
+        # columnops holds its own reference to create_aligner and passes the reference
+        # molecule positionally.
+        with patch('cnotebook.core.columnops.create_aligner', return_value=aligner) as mock_create_aligner:
+            aligned = series.chem.align_depictions("first")
 
         mock_create_aligner.assert_called_once()
-        assert isinstance(mock_create_aligner.call_args.kwargs["ref"], oechem.OEMolBase)
+        assert isinstance(mock_create_aligner.call_args.args[0], oechem.OEMolBase)
         aligner.assert_called_once()
+        assert isinstance(aligned.dtype, oeplr.MoleculeType)
 
     def test_recalculate_depiction_coordinates(self):
         """recalculate_depiction_coordinates() should prepare molecule depictions."""
@@ -358,11 +351,7 @@ class TestPolarsDataFrameMethods:
 
     def test_dataframe_reset_depictions_specific_columns(self):
         """DataFrame reset_depictions() should accept molecule_columns parameter."""
-        from unittest.mock import patch
-
         from openeye import oechem
-
-        import cnotebook.polars_ext
 
         mol1 = oechem.OEMol()
         oechem.OESmilesToMol(mol1, "c1ccccc1")
@@ -371,12 +360,18 @@ class TestPolarsDataFrameMethods:
 
         df = pl.DataFrame({"mol1": [mol1], "mol2": [mol2]})
         df = df.chem.as_molecule("mol1").chem.as_molecule("mol2")
+        df = df.chem.set_render_options(molecule_columns="mol1", width=111)
+        df = df.chem.set_render_options(molecule_columns="mol2", width=222)
 
-        with patch.object(cnotebook.polars_ext.SeriesChemNamespace, "reset_depictions") as mock_reset:
-            df.chem.reset_depictions(molecule_columns=["mol1"])
-            df.chem.reset_depictions(molecule_columns="mol2")
+        # A list of names and a bare name both reset only the columns they name
+        reset_first = df.chem.reset_depictions(molecule_columns=["mol1"])
+        assert reset_first.schema["mol1"].token is None
+        assert pe.context_for_token(reset_first.schema["mol2"].token).width == 222
 
-        assert mock_reset.call_count == 2
+        reset_second = reset_first.chem.reset_depictions(molecule_columns="mol2")
+        assert reset_second.schema["mol2"].token is None
+        # The frame the reset was taken from keeps its settings
+        assert pe.context_for_token(df.schema["mol1"].token).width == 111
 
     def test_highlight_using_column(self):
         """highlight_using_column() should create display column."""
@@ -415,7 +410,7 @@ class TestPolarsDataFrameMethods:
         assert isinstance(result.schema["my_highlights"], oeplr.DisplayType)
 
     def test_highlight_using_column_inplace(self):
-        """highlight_using_column() with inplace=True should modify original."""
+        """highlight_using_column() with inplace=True should report the ignored argument."""
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -427,11 +422,13 @@ class TestPolarsDataFrameMethods:
         })
         df = df.chem.as_molecule("mol")
 
-        # Note: In Polars, inplace modification works differently than pandas
-        # We return the modified DataFrame for assignment
-        result = df.chem.highlight_using_column("mol", "pattern", inplace=True)
+        # A polars frame cannot be modified in place, so the new frame is returned and
+        # the ignored argument is reported
+        with pytest.warns(CNotebookWarning, match="immutable"):
+            result = df.chem.highlight_using_column("mol", "pattern", inplace=True)
 
         assert "highlighted_substructures" in result.columns
+        assert "highlighted_substructures" not in df.columns
 
     def test_highlight_using_column_missing_molecule_column(self):
         """highlight_using_column() should raise KeyError for missing molecule column."""
@@ -609,15 +606,13 @@ class TestPolarsDataFrameHighlightExtended:
         """highlight() with a SMARTS string should store a callback."""
         from openeye import oechem
 
-        from cnotebook.polars_ext import get_dataframe_column_context
-
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         df = pl.DataFrame({"mol": [mol]}).chem.as_molecule("mol")
 
-        df.chem.highlight("mol", "c1ccccc1")
+        df = df.chem.highlight("mol", "c1ccccc1")
 
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None
         assert len(ctx.callbacks) >= 1
 
@@ -625,15 +620,13 @@ class TestPolarsDataFrameHighlightExtended:
         """highlight() with an iterable of SMARTS should add one callback per pattern."""
         from openeye import oechem
 
-        from cnotebook.polars_ext import get_dataframe_column_context
-
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccc(O)cc1")
         df = pl.DataFrame({"mol": [mol]}).chem.as_molecule("mol")
 
-        df.chem.highlight("mol", ["c1ccccc1", "[OH]"])
+        df = df.chem.highlight("mol", ["c1ccccc1", "[OH]"])
 
-        ctx = get_dataframe_column_context(df, "mol")
+        ctx = pe.context_for_token(df.schema["mol"].token)
         assert ctx is not None
         assert len(ctx.callbacks) == 2
 
@@ -657,44 +650,40 @@ class TestPolarsDataFrameHighlightExtended:
 
 
 class TestPolarsSeriesResetClear:
-    """Test Series-level reset_depictions and clear_formatting_rules."""
+    """Test reset_depictions and clear_formatting_rules, which are DataFrame accessors."""
 
     def test_reset_depictions_clears_series_context(self):
-        """reset_depictions() should remove cnotebook metadata from the series."""
+        """reset_depictions() should leave the returned column with no stored state."""
         from openeye import oechem
-
-        from cnotebook.context import CNotebookContext
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         df = pl.DataFrame({"mol": [mol]}).chem.as_molecule("mol")
+        df = df.chem.set_render_options(width=321)
+        assert pe.context_for_token(df.schema["mol"].token).width == 321
 
-        series = df.get_column("mol")
-        series.chem.metadata["cnotebook"] = CNotebookContext()
-        assert "cnotebook" in series.chem.metadata
+        reset = df.chem.reset_depictions("mol")
 
-        series.chem.reset_depictions()
-        assert "cnotebook" not in series.chem.metadata
+        assert reset.schema["mol"].token is None
+        assert pe.context_for_token(reset.schema["mol"].token) is None
 
     def test_clear_formatting_rules_clears_series_callbacks(self):
-        """clear_formatting_rules() should preserve context and remove callbacks."""
+        """clear_formatting_rules() should preserve the other options and remove callbacks."""
         from openeye import oechem
-
-        from cnotebook.context import CNotebookContext
 
         mol = oechem.OEMol()
         oechem.OESmilesToMol(mol, "c1ccccc1")
         df = pl.DataFrame({"mol": [mol]}).chem.as_molecule("mol")
+        df = df.chem.set_render_options(width=321).chem.highlight("mol", "c1ccccc1")
+        assert len(pe.context_for_token(df.schema["mol"].token).callbacks) == 1
 
-        series = df.get_column("mol")
-        ctx = CNotebookContext(callbacks=[lambda disp: None])
-        series.chem.metadata["cnotebook"] = ctx
-        ctx = series.chem.metadata["cnotebook"]
-        assert len(ctx.callbacks) == 1
+        cleared = df.chem.clear_formatting_rules("mol")
 
-        series.chem.clear_formatting_rules()
-        assert series.chem.metadata["cnotebook"] is ctx
+        ctx = pe.context_for_token(cleared.schema["mol"].token)
         assert len(ctx.callbacks) == 0
+        assert ctx.width == 321
+        # The frame the clear was taken from keeps its callback
+        assert len(pe.context_for_token(df.schema["mol"].token).callbacks) == 1
 
 
 class TestPolarsDataFrameRecalculateDepictions:
@@ -776,7 +765,9 @@ class TestPolarsHighlightUsingColumnExtended:
     """Extended tests for DataFrame highlight_using_column."""
 
     def test_highlight_using_column_overlay_single_color_fallback(self):
-        """highlight_using_column() with OEColor + overlay_default should warn and fallback."""
+        """highlight_using_column() with OEColor + overlay_default should fall back quietly."""
+        import warnings
+
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -785,12 +776,16 @@ class TestPolarsHighlightUsingColumnExtended:
         df = pl.DataFrame({"mol": [mol], "pattern": ["c1ccccc1"]})
         df = df.chem.as_molecule("mol")
 
-        with pytest.warns(CNotebookWarning, match="Overlay coloring"):
+        # A single colour cannot drive the overlay highlighter; columnops falls back to
+        # plain highlighting for that row rather than reporting it
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", CNotebookWarning)
             result = df.chem.highlight_using_column(
                 "mol", "pattern", color=oechem.OERed, style="overlay_default"
             )
 
         assert "highlighted_substructures" in result.columns
+        assert isinstance(result.schema["highlighted_substructures"], oeplr.DisplayType)
 
     def test_highlight_using_column_traditional(self):
         """highlight_using_column() with an integer style should use traditional highlighting."""
@@ -844,7 +839,7 @@ class TestPolarsFingerprintSimilarityExtended:
     """Extended tests for DataFrame fingerprint_similarity."""
 
     def test_fingerprint_similarity_invalid_ref(self):
-        """fingerprint_similarity() with an invalid reference molecule should warn and return df unchanged."""
+        """fingerprint_similarity() with an invalid reference molecule should warn and add empty columns."""
         from openeye import oechem
 
         mol = oechem.OEMol()
@@ -859,7 +854,11 @@ class TestPolarsFingerprintSimilarityExtended:
         with pytest.warns(CNotebookWarning, match="not valid"):
             result = df.chem.fingerprint_similarity("mol", bad_ref)
 
-        assert list(result.columns) == list(df.columns)
+        # The columns are still added, with nothing in them, so the frame keeps its shape
+        added = ["fingerprint_tanimoto", "reference_similarity", "target_similarity"]
+        assert list(result.columns) == [*df.columns, *added]
+        for name in added:
+            assert result.get_column(name).to_list() == [None]
 
     def test_fingerprint_similarity_with_null_rows(self):
         """fingerprint_similarity() with None molecules should produce None entries in display columns."""
@@ -1097,7 +1096,7 @@ class TestPolarsAlignDepictionsEdge:
     """Test series align_depictions edge cases."""
 
     def test_align_exception_handled(self):
-        """align_depictions should catch exceptions gracefully."""
+        """align_depictions should report an aligner it cannot build to the caller."""
         from unittest.mock import patch
 
         from openeye import oechem, oedepict
@@ -1112,8 +1111,10 @@ class TestPolarsAlignDepictionsEdge:
         df = pl.DataFrame({"mol": [mol1, mol2]}).chem.as_molecule("mol")
         series = df.get_column("mol")
 
-        # create_aligner is imported inside the function from cnotebook.align
-        with patch('cnotebook.align.create_aligner', side_effect=RuntimeError("boom")) as mock_create_aligner:
+        # columnops does not swallow a failing aligner: silently unaligned depictions
+        # would look like a successful alignment
+        with (patch('cnotebook.core.columnops.create_aligner', side_effect=RuntimeError("boom")) as mock_create_aligner,
+              pytest.raises(RuntimeError, match="boom")):
             series.chem.align_depictions(ref=mol1)
 
         mock_create_aligner.assert_called_once()
@@ -1211,10 +1212,20 @@ def test_highlight_using_column_traditional_produces_different_svg():
 # Token registry and table-plan rendering
 # ----------------------------------------------------------------------------------------
 
+import gc
+import sys
+import warnings
+
 from openeye import oechem
 
 import cnotebook.polars_ext as pe
-from cnotebook.core.context import CNotebookContext, create_local_context
+from cnotebook.core import columnops
+from cnotebook.core.columnops import AlignmentReport
+from cnotebook.core.context import (
+    CNotebookContext,
+    cnotebook_context,
+    create_local_context,
+)
 
 
 def _mols(n, smiles="c1ccccc1O"):
@@ -1340,3 +1351,267 @@ def test_registry_is_bounded_and_clearable():
     assert len(pe._STATES) == pe._MAX_STATES
     pe.clear_column_contexts()
     assert len(pe._STATES) == 0 and pe.context_for_token("missing") is None
+
+
+# ----------------------------------------------------------------------------------------
+# Copy-on-write accessors returning frames
+# ----------------------------------------------------------------------------------------
+
+
+def test_context_clone_preserves_deferral():
+    local = create_local_context()
+    local.width = 50
+    clone = local.clone()
+    assert clone.scope == "local" and clone.width == 50 and clone._image_format.is_deferred
+    g = cnotebook_context.get()
+    saved = g.image_format
+    try:
+        g.image_format = "svg"
+        assert clone.image_format == "svg"
+    finally:
+        g.image_format = saved
+
+
+def test_highlight_returns_new_frame_and_survives_filter():
+    df = _pframe(3, x=[1, 2, 3])
+    out = df.chem.highlight("mol", "c1ccccc1")
+    assert out is not df and df.schema["mol"].token is None
+    token = out.schema["mol"].token
+    assert token and len(pe.context_for_token(token).callbacks) == 1
+    filtered = out.filter(pl.col("x") > 1)
+    assert filtered.schema["mol"].token == token
+    assert pe.render_polars_dataframe(filtered).count("<svg") + pe.render_polars_dataframe(filtered).count("<img") == 2
+
+
+def test_context_changes_do_not_leak_to_sibling_frames():
+    base = _pframe(2).chem.set_render_options("mol", image_format="svg")
+    sibling = base.filter(pl.col("mol").is_not_null())
+    changed = base.chem.set_render_options("mol", width=321)
+    assert changed.schema["mol"].token != base.schema["mol"].token
+    # The sibling never saw the width, so it still follows the global context for it
+    assert pe.context_for_token(sibling.schema["mol"].token)._width.is_deferred
+    assert pe.context_for_token(changed.schema["mol"].token).width == 321
+
+
+def test_reset_and_clear_return_frames():
+    out = _pframe(1).chem.highlight("mol", "[OH]")
+    cleared = out.chem.clear_formatting_rules("mol")
+    assert pe.context_for_token(cleared.schema["mol"].token).callbacks == ()
+    reset = cleared.chem.reset_depictions("mol")
+    assert reset.schema["mol"].token is None
+
+
+def test_align_depictions_accepts_smarts_ref_without_mutation():
+    df = _pframe(2)
+    originals = df.get_column("mol").to_list()
+    out = df.chem.align_depictions("mol", "c1ccccc1")
+    report = out.chem.alignment_report("mol")
+    assert isinstance(report, AlignmentReport) and report.aligned == 2
+    assert all(m.GetDimension() == 0 for m in originals)
+    assert all(m.GetDimension() == 2 for m in out.get_column("mol").to_list())
+    series = df.get_column("mol").chem.align_depictions(oechem.OESubSearch("c1ccccc1"))
+    assert isinstance(series, pl.Series) and series.dtype.token is not None
+
+
+def test_reset_depictions_keeps_sibling_state():
+    base = _pframe(2).chem.highlight("mol", "[OH]")
+    sibling = base.filter(pl.col("mol").is_not_null())
+    reset = base.chem.reset_depictions("mol")
+    assert reset.schema["mol"].token is None
+    assert len(pe.context_for_token(sibling.schema["mol"].token).callbacks) == 1
+
+
+def test_generated_display_columns_carry_copied_context():
+    base = _pframe(1, x=["[OH]"]).chem.set_render_options("mol", image_format="svg", width=133)
+    out = base.chem.highlight_using_column("mol", "x")
+    token = out.schema["highlighted_substructures"].token
+    assert token and token != base.schema["mol"].token
+    assert pe.context_for_token(token).width == 133
+    sim = base.chem.fingerprint_similarity("mol")
+    assert pe.context_for_token(sim.schema["target_similarity"].token).image_format == "svg"
+
+
+def test_copy_molecules_mints_new_token():
+    base = _pframe(1).chem.highlight("mol", "[OH]")
+    out = base.chem.copy_molecules("mol", "copy")
+    assert out.schema["copy"].token not in (None, base.schema["mol"].token)
+    assert out.get_column("copy")[0] is not out.get_column("mol")[0]
+
+
+def test_highlight_using_column_and_color_column_keep_owners():
+    df = pl.DataFrame([
+        pl.Series("mol", _mols(2), dtype=oeplr.MoleculeType()),
+        pl.Series("pat", ["c1ccccc1", None]),
+        pl.Series("col", ["#00FF00", None]),
+    ])
+    out = df.chem.highlight_using_column("mol", "pat", color_column="col").drop("mol")
+    del df
+    gc.collect()
+    html = pe.render_polars_dataframe(out)
+    assert html.count("<img") + html.count("<svg") == 2
+
+
+def test_fingerprint_similarity_displays_keep_molecules():
+    df = pl.DataFrame([pl.Series("mol", [*_mols(1), None, *_mols(1, "c1ccccc1OC")], dtype=oeplr.MoleculeType())])
+    out = df.chem.fingerprint_similarity("mol").drop("mol")
+    del df
+    gc.collect()
+    assert out["fingerprint_tanimoto"][1] is None and out["fingerprint_tanimoto"][0] == pytest.approx(1.0)
+    html = pe.render_polars_dataframe(out)
+    assert html.count("<img") + html.count("<svg") == 4
+
+
+def test_polars_attach_is_idempotent_and_guarded(monkeypatch):
+    pe._attach()
+    pe._attach()
+    monkeypatch.setattr(pe, "_MIN_OEPOLARS", (99, 0, 0))
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    with pytest.warns(CNotebookWarning, match="polars integration disabled"):
+        pe._attach()
+    monkeypatch.setattr(pe, "_MIN_OEPOLARS", (0, 4, 0))
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    pe._attach()
+    assert not hasattr(pe, "_dataframe_column_contexts")
+
+
+@pytest.mark.parametrize(("version", "attaches"), [
+    ("0.4.0", True),
+    ("0.3.9", False),
+    ("0.4.0.dev1", False),
+    ("0.4.0+corp", True),
+    ("not-a-version", False),
+])
+def test_polars_attach_version_guard(monkeypatch, version, attaches):
+    """The floor is compared on the release segment; a pre-release of the floor is below it."""
+    monkeypatch.setattr(oeplr, "__version__", version)
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+    if attaches:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", CNotebookWarning)
+            pe._attach()
+        assert pe._ATTACHED
+    else:
+        with pytest.warns(CNotebookWarning, match="polars integration disabled"):
+            pe._attach()
+        assert not pe._ATTACHED
+
+
+@pytest.mark.parametrize(("version", "expected"), [
+    ("0.4.0", ((0, 4, 0), False)),
+    ("0.3.9", ((0, 3, 9), False)),
+    ("0.4.0.dev1", ((0, 4, 0), True)),
+    ("0.4.0+corp", ((0, 4, 0), False)),
+    ("1", ((1, 0, 0), False)),
+])
+def test_parse_release_reads_the_same_version_without_packaging(monkeypatch, version, expected):
+    """packaging is not a declared dependency, so the fallback parser must agree with it."""
+    assert pe._parse_release(version) == expected
+
+    # A None entry in sys.modules makes the import inside _parse_release fail
+    monkeypatch.setitem(sys.modules, "packaging.version", None)
+    assert pe._parse_release(version) == expected
+
+
+def test_parse_release_without_packaging_rejects_an_unreadable_version(monkeypatch):
+    """The fallback parser reports a version it cannot read, like packaging does."""
+    monkeypatch.setitem(sys.modules, "packaging.version", None)
+    with pytest.raises(ValueError, match="release number"):
+        pe._parse_release("not-a-version")
+
+
+def _spy_on_highlight_column(monkeypatch) -> dict:
+    """Record the arguments the polars accessor hands to :func:`columnops.build_highlight_column`."""
+    recorded: dict = {}
+    real = columnops.build_highlight_column
+
+    def spy(mols, patterns, **kwargs):
+        recorded["patterns"] = patterns
+        recorded["colors"] = kwargs.get("colors")
+        return real(mols, patterns, **kwargs)
+
+    monkeypatch.setattr(columnops, "build_highlight_column", spy)
+    return recorded
+
+
+def test_highlight_using_column_passes_missing_entries_as_none(monkeypatch):
+    """Null pattern and colour cells reach the column operation as ``None``."""
+    recorded = _spy_on_highlight_column(monkeypatch)
+    df = pl.DataFrame([
+        pl.Series("mol", _mols(2), dtype=oeplr.MoleculeType()),
+        pl.Series("pat", ["c1ccccc1", None]),
+        pl.Series("col", [None, "#00FF00"]),
+    ])
+
+    df.chem.highlight_using_column("mol", "pat", color_column="col")
+
+    assert recorded["patterns"] == ["c1ccccc1", None]
+    assert recorded["colors"] == [None, "#00FF00"]
+
+
+def test_highlight_using_column_accepts_a_falsy_color_column_name(monkeypatch):
+    """The colour column is tested against None, so a column named "" is still used."""
+    recorded = _spy_on_highlight_column(monkeypatch)
+    # Built from a mapping: polars renames an empty Series name when it builds a frame
+    # from a list of Series, and the point of the test is the empty column name.
+    df = pl.DataFrame({"pat": ["c1ccccc1"], "": ["#00FF00"]}).with_columns(
+        pl.Series("mol", _mols(1), dtype=oeplr.MoleculeType())
+    )
+
+    df.chem.highlight_using_column("mol", "pat", color_column="")
+
+    assert recorded["colors"] == ["#00FF00"]
+
+
+def test_highlight_using_column_inplace_reports_the_ignored_argument():
+    """A polars frame cannot be modified in place, so inplace=True is reported once."""
+    df = _pframe(1, pat=["c1ccccc1"])
+    with pytest.warns(CNotebookWarning, match="immutable") as record:
+        out = df.chem.highlight_using_column("mol", "pat", inplace=True)
+    assert sum("immutable" in str(w.message) for w in record) == 1
+    assert "highlighted_substructures" in out.columns
+    assert "highlighted_substructures" not in df.columns
+
+
+def test_fingerprint_similarity_inplace_reports_the_ignored_argument():
+    """A polars frame cannot be modified in place, so inplace=True is reported once."""
+    df = _pframe(1)
+    with pytest.warns(CNotebookWarning, match="immutable") as record:
+        out = df.chem.fingerprint_similarity("mol", inplace=True)
+    assert sum("immutable" in str(w.message) for w in record) == 1
+    assert "fingerprint_tanimoto" in out.columns
+    assert "fingerprint_tanimoto" not in df.columns
+
+
+def test_inplace_false_is_silent():
+    """The default path reports nothing."""
+    df = _pframe(1, pat=["c1ccccc1"])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        df.chem.highlight_using_column("mol", "pat", inplace=False)
+        df.chem.fingerprint_similarity("mol", inplace=False)
+
+
+def test_copy_molecules_copies_conformers():
+    """The copy is a distinct molecule that keeps the source's conformer ensemble."""
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    coords = oechem.OEFloatArray(mol.NumAtoms() * 3)
+    for conformer in range(1, 3):
+        for index in range(len(coords)):
+            coords[index] = float(conformer + index)
+        mol.NewConf(coords)
+    df = pl.DataFrame([pl.Series("mol", [mol], dtype=oeplr.MoleculeType())])
+
+    out = df.chem.copy_molecules("mol", "copy")
+
+    copied = out.get_column("copy")[0]
+    assert copied is not mol
+    assert copied.NumConfs() == mol.NumConfs() == 3
+
+
+def test_alignment_report_reports_a_missing_column_as_a_value_error():
+    """alignment_report validates its column like every other molecule-column accessor."""
+    df = _pframe(1)
+    with pytest.raises(ValueError, match="nope"):
+        df.chem.alignment_report("nope")
+    assert df.chem.alignment_report("mol") is None

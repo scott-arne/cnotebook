@@ -316,6 +316,51 @@ class TestCNotebookContext:
 
         assert ctx_copy.atom_label_font_scale == pytest.approx(1.7)
 
+    def test_clone_keeps_deferred_options_deferred(self):
+        """clone must not resolve deferred options the way copy does."""
+        ctx = create_local_context()
+        ctx.width = 300
+
+        clone = ctx.clone()
+
+        assert clone is not ctx
+        assert clone.scope == "local"
+        assert clone.width == 300
+        assert clone._image_format.is_deferred
+        assert clone._callbacks.is_deferred
+        # copy resolves every option, which is what clone exists to avoid
+        assert not ctx.copy()._image_format.is_deferred
+
+    def test_clone_copies_resolved_options_and_callbacks(self):
+        """A clone carries the resolved options and its own callback list."""
+        def callback(disp):
+            pass
+
+        ctx = CNotebookContext(width=120, image_format="svg", callbacks=[callback],
+                               max_heavy_atoms=None, device_pixel_ratio=3.0)
+
+        clone = ctx.clone()
+
+        assert clone.scope == "global"
+        assert clone.width == 120
+        assert clone.image_format == "svg"
+        assert clone.max_heavy_atoms is None
+        assert clone.device_pixel_ratio == pytest.approx(3.0)
+        assert clone.callbacks == (callback,)
+
+        clone.reset_callbacks()
+        assert ctx.callbacks == (callback,)
+
+    def test_clone_follows_the_global_context_for_deferred_options(self):
+        """Options left deferred still track the global context after cloning."""
+        clone = create_local_context().clone()
+        saved = cnotebook_context.get().image_format
+        try:
+            cnotebook_context.get().image_format = "svg"
+            assert clone.image_format == "svg"
+        finally:
+            cnotebook_context.get().image_format = saved
+
     def test_reset(self):
         """Test resetting context to defaults"""
         ctx = CNotebookContext()

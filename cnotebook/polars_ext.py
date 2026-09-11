@@ -3,7 +3,6 @@ import logging
 import re
 import typing
 import uuid
-import weakref
 from collections import OrderedDict
 from collections.abc import Hashable, Iterable
 from dataclasses import dataclass
@@ -11,18 +10,15 @@ from typing import Any, Literal
 
 import oepolars as oeplr  # pyright: ignore
 import polars as pl
-from oepolars.namespaces.dataframe import DataFrameChemNamespace  # pyright: ignore
-from oepolars.namespaces.series import SeriesChemNamespace  # pyright: ignore
-from openeye import oechem, oedepict, oegrapheme, oegraphsim
+from openeye import oechem, oedepict, oegraphsim
 
-from .align import fingerprint_maker
-from .context import create_local_context, get_series_context, pass_cnotebook_context
+from .context import create_local_context, pass_cnotebook_context
+from .core import columnops
 from .core import formatters as _fmt
 from .core.columnops import AlignmentReport
 from .core.errors import warn
 from .core.table import ColumnKind, RowWindow, polars_row_window, render_table
-from .helpers import create_structure_highlighter
-from .render import CNotebookContext, oemol_to_disp
+from .render import CNotebookContext
 
 get_ipython: Any = None
 
@@ -221,19 +217,15 @@ class PolarsFrameAdapter:
         Resolve the render context of the column at *pos*.
 
         Resolution order: the context passed to the adapter, the state stored for the
-        column's dtype token, the legacy id-keyed store, then a fresh local context.
+        column's dtype token, then a fresh local context.
 
         :param pos: Column position.
         :returns: Render context for every cell of the column.
         """
         if self._ctx is not None:
             return self._ctx
-        token = getattr(self._series[pos].dtype, "token", None)
-        ctx = context_for_token(token)
-        if ctx is not None:
-            return ctx
-        legacy = get_dataframe_column_context(self.df, str(self._labels[pos]))  # removed in Task 17
-        return legacy if legacy is not None else create_local_context()
+        ctx = context_for_token(getattr(self._series[pos].dtype, "token", None))
+        return ctx if ctx is not None else create_local_context()
 
     def window(self, max_rows: int | None) -> RowWindow:
         """
@@ -376,451 +368,263 @@ def render_polars_dataframe(
 
 
 ########################################################################################################################
-# Legacy id-keyed column context store (superseded by the token registry above; removed in Task 17)
+# Column accessor methods (attached to the oepolars chem namespaces)
 ########################################################################################################################
 
-# Structure: {id(DataFrame): (weakref(DataFrame), {column_name: CNotebookContext})}
-# We store a weak reference to the DataFrame to allow cleanup
-_dataframe_column_contexts: dict[int, tuple[weakref.ref, dict[str, CNotebookContext]]] = {}
+# The accessors are registered through oepolars' public extension hooks, which only exist
+# from this release on.
+_MIN_OEPOLARS = (0, 4, 0)
+_ATTACHED = False
+
+# Leading release segment of a version string, plus whatever follows it.
+_VERSION_RE = re.compile(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$", re.ASCII)
 
 
-def _cleanup_dead_contexts() -> None:
-    """Remove entries for DataFrames that have been garbage collected."""
-    dead_ids = [df_id for df_id, (ref, _) in _dataframe_column_contexts.items() if ref() is None]
-    for df_id in dead_ids:
-        del _dataframe_column_contexts[df_id]
-
-
-def get_dataframe_column_context(df: pl.DataFrame, column: str) -> CNotebookContext | None:
+def _parse_release(version: str) -> tuple[tuple[int, ...], bool]:
     """
-    Get the CNotebookContext for a specific DataFrame column.
+    Split a version string into its release numbers and a pre-release flag.
 
-    :param df: The DataFrame.
-    :param column: The column name.
-    :returns: The CNotebookContext if one exists, otherwise None.
+    ``packaging`` is not a declared dependency of cnotebook, so a small parse of the
+    leading release segment stands in when it cannot be imported.
+
+    :param version: Version string, normally PEP 440.
+    :returns: The release padded to three parts, and whether this build precedes that
+        release (a development or pre-release build).
+    :raises ValueError: When the string does not start with a release number.
     """
-    _cleanup_dead_contexts()
-    df_id = id(df)
-    if df_id in _dataframe_column_contexts:
-        ref, col_contexts = _dataframe_column_contexts[df_id]
-        # Verify the DataFrame is still the same object
-        if ref() is df:
-            return col_contexts.get(column)
-    return None
-
-
-def set_dataframe_column_context(df: pl.DataFrame, column: str, ctx: CNotebookContext) -> None:
-    """
-    Set the CNotebookContext for a specific DataFrame column.
-
-    :param df: The DataFrame.
-    :param column: The column name.
-    :param ctx: The CNotebookContext to store.
-    """
-    _cleanup_dead_contexts()
-    df_id = id(df)
-    if df_id not in _dataframe_column_contexts:
-        _dataframe_column_contexts[df_id] = (weakref.ref(df), {})
-    _dataframe_column_contexts[df_id][1][column] = ctx
-
-
-########################################################################################################################
-# Series accessor methods (monkey-patched onto oepolars)
-########################################################################################################################
-
-
-def _series_highlight(
-        self,
-        pattern: Iterable[str] | str | oechem.OESubSearch | Iterable[oechem.OESubSearch],
-        *,
-        color: oechem.OEColor | oechem.OEColorIter | None = None,
-        style: int | Literal["overlay_default", "overlay_ball_and_stick"] = "overlay_default",
-        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | None = None,
-        method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None
-) -> None:
-    """
-    Highlight chemical features in a structure.
-
-    The pattern argument can be:
-        - SMARTS pattern
-        - oechem.OESubSearch or oechem.OEMCSSearch object
-        - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
-
-    :param pattern: Pattern(s) to highlight in the molecule.
-    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
-        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
-    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
-        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
-    :param ref: Optional reference for alignment.
-    :param method: Optional alignment method.
-    """
-    # Check dtype
-    if not isinstance(self._series.dtype, oeplr.MoleculeType):
-        raise TypeError(
-            "highlight only works on molecule columns (oepolars.MoleculeType). If this column has "
-            "molecules, use series.chem.as_molecule() to convert to a molecule column first."
-        )
-
-    # Get / create a series context and save it (because we are modifying it locally)
-    ctx = get_series_context(self.metadata, save=True)
-
-    # ********************************************************************************
-    # Highlighting
-    # ********************************************************************************
-
-    # Case: Pattern is a single SMARTS string or oechem.OESubSearch object
-    if isinstance(pattern, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
-        ctx.add_callback(
-            create_structure_highlighter(
-                query=pattern,
-                color=color,
-                style=style
-            )
-        )
-
-    # Case: Pattern is an iterable
-    elif isinstance(pattern, Iterable):
-        for element in pattern:
-
-            # Element is a SMARTS string or oechem.OESubSearch object
-            if isinstance(element, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
-                ctx.add_callback(
-                    create_structure_highlighter(
-                        query=element,
-                        color=color,
-                        style=style
-                    )
-                )
-
-            # Unknown element
-            else:
-                raise TypeError(f'Do not know how to add molecule highlight for type {type(element).__name__}')
-
-    # Case: Pattern is an unknown type
-    else:
-        raise TypeError(f'Do not know how to add molecule highlight for type {type(pattern).__name__}')
-
-    # ********************************************************************************
-    # Alignment
-    # ********************************************************************************
-
-    if ref is not None:
-        # Only apply alignment if align_depictions method is available
-        if hasattr(self, 'align_depictions'):
-            self.align_depictions(ref=ref, method=method)
-        else:
-            warn("align_depictions not available; ref parameter ignored")
-
-
-def _series_reset_depictions(self) -> None:
-    """
-    Reset depiction callbacks for a molecule series.
-
-    This clears any highlight callbacks that have been added to the series metadata.
-    """
-    # Clear the cnotebook context from metadata
-    _ = self.metadata.pop("cnotebook", None)
-
-
-def _series_clear_formatting_rules(self) -> None:
-    """
-    Clear all formatting rule callbacks from a molecule series.
-
-    This removes any callbacks applied to the molecule prior to rendering,
-    such as highlighting. Unlike reset_depictions which removes the entire
-    rendering context, this method only clears the callbacks while preserving
-    other context settings like image dimensions and styling.
-    """
-    ctx = self.metadata.get("cnotebook", None)
-    if ctx is not None and isinstance(ctx, CNotebookContext):
-        ctx.reset_callbacks()
-
-
-def _series_recalculate_depiction_coordinates(
-        self,
-        *,
-        clear_coords: bool = True,
-        add_depiction_hydrogens: bool = True,
-        perceive_bond_stereo: bool = True,
-        suppress_explicit_hydrogens: bool = True,
-        orientation: int = oedepict.OEDepictOrientation_Default
-) -> None:
-    """
-    Recalculate the depictions for a molecule series.
-
-    See the following link for more information:
-    https://docs.eyesopen.com/toolkits/python/depicttk/OEDepictClasses/OEPrepareDepictionOptions.html
-
-    :param clear_coords: Clear existing 2D coordinates
-    :param add_depiction_hydrogens: Add explicit depiction hydrogens for faithful stereo depiction, etc.
-    :param perceive_bond_stereo: Perceive wedge/hash bond stereo
-    :param suppress_explicit_hydrogens: Suppress explicit hydrogens
-    :param orientation: Preferred 2D orientation
-    """
-    if not isinstance(self._series.dtype, oeplr.MoleculeType):
-        raise TypeError(
-            "recalculate_depiction_coordinates only works on molecule columns (oepolars.MoleculeType). If this "
-            "column has molecules, use series.chem.as_molecule() to convert to a molecule column first."
-        )
-
-    # Create the depiction options
-    opts = oedepict.OEPrepareDepictionOptions()
-    opts.SetClearCoords(clear_coords)
-    opts.SetAddDepictionHydrogens(add_depiction_hydrogens)
-    opts.SetPerceiveBondStereo(perceive_bond_stereo)
-    opts.SetSuppressHydrogens(suppress_explicit_hydrogens)
-    opts.SetDepictOrientation(orientation)
-
-    for mol in self._series.to_list():
-        if isinstance(mol, oechem.OEMolBase):
-            oedepict.OEPrepareDepiction(mol, opts)
-
-
-def _series_align_depictions(
-        self,
-        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | oechem.OEQMol | Literal["first"],
-        method: Literal["substructure", "ss", "mcss", "fp", "fingerprint"] | None = None,
-        **kwargs
-) -> None:
-    """
-    Align the 2D coordinates of molecules in a series.
-
-    :param ref: Alignment reference (molecule, "first", or search object)
-    :param method: Alignment method
-    :param kwargs: Keyword arguments for aligner
-    """
-    if not isinstance(self._series.dtype, oeplr.MoleculeType):
-        raise TypeError(
-            "align_depictions only works on molecule columns (oepolars.MoleculeType). If this "
-            "column has molecules, use series.chem.as_molecule() to convert to a molecule column first."
-        )
-
-    # Get molecule list from series
-    mols = self._series.to_list()
-
-    # Handle "first" reference
-    if isinstance(ref, str) and ref == "first":
-        for mol in mols:
-            if mol is not None and mol.IsValid():
-                ref = mol.CreateCopy()
-                break
-        else:
-            warn("No valid molecule found in series for depiction alignment")
-            return
-
-    # Make sure the reference has 2D coordinates
-    oedepict.OEPrepareDepiction(ref, False)
-
-    # Suppress alignment warnings (there are lots of needless warnings)
-    level = oechem.OEThrow.GetLevel()
-    oechem.OEThrow.SetLevel(oechem.OEErrorLevel_Error)
-
-    # noinspection PyBroadException
     try:
-        # Create the aligner
-        from .align import create_aligner
-        aligner = create_aligner(ref=ref, method=method, **kwargs)
-
-        for mol in mols:
-            if mol is not None:
-                _ = aligner(mol)
-
-    except Exception:
-        # We don't care if the aligners fail - it just results in unaligned structures (NBD)
-        pass
-
-    # Restore OEThrow level
-    oechem.OEThrow.SetLevel(level)
+        from packaging.version import Version
+    except ImportError:
+        match = _VERSION_RE.match(version.strip())
+        if match is None:
+            raise ValueError(f"cannot read a release number from {version!r}") from None
+        release = tuple(int(part) if part else 0 for part in match.groups()[:3])
+        suffix = match.group(4)
+        # A local version (1.2.3+corp) is still that release; anything else (.dev1, rc2) precedes it.
+        return release, bool(suffix) and not suffix.startswith("+")
+    # InvalidVersion is a ValueError, so a malformed version reaches the caller's handler.
+    parsed = Version(version)
+    return (parsed.release + (0, 0, 0))[:3], parsed.is_prerelease or parsed.is_devrelease
 
 
-# Monkey-patch onto oepolars SeriesChemNamespace
-# Note: Series-level highlight is not registered because Polars Series are ephemeral and
-# metadata doesn't persist across column accesses. Use df.chem.highlight() instead.
-SeriesChemNamespace.reset_depictions = _series_reset_depictions  # pyright: ignore
-SeriesChemNamespace.clear_formatting_rules = _series_clear_formatting_rules  # pyright: ignore
-SeriesChemNamespace.recalculate_depiction_coordinates = _series_recalculate_depiction_coordinates  # pyright: ignore
-SeriesChemNamespace.align_depictions = _series_align_depictions  # pyright: ignore
-
-
-########################################################################################################################
-# DataFrame accessor methods (monkey-patched onto oepolars)
-########################################################################################################################
-
-SMARTS_DELIMITER_RE = re.compile(r'\s*[|\r\n\t]+\s*')
-
-# Store the fingerprint tag for fingerprint_similarity
-_fingerprint_overlap_tag = oechem.OEGetTag("fingerprint_overlap")
-
-
-class ColorBondByOverlapScore(oegrapheme.OEBondGlyphBase):
-    """Bond glyph that colors bonds by fingerprint overlap score.
-
-    Used internally by fingerprint similarity visualization to highlight
-    bonds based on their contribution to molecular similarity.
-
-    See: https://docs.eyesopen.com/toolkits/cookbook/python/depiction/simcalc.html
-    """
-
-    def __init__(self, cg: oechem.OELinearColorGradient, tag: int):
-        """Create a bond coloring glyph.
-
-        :param cg: Color gradient to map overlap scores to colors.
-        :param tag: OEChem data tag containing overlap scores on bonds.
-        """
-        oegrapheme.OEBondGlyphBase.__init__(self)
-        self.colorg = cg
-        self.tag = tag
-
-    # noinspection PyPep8Naming
-    def RenderGlyph(self, disp, bond):
-
-        bdisp = disp.GetBondDisplay(bond)
-        if bdisp is None or not bdisp.IsVisible():
-            return False
-
-        if not bond.HasData(self.tag):
-            return False
-
-        linewidth = disp.GetScale() / 3.0
-        color = self.colorg.GetColorAt(bond.GetData(self.tag))
-        pen = oedepict.OEPen(color, color, oedepict.OEFill_Off, linewidth)
-
-        adispB = disp.GetAtomDisplay(bond.GetBgn())
-        adispE = disp.GetAtomDisplay(bond.GetEnd())
-
-        layer = disp.GetLayer(oedepict.OELayerPosition_Below)
-        layer.DrawLine(adispB.GetCoords(), adispE.GetCoords(), pen)
-
-        return True
-
-    # noinspection PyPep8Naming
-    def ColorBondByOverlapScore(self):
-        return ColorBondByOverlapScore(self.colorg, self.tag).__disown__()
-
-
-def _dataframe_reset_depictions(self, *, molecule_columns: str | Iterable[str] | None = None) -> None:
-    """
-    Reset depiction callbacks for one or more molecule columns in the DataFrame.
-
-    :param molecule_columns: Optional molecule column(s) to reset. If None, resets all molecule columns.
-    """
-    columns = set()
-    if molecule_columns is None:
-        columns.update(self._df.columns)
-
-    elif isinstance(molecule_columns, str):
-        columns.add(molecule_columns)
-
-    else:
-        columns.update(molecule_columns)
-
-    # Filter invalid and non-molecule columns
-    for col in filter(
-        lambda c: c in self._df.columns and isinstance(self._df.schema[c], oeplr.MoleculeType),
-        columns
-    ):
-        self._df.get_column(col).chem.reset_depictions()  # pyright: ignore
-
-
-def _dataframe_clear_formatting_rules(self, molecule_columns: str | Iterable[str] | None = None) -> None:
-    """
-    Clear all formatting rule callbacks from one or more molecule columns.
-
-    This removes any callbacks applied to molecules prior to rendering,
-    such as highlighting. Unlike reset_depictions which removes the entire
-    rendering context, this method only clears the callbacks while preserving
-    other context settings like image dimensions and styling.
-
-    :param molecule_columns: Optional molecule column(s) to clear formatting rules from.
-        If None, clears formatting rules from all molecule columns.
-
-    Example::
-
-        # Clear formatting rules from all molecule columns
-        df.chem.clear_formatting_rules()
-
-        # Clear formatting rules from a specific column
-        df.chem.clear_formatting_rules("smiles")
-
-        # Clear formatting rules from multiple columns
-        df.chem.clear_formatting_rules(["mol1", "mol2"])
-    """
-    columns = set()
-    if molecule_columns is None:
-        columns.update(self._df.columns)
-
-    elif isinstance(molecule_columns, str):
-        columns.add(molecule_columns)
-
-    else:
-        columns.update(molecule_columns)
-
-    # Filter invalid and non-molecule columns and clear their formatting rules
-    for col in filter(
-        lambda c: c in self._df.columns and isinstance(self._df.schema[c], oeplr.MoleculeType),
-        columns
-    ):
-        # Clear DataFrame-level column context callbacks
-        ctx = get_dataframe_column_context(self._df, col)
-        if ctx is not None:
-            ctx.reset_callbacks()
-
-
-def _dataframe_recalculate_depiction_coordinates(
-        self,
+def _require_molecule(
+        df: pl.DataFrame,
+        column: str,
+        method: str,
         *,
-        molecule_columns: str | Iterable[str] | None = None,
-        clear_coords: bool = True,
-        add_depiction_hydrogens: bool = True,
-        perceive_bond_stereo: bool = True,
-        suppress_explicit_hydrogens: bool = True,
-        orientation: int = oedepict.OEDepictOrientation_Default
+        missing: type[Exception] = ValueError
 ) -> None:
     """
-    Recalculate the depictions for one or more molecule series in a DataFrame. If molecule_columns is None,
-    which is the default, then all molecule columns will have their depictions recalculated.
+    Check that *column* exists in *df* and holds molecules.
 
-    See the following link for more information:
-    https://docs.eyesopen.com/toolkits/python/depicttk/OEDepictClasses/OEPrepareDepictionOptions.html
+    :param df: Frame to check.
+    :param column: Column name.
+    :param method: Accessor name, used in the messages.
+    :param missing: Exception raised when the column is absent; the default keeps a
+        missing column and an unusable column both reporting as bad arguments.
+    :raises ValueError: When *column* is absent and *missing* is left at its default.
+    :raises TypeError: When *column* does not hold molecules.
+    """
+    if column not in df.columns:
+        raise missing(f"Column {column!r} not found in DataFrame columns ({', '.join(df.columns)})")
+    if not isinstance(df.schema[column], oeplr.MoleculeType):
+        raise TypeError(f"{method} only works on molecule columns (oepolars.MoleculeType). "
+                        f"Column {column!r} has type {df.schema[column]}.")
 
-    :param molecule_columns: Optional molecule column(s) to have depictions recalculated
-    :param clear_coords: Clear existing 2D coordinates
-    :param add_depiction_hydrogens: Add explicit depiction hydrogens for faithful stereo depiction, etc.
-    :param perceive_bond_stereo: Perceive wedge/hash bond stereo
-    :param suppress_explicit_hydrogens: Suppress explicit hydrogens
-    :param orientation: Preferred 2D orientation
+
+class PolarsColumnAdapter:
+    """
+    Column adapter over one column of a Polars frame.
+
+    Polars frames are immutable, so an operation that changes the column or its token
+    produces a new frame. :attr:`frame` is the current one, and the accessor hands it
+    back to the caller once the operation is done.
+    """
+
+    def __init__(self, df: pl.DataFrame, column: str):
+        """
+        Wrap one column of a frame.
+
+        :param df: Frame holding the column.
+        :param column: Column name.
+        """
+        self.frame = df
+        self.column = column
+        self.name = column
+
+    @property
+    def _token(self) -> str | None:
+        """
+        Report the token carried by the column's dtype.
+
+        :returns: The token, or ``None`` for an untokenized column.
+        """
+        return getattr(self.frame.schema[self.column], "token", None)
+
+    def molecules(self) -> list[oechem.OEMolBase | None]:
+        """
+        Read the column's molecules.
+
+        :returns: One entry per row, ``None`` where the cell is empty.
+        """
+        return self.frame.get_column(self.column).to_list()
+
+    def replace_molecules(self, mols: list[oechem.OEMolBase | None]) -> None:
+        """
+        Commit *mols* into a new frame, keeping the column's dtype and token.
+
+        :param mols: Replacement molecules, one per row.
+        """
+        dtype = self.frame.schema[self.column]
+        self.frame = self.frame.with_columns(
+            pl.Series(self.column, mols, dtype=type(dtype)(getattr(dtype, "token", None)))
+        )
+
+    def get_context(self, *, create: bool) -> CNotebookContext | None:
+        """
+        Return the render context of the column.
+
+        :param create: When the column has no state, mint a token for a fresh local
+            context and carry it on :attr:`frame`.
+        :returns: The column's context, or ``None`` when it has none and *create* is false.
+        """
+        state = state_for_token(self._token)
+        if state is not None:
+            return state.context
+        if not create:
+            return None
+        state = ColumnState(create_local_context())
+        self._retoken(state)
+        return state.context
+
+    def set_context(self, ctx: CNotebookContext) -> None:
+        """
+        Store *ctx* as the render context of the column.
+
+        :param ctx: Context to store.
+        """
+        state = state_for_token(self._token)
+        if state is None:
+            self._retoken(ColumnState(ctx))
+        else:
+            state.context = ctx
+
+    def clear_context(self) -> None:
+        """
+        Drop the column's token on this frame.
+
+        The state itself stays in the registry: sibling frames may still carry the token,
+        and their columns keep rendering with the context they were given.
+        """
+        if self._token is not None:
+            self.frame = self.frame.chem.with_token(self.column, None)
+
+    def set_alignment_report(self, report: AlignmentReport) -> None:
+        """
+        Record the outcome of the last depiction alignment on the column.
+
+        :param report: Report to store.
+        """
+        state = state_for_token(self._token)
+        if state is None:
+            self._retoken(ColumnState(create_local_context(), report))
+        else:
+            state.alignment_report = report
+
+    def _retoken(self, state: ColumnState) -> None:
+        """
+        Store *state* under a fresh token and carry that token on :attr:`frame`.
+
+        :param state: State for the column.
+        """
+        token = new_token()
+        store_state(token, state)
+        self.frame = self.frame.chem.with_token(self.column, token)
+
+
+def fork_column(df: pl.DataFrame, column: str, method: str) -> PolarsColumnAdapter:
+    """
+    Copy-on-write: an adapter over *df* whose *column* carries a copy of its state.
+
+    The operation that follows commits into the returned adapter's frame only. Frames
+    still carrying the old token -- filters, slices and other siblings taken before the
+    call -- keep the state they were made with.
+
+    :param df: Frame to fork; never modified.
+    :param column: Molecule column to fork.
+    :param method: Accessor name, used in the messages.
+    :returns: Adapter over a new frame whose column carries the copied state.
+    :raises ValueError: When *column* is not one of the frame's columns.
+    :raises TypeError: When *column* does not hold molecules.
+    """
+    _require_molecule(df, column, method)
+    old = state_for_token(getattr(df.schema[column], "token", None))
+    # clone(), not copy(): an option the column left deferred has to stay deferred in the
+    # fork, so both frames keep following the global context for it.
+    state = ColumnState(
+        old.context.clone() if old is not None else create_local_context(),
+        old.alignment_report if old is not None else None,
+    )
+    token = new_token()
+    store_state(token, state)
+    return PolarsColumnAdapter(df.chem.with_token(column, token), column)
+
+
+def _columns(df: pl.DataFrame, molecule_columns: str | Iterable[str] | None, method: str) -> list[str]:
+    """
+    Resolve the molecule columns an accessor should work on.
+
+    :param df: Frame to look in.
+    :param molecule_columns: Column name, iterable of names, or ``None`` for every
+        molecule column of the frame.
+    :param method: Accessor name, used in the warnings.
+    :returns: The usable molecule column names, in the order requested. Names that are
+        absent or hold something else are reported with a warning and left out.
     """
     if molecule_columns is None:
-        molecule_columns = set()
-
-        for col in self._df.columns:
-            if isinstance(self._df.schema[col], oeplr.MoleculeType):
-                molecule_columns.add(col)
-
-    elif isinstance(molecule_columns, str):
-        molecule_columns = {molecule_columns}
-
-    else:
-        molecule_columns = set(molecule_columns)
-
-    # Recalculate the column depictions
-    for col in molecule_columns:
-
-        if col in self._df.columns:
-            if isinstance(self._df.schema[col], oeplr.MoleculeType):
-                self._df.get_column(col).chem.recalculate_depiction_coordinates(  # pyright: ignore
-                    clear_coords=clear_coords,
-                    add_depiction_hydrogens=add_depiction_hydrogens,
-                    perceive_bond_stereo=perceive_bond_stereo,
-                    suppress_explicit_hydrogens=suppress_explicit_hydrogens,
-                    orientation=orientation
-                )
-
-            else:
-                warn(f'Column {col} does not have a MoleculeType')
-
+        return [name for name in df.columns if isinstance(df.schema[name], oeplr.MoleculeType)]
+    names = [molecule_columns] if isinstance(molecule_columns, str) else list(molecule_columns)
+    found = []
+    for name in names:
+        if name not in df.columns:
+            warn(f"{name!r} not found in DataFrame columns ({', '.join(df.columns)}); skipped by {method}")
+        elif not isinstance(df.schema[name], oeplr.MoleculeType):
+            warn(f"Column {name!r} does not have a MoleculeType; skipped by {method}")
         else:
-            warn(f'{col} not found in DataFrame columns: ({", ".join(self._df.columns)})')
+            found.append(name)
+    return found
+
+
+def _copied_token(df: pl.DataFrame, column: str) -> str:
+    """
+    Mint a token whose state copies the current context of *column*.
+
+    Generated depiction columns render with the settings of the molecule column they came
+    from, but changing one of them afterwards must not change the other.
+
+    :param df: Frame holding the source column.
+    :param column: Source column name.
+    :returns: A fresh token, already registered.
+    """
+    old = state_for_token(getattr(df.schema[column], "token", None))
+    token = new_token()
+    store_state(token, ColumnState(old.context.clone() if old is not None else create_local_context(), None))
+    return token
+
+
+def _display_series(name: str, depictions: list[Any], token: str) -> pl.Series:
+    """
+    Build a display column from prepared depictions.
+
+    :param name: Column name.
+    :param depictions: One :class:`~cnotebook.core.render.Depiction` per row, or ``None``
+        where no depiction could be made.
+    :param token: Token to carry on the column dtype.
+    :returns: A ``DisplayType`` Series. Only the display is stored, and it keeps its
+        molecule alive through the owner reference the depiction set on it.
+    """
+    return pl.Series(name, [d.display if d is not None else None for d in depictions],
+                     dtype=oeplr.DisplayType(token))
 
 
 def _dataframe_highlight(
@@ -828,90 +632,163 @@ def _dataframe_highlight(
         molecule_column: str,
         pattern: Iterable[str] | str | oechem.OESubSearch | Iterable[oechem.OESubSearch],
         *,
-        color: oechem.OEColor | oechem.OEColorIter | None = None,
+        color: oechem.OEColor | oechem.OEColorIter | str | None = None,
         style: int | Literal["overlay_default", "overlay_ball_and_stick"] = "overlay_default",
-) -> None:
-    """
-    Highlight chemical features in molecules within a specified column.
-
-    This method stores the highlighting callbacks at the DataFrame level, ensuring they persist
-    across column accesses. This is necessary because Polars Series objects are ephemeral.
-
-    The pattern argument can be:
-        - SMARTS pattern
-        - oechem.OESubSearch or oechem.OEMCSSearch object
-        - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
-
-    :param molecule_column: Name of the molecule column to highlight.
-    :param pattern: Pattern(s) to highlight in the molecules.
-    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
-        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
-    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
-        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
-    """
-    # Check the column exists and is a molecule type
-    if molecule_column not in self._df.columns:
-        raise ValueError(f'Column {molecule_column} not found in DataFrame columns: ({", ".join(self._df.columns)})')
-
-    if not isinstance(self._df.schema[molecule_column], oeplr.MoleculeType):
-        raise TypeError(
-            f"highlight only works on molecule columns (oepolars.MoleculeType). Column '{molecule_column}' "
-            f"has type {self._df.schema[molecule_column]}."
-        )
-
-    # Get or create the context for this DataFrame column
-    ctx = get_dataframe_column_context(self._df, molecule_column)
-    if ctx is None:
-        ctx = create_local_context()
-        set_dataframe_column_context(self._df, molecule_column, ctx)
-
-    # Case: Pattern is a single SMARTS string or oechem.OESubSearch object
-    if isinstance(pattern, (str, oechem.OESubSearch, oechem.OEMCSSearch, oechem.OEQMol)):
-        ctx.add_callback(create_structure_highlighter(pattern, color=color, style=style))
-
-    # Case: Pattern is an iterable of SMARTS strings and/or oechem.OESubSearch objects
-    elif isinstance(pattern, Iterable):
-        for p in pattern:
-            ctx.add_callback(create_structure_highlighter(p, color=color, style=style))
-
-    else:
-        raise TypeError(f'Unsupported type for pattern: {type(pattern).__name__}')
-
-
-def _dataframe_copy_molecules(
-        self,
-        source_column: str,
-        dest_column: str,
+        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | None = None,
+        method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None,
+        **align_kwargs: Any
 ) -> pl.DataFrame:
     """
-    Create a deep copy of molecules from one column to a new column.
+    Highlight substructures in a molecule column.
 
-    This creates independent copies of all molecules, allowing modifications
-    (such as highlighting or alignment) to the new column without affecting
-    the original.
-
-    :param source_column: Name of the source molecule column.
-    :param dest_column: Name of the new column to create with copied molecules.
-    :returns: New DataFrame with the molecule column added.
-
-    Example::
-
-        # Create a copy of molecules for alignment
-        df = df.chem.copy_molecules("Original", "Aligned")
-        df.chem.highlight("Aligned", "c1ccccc1")
+    :param molecule_column: Molecule column to highlight.
+    :param pattern: SMARTS string, search object, or an iterable of either, one per row.
+    :param color: Highlight colour, as an ``OEColor``, an ``OEColorIter`` or ``#RRGGBB``.
+    :param style: Highlight style name, or an ``OEHighlightStyle`` constant.
+    :param ref: Alignment reference; the depictions are aligned before highlighting when given.
+    :param method: Alignment method used with *ref*.
+    :param align_kwargs: Further options for the aligner.
+    :returns: A new frame whose molecule column carries the highlighted depictions.
+    :raises ValueError: When *molecule_column* is not one of the frame's columns.
+    :raises TypeError: When *molecule_column* does not hold molecules, or a pattern cannot be used.
     """
-    if source_column not in self._df.columns:
-        raise ValueError(f'Column {source_column} not found in DataFrame columns: ({", ".join(self._df.columns)})')
+    col = fork_column(self._df, molecule_column, "highlight")
+    columnops.highlight(col, pattern, color=color, style=style, ref=ref, method=method, **align_kwargs)
+    return col.frame
 
-    if not isinstance(self._df.schema[source_column], oeplr.MoleculeType):
-        raise TypeError(
-            f"copy_molecules only works on molecule columns (oepolars.MoleculeType). Column '{source_column}' "
-            f"has type {self._df.schema[source_column]}."
-        )
 
-    # Use the series-level copy_molecules (or deepcopy) and add as a new column
-    copied_series = self._df.get_column(source_column).chem.copy_molecules()  # pyright: ignore
-    return self._df.with_columns(copied_series.alias(dest_column))
+def _dataframe_set_render_options(
+        self,
+        molecule_columns: str | Iterable[str] | None = None,
+        **options: Any
+) -> pl.DataFrame:
+    """
+    Set render options on one or more molecule columns.
+
+    :param molecule_columns: Column name, iterable of names, or ``None`` for every
+        molecule column of the frame.
+    :param options: Context options, such as ``width``, ``height`` or ``title``.
+    :returns: A new frame whose named columns carry the new options.
+    """
+    frame = self._df
+    for name in _columns(frame, molecule_columns, "set_render_options"):
+        col = fork_column(frame, name, "set_render_options")
+        columnops.set_render_options(col, **options)
+        frame = col.frame
+    return frame
+
+
+def _dataframe_reset_depictions(self, molecule_columns: str | Iterable[str] | None = None) -> pl.DataFrame:
+    """
+    Drop the render settings of one or more molecule columns.
+
+    :param molecule_columns: Column name, iterable of names, or ``None`` for every
+        molecule column of the frame.
+    :returns: A new frame whose named columns render with the global defaults again.
+        Sibling frames keep the settings they were made with.
+    """
+    frame = self._df
+    for name in _columns(frame, molecule_columns, "reset_depictions"):
+        col = PolarsColumnAdapter(frame, name)
+        columnops.reset_depictions(col)
+        frame = col.frame
+    return frame
+
+
+def _dataframe_clear_formatting_rules(self, molecule_columns: str | Iterable[str] | None = None) -> pl.DataFrame:
+    """
+    Drop the display callbacks of one or more molecule columns, keeping their other options.
+
+    :param molecule_columns: Column name, iterable of names, or ``None`` for every
+        molecule column of the frame.
+    :returns: A new frame whose named columns have no display callbacks left.
+    """
+    frame = self._df
+    for name in _columns(frame, molecule_columns, "clear_formatting_rules"):
+        col = fork_column(frame, name, "clear_formatting_rules")
+        columnops.clear_formatting_rules(col)
+        frame = col.frame
+    return frame
+
+
+def _dataframe_align_depictions(
+        self,
+        molecule_column: str,
+        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | str,
+        method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None,
+        **kwargs: Any
+) -> pl.DataFrame:
+    """
+    Align the depictions of a molecule column to a reference.
+
+    :param molecule_column: Molecule column to align.
+    :param ref: Reference molecule, SMARTS or search object, or ``"first"`` for the first
+        valid molecule of the column.
+    :param method: Alignment method; inferred from *ref* when omitted.
+    :param kwargs: Further options for the aligner.
+    :returns: A new frame whose molecule column carries the aligned depictions. The
+        outcome is available from :func:`_dataframe_alignment_report`.
+    :raises ValueError: When *molecule_column* is not one of the frame's columns.
+    :raises TypeError: When *molecule_column* does not hold molecules.
+    """
+    col = fork_column(self._df, molecule_column, "align_depictions")
+    columnops.align_depictions(col, ref, method=method, **kwargs)
+    return col.frame
+
+
+def _dataframe_alignment_report(self, molecule_column: str) -> AlignmentReport | None:
+    """
+    Report the outcome of the last depiction alignment of a molecule column.
+
+    :param molecule_column: Molecule column to report on.
+    :returns: The report, or ``None`` when the column has never been aligned.
+    :raises ValueError: When *molecule_column* is not one of the frame's columns.
+    :raises TypeError: When *molecule_column* does not hold molecules.
+    """
+    _require_molecule(self._df, molecule_column, "alignment_report")
+    state = state_for_token(getattr(self._df.schema[molecule_column], "token", None))
+    return state.alignment_report if state is not None else None
+
+
+def _dataframe_recalculate_depiction_coordinates(
+        self,
+        *,
+        molecule_columns: str | Iterable[str] | None = None,
+        **options: Any
+) -> pl.DataFrame:
+    """
+    Lay out 2D depiction coordinates again for one or more molecule columns.
+
+    :param molecule_columns: Column name, iterable of names, or ``None`` for every
+        molecule column of the frame.
+    :param options: Further options for the depiction preparation.
+    :returns: A new frame holding molecules with fresh coordinates.
+    """
+    frame = self._df
+    for name in _columns(frame, molecule_columns, "recalculate_depiction_coordinates"):
+        col = fork_column(frame, name, "recalculate_depiction_coordinates")
+        columnops.recalculate_depiction_coordinates(col, **options)
+        frame = col.frame
+    return frame
+
+
+def _dataframe_copy_molecules(self, source_column: str, dest_column: str) -> pl.DataFrame:
+    """
+    Copy a molecule column, so the two columns can be depicted differently.
+
+    :param source_column: Molecule column to copy.
+    :param dest_column: Name of the new column; an existing column of that name is replaced.
+    :returns: A new frame with the copied column, whose render settings start as a copy
+        of the source column's.
+    :raises ValueError: When *source_column* is not one of the frame's columns.
+    :raises TypeError: When *source_column* does not hold molecules.
+    """
+    _require_molecule(self._df, source_column, "copy_molecules")
+    # CreateCopy() keeps the conformers of a multi-conformer molecule, which the graph
+    # molecule constructor would drop.
+    copies = [None if m is None else m.CreateCopy() for m in self._df.get_column(source_column).to_list()]
+    token = _copied_token(self._df, source_column)
+    return self._df.with_columns(pl.Series(dest_column, copies, dtype=oeplr.MoleculeType(token)))
 
 
 def _dataframe_highlight_using_column(
@@ -920,146 +797,47 @@ def _dataframe_highlight_using_column(
         pattern_column: str,
         *,
         highlighted_column: str = "highlighted_substructures",
-        color: oechem.OEColor | oechem.OEColorIter | None = None,
+        color: oechem.OEColor | oechem.OEColorIter | str | None = None,
+        color_column: str | None = None,
         style: int | Literal["overlay_default", "overlay_ball_and_stick"] = "overlay_default",
-        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEMolBase | None = None,
-        alignment_opts: oedepict.OEAlignmentOptions | None = None,
-        prepare_opts: oedepict.OEPrepareDepictionOptions | None = None,
         inplace: bool = False
 ) -> pl.DataFrame:
     """
-    Highlight molecules based on the value of another column. The column produced is a DisplayType column, so
-    the results are not suitable for other molecular calculations.
+    Highlight a per-row pattern, taken from another column, into a new display column.
 
-    The other column can contain:
-        - Comma or whitespace delimited string of SMARTS patterns
-        - oechem.OESubSearch or oechem.OEMCSSearch object
-        - Iterable of SMARTS patterns, oechem.OESubSearch, and/or oechem.OEMCSSearch objects
-
-    :param molecule_column: Name of the molecule column.
-    :param pattern_column: Name of the pattern column.
-    :param highlighted_column: Optional name of the column with highlighted structures.
-    :param color: Highlight color(s). Can be a single oechem.OEColor or an oechem.OEColorIter
-        (e.g., oechem.OEGetLightColors()). Defaults to oechem.OEGetLightColors().
-    :param style: Highlight style. Can be an int (OEHighlightStyle constant) or a string
-        ("overlay_default", "overlay_ball_and_stick"). Defaults to "overlay_default".
-    :param ref: Optional reference for aligning depictions.
-    :param alignment_opts: Optional depiction alignment options (oedepict.OEAlignmentOptions).
-    :param prepare_opts: Optional depiction preparation options (oedepict.OEPrepareDepictionOptions).
-    :param inplace: If True, returns the modified DataFrame (note: Polars DataFrames are immutable).
-    :returns: Modified DataFrame with highlighted column.
+    :param molecule_column: Molecule column to highlight.
+    :param pattern_column: Column holding one SMARTS (or search object) per row.
+    :param highlighted_column: Name of the display column to add.
+    :param color: Highlight colour used for every row.
+    :param color_column: Column holding one colour per row; overrides *color*.
+    :param style: Highlight style name, or an ``OEHighlightStyle`` constant.
+    :param inplace: Ignored, and reported: Polars frames cannot be modified in place.
+    :returns: A new frame with the display column added.
+    :raises KeyError: When one of the named columns is not in the frame.
+    :raises TypeError: When *molecule_column* does not hold molecules.
     """
+    if inplace:
+        warn("highlight_using_column: polars frames are immutable; a new frame is returned")
     df = self._df
-
-    if molecule_column not in df.columns:
-        raise KeyError(f'{molecule_column} not found in DataFrame columns: ({", ".join(df.columns)})')
-
-    if not isinstance(df.schema[molecule_column], oeplr.MoleculeType):
-        raise TypeError(
-            f"highlight_using_column only works on molecule columns (oepolars.MoleculeType). If {molecule_column}"
-            " has molecules, use df.chem.as_molecule() to convert to a molecule column first."
-        )
-
-    if pattern_column not in df.columns:
-        raise KeyError(f'{pattern_column} not found in DataFrame columns: ({", ".join(df.columns)})')
-
-    # Default color
-    if color is None:
-        color = oechem.OEGetLightColors()
-
-    # Determine highlighting approach based on style
-    use_overlay = isinstance(style, str) and style in ("overlay_default", "overlay_ball_and_stick")
-
-    # Check if color is compatible with overlay
-    if use_overlay and isinstance(color, oechem.OEColor):
-        warn("Overlay coloring is not compatible with a single oechem.OEColor. Falling back to standard highlighting")
-        use_overlay = False
-        style = oedepict.OEHighlightStyle_BallAndStick
-
-    assert color is not None
-
-    # Create the display objects
-    displays = []
-
-    # Get the rendering context for creating the displays
-    series = df.get_column(molecule_column)
-    metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
-    ctx = get_series_context(metadata)
-
-    for row_idx in range(len(df)):
-        mol = df[molecule_column][row_idx]
-        patterns = df[pattern_column][row_idx]
-
-        if isinstance(mol, oechem.OEMolBase) and mol.IsValid():
-
-            # Create the display
-            disp = oemol_to_disp(mol, ctx=ctx)
-
-            # Highlight
-            substructures = []
-
-            # Parse different patterns
-            if isinstance(patterns, str):
-                for pattern in re.split(SMARTS_DELIMITER_RE, patterns):
-                    ss = oechem.OESubSearch(pattern)
-                    if ss.IsValid():
-                        substructures.append(ss)
-
-            elif isinstance(patterns, oechem.OESubSearch):
-                if patterns.IsValid():
-                    substructures.append(patterns)
-
-            elif isinstance(patterns, Iterable):
-
-                for p in patterns:
-
-                    if isinstance(p, str):
-                        for pattern in re.split(SMARTS_DELIMITER_RE, p):
-                            ss = oechem.OESubSearch(pattern)
-                            if ss.IsValid():
-                                substructures.append(ss)
-
-                    elif isinstance(p, oechem.OESubSearch):
-                        if p.IsValid():
-                            substructures.append(p)
-
-                    else:
-                        warn(f'Do not know how to highlight using: {type(p).__name__}')
-
-            elif patterns is not None:
-                warn(f'Do not know how to highlight using: {type(patterns).__name__}')
-
-            # Overlay highlighting
-            if use_overlay:
-                highlight = oedepict.OEHighlightOverlayByBallAndStick(color)
-                for ss in substructures:
-                    oedepict.OEAddHighlightOverlay(disp, highlight, ss.Match(disp.GetMolecule(), True))
-
-            else:
-                # Traditional highlighting
-                if isinstance(color, oechem.OEColor):
-                    highlight_color = color
-                else:
-                    highlight_color = oechem.OELightBlue
-                    for c in color:
-                        highlight_color = c
-                        break
-                for ss in substructures:
-                    for match in ss.Match(disp.GetMolecule(), True):
-                        oedepict.OEAddHighlighting(disp, highlight_color, style, match)
-
-            displays.append(disp)
-
-        else:
-            displays.append(None)
-
-    # Create the new column with DisplayType (must instantiate the type)
-    display_series = pl.Series(highlighted_column, displays, dtype=oeplr.DisplayType())
-
-    # Add the column to the DataFrame
-    result = df.with_columns(display_series)
-
-    return result
+    _require_molecule(df, molecule_column, "highlight_using_column", missing=KeyError)
+    # An empty column name is a usable name, so ask about presence, not truthiness.
+    for name in (pattern_column,) + ((color_column,) if color_column is not None else ()):
+        if name not in df.columns:
+            raise KeyError(f"{name!r} not found in DataFrame columns ({', '.join(df.columns)})")
+    ctx = PolarsFrameAdapter(df).context(df.columns.index(molecule_column))
+    if color_column is not None:
+        # Null cells stay None so columnops skips colouring those rows.
+        colors = df.get_column(color_column).to_list()
+    else:
+        colors = [color] * len(df) if color is not None else None
+    depictions = columnops.build_highlight_column(
+        df.get_column(molecule_column).to_list(),
+        df.get_column(pattern_column).to_list(),
+        colors=colors,
+        style=style,
+        ctx=ctx,
+    )
+    return df.with_columns(_display_series(highlighted_column, depictions, _copied_token(df, molecule_column)))
 
 
 def _dataframe_fingerprint_similarity(
@@ -1070,271 +848,189 @@ def _dataframe_fingerprint_similarity(
         tanimoto_column: str = "fingerprint_tanimoto",
         reference_similarity_column: str = "reference_similarity",
         target_similarity_column: str = "target_similarity",
-        fptype: str = "tree",
+        fptype: Literal["tree", "path", "circular", "maccs", "maccs166"] = "tree",
         num_bits: int = 4096,
         min_distance: int = 0,
         max_distance: int = 4,
-        atom_type: str | int = oegraphsim.OEFPAtomType_DefaultTreeAtom,
-        bond_type: str | int = oegraphsim.OEFPBondType_DefaultTreeBond,
+        atom_type: int = oegraphsim.OEFPAtomType_DefaultTreeAtom,
+        bond_type: int = oegraphsim.OEFPBondType_DefaultTreeBond,
         inplace: bool = False
 ) -> pl.DataFrame:
     """
-    Color molecules by fingerprint similarity.
+    Score a molecule column against a reference and depict the overlapping fingerprint bits.
 
-    :param molecule_column: Name of the molecule column
-    :param ref: Reference molecule (if None, uses first valid molecule)
-    :param tanimoto_column: Name of the tanimoto score column
-    :param reference_similarity_column: Name of the reference display column
-    :param target_similarity_column: Name of the target display column
-    :param fptype: Fingerprint type
-    :param num_bits: Number of bits in the fingerprint
-    :param min_distance: Minimum distance/radius for path/circular/tree
-    :param max_distance: Maximum distance/radius for path/circular/tree
-    :param atom_type: Atom type bitmask
-    :param bond_type: Bond type bitmask
-    :param inplace: Not used (Polars DataFrames are immutable), kept for API compatibility
-    :return: DataFrame with similarity columns
+    :param molecule_column: Molecule column to score.
+    :param ref: Reference molecule; the first valid molecule of the column when omitted.
+    :param tanimoto_column: Name of the similarity column to add.
+    :param reference_similarity_column: Name of the display column showing the reference.
+    :param target_similarity_column: Name of the display column showing each target.
+    :param fptype: Fingerprint type.
+    :param num_bits: Fingerprint size in bits.
+    :param min_distance: Smallest path or tree size fingerprinted.
+    :param max_distance: Largest path or tree size fingerprinted.
+    :param atom_type: Atom typing used by the fingerprint.
+    :param bond_type: Bond typing used by the fingerprint.
+    :param inplace: Ignored, and reported: Polars frames cannot be modified in place.
+    :returns: A new frame with the similarity column and the two display columns added.
+    :raises KeyError: When *molecule_column* is not one of the frame's columns.
+    :raises TypeError: When *molecule_column* does not hold molecules.
     """
-    tag = _fingerprint_overlap_tag
+    if inplace:
+        warn("fingerprint_similarity: polars frames are immutable; a new frame is returned")
     df = self._df
-
-    if molecule_column not in df.columns:
-        raise KeyError(f'Molecule column not found in DataFrame: {molecule_column}')
-
-    if not isinstance(df.schema[molecule_column], oeplr.MoleculeType):
-        raise TypeError(
-            f"Column {molecule_column} does not have MoleculeType ({df.schema[molecule_column]})"
-        )
-
-    # Get the context for rendering
-    series = df.get_column(molecule_column)
-    metadata = series.chem.metadata if hasattr(series, 'chem') else {}  # pyright: ignore
-    ctx = get_series_context(metadata)
-
-    # Get molecule list
-    mols = series.to_list()
-
-    # If we're using the first molecule as our reference
-    if ref is None:
-        for mol in mols:
-            if mol is not None and mol.IsValid():
-                ref = mol
-                break
-        else:
-            warn(f'No valid reference molecules to use for alignment in column {molecule_column}')
-            return df
-
-    assert ref is not None
-
-    # Check reference molecule
-    if not ref.IsValid():
-        warn("Reference molecule is not valid")
-        return df
-
-    # Fingerprint maker
-    make_fp = fingerprint_maker(
+    _require_molecule(df, molecule_column, "fingerprint_similarity", missing=KeyError)
+    ctx = PolarsFrameAdapter(df).context(df.columns.index(molecule_column))
+    result = columnops.fingerprint_similarity(
+        df.get_column(molecule_column).to_list(),
+        ref,
         fptype=fptype,
         num_bits=num_bits,
         min_distance=min_distance,
         max_distance=max_distance,
         atom_type=atom_type,
-        bond_type=bond_type
+        bond_type=bond_type,
+        ctx=ctx,
     )
-
-    # Make the reference fingerprint
-    ref_fp = make_fp(ref)
-
-    if not ref_fp.IsValid():
-        warn("Fingerprint from reference molecule is invalid")
-        return df
-
-    # Create the display objects and scores
-    ref_displays = []
-    targ_displays = []
-    ref_molecules = []  # Cache to prevent GC
-    targ_molecules = []  # Cache to prevent GC
-    tanimotos = []
-
-    for mol in mols:
-        if mol is not None and mol.IsValid():
-
-            # Copy the molecules, because we're modifying them
-            targ_mol = oechem.OEMol(mol)
-            ref_mol = oechem.OEMol(ref)
-
-            # Cache molecules to prevent GC
-            targ_molecules.append(targ_mol)
-            ref_molecules.append(ref_mol)
-
-            # Create the fingerprint
-            targ_fp = make_fp(targ_mol)
-            if targ_fp.IsValid():
-
-                # Add the tanimoto
-                tanimotos.append(oegraphsim.OETanimoto(ref_fp, targ_fp))
-
-                # Calculate the similarity
-                targ_bonds = [0] * targ_mol.GetMaxBondIdx()
-                ref_bonds = [0] * ref_mol.GetMaxBondIdx()
-
-                # Overlaps
-                overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
-
-                for match in overlaps:
-                    for bond in match.GetPatternBonds():
-                        ref_bonds[bond.GetIdx()] += 1
-                    for bond in match.GetTargetBonds():
-                        targ_bonds[bond.GetIdx()] += 1
-
-                for bond in targ_mol.GetBonds():
-                    bond.SetData(tag, targ_bonds[bond.GetIdx()])
-
-                for bond in ref_mol.GetBonds():
-                    bond.SetData(tag, ref_bonds[bond.GetIdx()])
-
-                # noinspection PyTypeChecker
-                maxvalue = max((0, max(targ_bonds), max(ref_bonds)))
-
-                # Create the color gradient
-                colorg = oechem.OELinearColorGradient()
-                colorg.AddStop(oechem.OEColorStop(0.0, oechem.OEPinkTint))
-                colorg.AddStop(oechem.OEColorStop(1.0, oechem.OEYellow))
-                colorg.AddStop(oechem.OEColorStop(maxvalue, oechem.OEDarkGreen))
-
-                # Function that will color the bonds
-                bondglyph = ColorBondByOverlapScore(colorg, tag)
-
-                # Align the molecules
-                overlaps = oegraphsim.OEGetFPOverlap(ref_mol, targ_mol, ref_fp.GetFPTypeBase())
-                oedepict.OEPrepareMultiAlignedDepiction(targ_mol, ref_mol, overlaps)
-
-                # Create the displays
-                ref_disp = oemol_to_disp(ref_mol, ctx=ctx)
-                targ_disp = oemol_to_disp(targ_mol, ctx=ctx)
-
-                # Color the displays
-                oegrapheme.OEAddGlyph(ref_disp, bondglyph, oechem.IsTrueBond())
-                oegrapheme.OEAddGlyph(targ_disp, bondglyph, oechem.IsTrueBond())
-
-                ref_displays.append(ref_disp)
-                targ_displays.append(targ_disp)
-
-            # Fingerprint was invalid
-            else:
-                tanimotos.append(None)
-                ref_displays.append(None)
-                targ_displays.append(None)
-
-        # Molecule was invalid
-        else:
-            tanimotos.append(None)
-            ref_displays.append(None)
-            targ_displays.append(None)
-
-    # Create the columns
-    tanimoto_series = pl.Series(tanimoto_column, tanimotos, dtype=pl.Float64)
-    ref_series = pl.Series(reference_similarity_column, ref_displays, dtype=oeplr.DisplayType())
-    targ_series = pl.Series(target_similarity_column, targ_displays, dtype=oeplr.DisplayType())
-
-    # Store molecule references in metadata to prevent GC (same as pandas version)
-    ref_series.chem.metadata["molecules"] = ref_molecules  # type: ignore[attr-defined]  # pyright: ignore
-    targ_series.chem.metadata["molecules"] = targ_molecules  # type: ignore[attr-defined]  # pyright: ignore
-
-    # Add the columns to the DataFrame
-    result = df.with_columns([tanimoto_series, ref_series, targ_series])
-
-    return result
+    token = _copied_token(df, molecule_column)
+    return df.with_columns([
+        pl.Series(tanimoto_column, result.tanimotos, dtype=pl.Float64),
+        _display_series(reference_similarity_column, result.reference, token),
+        _display_series(target_similarity_column, result.target, token),
+    ])
 
 
-DataFrameChemNamespace.reset_depictions = _dataframe_reset_depictions  # pyright: ignore
-DataFrameChemNamespace.clear_formatting_rules = _dataframe_clear_formatting_rules  # pyright: ignore
-DataFrameChemNamespace.recalculate_depiction_coordinates = (  # pyright: ignore
-    _dataframe_recalculate_depiction_coordinates
-)
-DataFrameChemNamespace.highlight = _dataframe_highlight  # pyright: ignore
-DataFrameChemNamespace.highlight_using_column = _dataframe_highlight_using_column  # pyright: ignore
-DataFrameChemNamespace.fingerprint_similarity = _dataframe_fingerprint_similarity  # pyright: ignore
-DataFrameChemNamespace.copy_molecules = _dataframe_copy_molecules  # pyright: ignore
-
-
-########################################################################################################################
-# MolGrid accessor methods for Series and DataFrame
-########################################################################################################################
-
-
-def _polars_series_molgrid(
-    self,
-    title: bool | str | None = True,
-    tooltip_fields: list[str] | None = None,
-    **kwargs
-) -> "MolGrid":
-    """Display molecules in an interactive grid.
-
-    :param title: Title display mode. True uses molecule's title, a string
-        specifies a field name, None/False hides titles.
-    :param tooltip_fields: Fields for tooltip.
-    :param kwargs: Additional arguments passed to MolGrid.
-    :returns: MolGrid instance.
+def _series_align_depictions(
+        self,
+        ref: oechem.OESubSearch | oechem.OEMCSSearch | oechem.OEQMol | Literal["first"] | oechem.OEMolBase | str,
+        method: Literal["ss", "substructure", "mcss", "fp", "fingerprint"] | None = None,
+        **kwargs: Any
+) -> pl.Series:
     """
-    from cnotebook import MolGrid
+    Align the depictions of a molecule Series to a reference.
 
+    :param ref: Reference molecule, SMARTS or search object, or ``"first"`` for the first
+        valid molecule of the Series.
+    :param method: Alignment method; inferred from *ref* when omitted.
+    :param kwargs: Further options for the aligner.
+    :returns: A new Series carrying the aligned depictions.
+    :raises TypeError: When the Series does not hold molecules.
+    """
     series = self._series
-    mols = list(series.to_list())
-
-    return MolGrid(
-        mols,
-        title=title,
-        tooltip_fields=tooltip_fields,
-        **kwargs
-    )
+    if not isinstance(series.dtype, oeplr.MoleculeType):
+        raise TypeError("align_depictions only works on molecule columns (oepolars.MoleculeType).")
+    col = fork_column(pl.DataFrame([series]), series.name, "align_depictions")
+    columnops.align_depictions(col, ref, method=method, **kwargs)
+    return col.frame.get_column(series.name)
 
 
-def _polars_dataframe_molgrid(
-    self,
-    mol_col: str,
-    title: bool | str | None = True,
-    tooltip_fields: list[str] | None = None,
-    **kwargs
+def _series_recalculate_depiction_coordinates(self, **options: Any) -> pl.Series:
+    """
+    Lay out the 2D depiction coordinates of a molecule Series again.
+
+    :param options: Further options for the depiction preparation.
+    :returns: A new Series holding molecules with fresh coordinates.
+    :raises TypeError: When the Series does not hold molecules.
+    """
+    series = self._series
+    if not isinstance(series.dtype, oeplr.MoleculeType):
+        raise TypeError("recalculate_depiction_coordinates only works on molecule columns (oepolars.MoleculeType).")
+    col = fork_column(pl.DataFrame([series]), series.name, "recalculate_depiction_coordinates")
+    columnops.recalculate_depiction_coordinates(col, **options)
+    return col.frame.get_column(series.name)
+
+
+def _series_molgrid(
+        self,
+        title: bool | str | None = True,
+        tooltip_fields: list[str] | None = None,
+        **kwargs: Any
 ) -> "MolGrid":
-    """Display molecules from a column in an interactive grid.
+    """
+    Display the molecules of a Series in an interactive grid.
 
-    :param mol_col: Column containing molecules.
-    :param title: Title display mode. True uses molecule's title, a string
-        specifies a field name, None/False hides titles.
-    :param tooltip_fields: Columns for tooltip.
-    :param kwargs: Additional arguments passed to MolGrid.
-    :returns: MolGrid instance.
+    :param title: ``True`` for each molecule's own title, a string to name a field, or
+        ``None``/``False`` for no titles.
+    :param tooltip_fields: Fields shown in the tooltip.
+    :param kwargs: Further options for :class:`~cnotebook.grid.MolGrid`.
+    :returns: The grid.
+    """
+    from cnotebook.grid import MolGrid
+
+    return MolGrid(self._series.to_list(), title=title, tooltip_fields=tooltip_fields, **kwargs)
+
+
+def _dataframe_molgrid(
+        self,
+        mol_col: str,
+        title: bool | str | None = True,
+        tooltip_fields: list[str] | None = None,
+        **kwargs: Any
+) -> "MolGrid":
+    """
+    Display the molecules of a column in an interactive grid.
+
+    :param mol_col: Molecule column to display.
+    :param title: ``True`` for each molecule's own title, a string to name a column, or
+        ``None``/``False`` for no titles.
+    :param tooltip_fields: Columns shown in the tooltip.
+    :param kwargs: Further options for :class:`~cnotebook.grid.MolGrid`.
+    :returns: The grid.
     """
     import pandas as pd
 
-    from cnotebook import MolGrid
+    from cnotebook.grid import MolGrid
 
-    df = self._df
-    mols = list(df[mol_col].to_list())
-
-    # Build pandas DataFrame from non-molecule columns for MolGrid data access
-    # We extract only primitive columns to avoid pyarrow dependency issues
-    pdf_data = {}
-    for col in df.columns:
-        if col != mol_col:
-            # Extract column values as Python objects
-            pdf_data[col] = df[col].to_list()
-
-    pdf = pd.DataFrame(pdf_data)
-
-    return MolGrid(
-        mols,
-        dataframe=pdf,
-        mol_col=mol_col,
-        title=title,
-        tooltip_fields=tooltip_fields,
-        **kwargs
-    )
+    # MolGrid reads pandas frames, so the non-molecule columns are handed over as plain
+    # Python values, which also keeps pyarrow out of the conversion.
+    pdf = pd.DataFrame({col: self._df.get_column(col).to_list() for col in self._df.columns if col != mol_col})
+    return MolGrid(self._df.get_column(mol_col).to_list(), dataframe=pdf, mol_col=mol_col, title=title,
+                   tooltip_fields=tooltip_fields, **kwargs)
 
 
-# Attach molgrid methods to accessors
-SeriesChemNamespace.molgrid = _polars_series_molgrid  # pyright: ignore
-DataFrameChemNamespace.molgrid = _polars_dataframe_molgrid  # pyright: ignore
+def _attach() -> None:
+    """
+    Register the accessor methods through oepolars' public extension hooks.
+
+    The call is idempotent and version-guarded: an oepolars too old for the hooks, or one
+    whose version cannot be read, leaves the accessors unregistered and warns rather than
+    failing the import of cnotebook.
+    """
+    global _ATTACHED
+    if _ATTACHED:
+        return
+    try:
+        release, prerelease = _parse_release(oeplr.__version__)
+        # A pre-release of the floor itself is still below it.
+        if release < _MIN_OEPOLARS or (prerelease and release == _MIN_OEPOLARS):
+            raise ImportError(f"oepolars {oeplr.__version__} is older than {'.'.join(map(str, _MIN_OEPOLARS))}")
+        from oepolars import extensions
+    except (ImportError, AttributeError, ValueError) as exc:
+        warn(f"cnotebook polars integration disabled: {exc}")
+        return
+    for name, series_func in {
+        "align_depictions": _series_align_depictions,
+        "recalculate_depiction_coordinates": _series_recalculate_depiction_coordinates,
+        "molgrid": _series_molgrid,
+    }.items():
+        extensions.register_series_method(name, series_func, overwrite=True)
+    for name, frame_func in {
+        "highlight": _dataframe_highlight,
+        "set_render_options": _dataframe_set_render_options,
+        "reset_depictions": _dataframe_reset_depictions,
+        "clear_formatting_rules": _dataframe_clear_formatting_rules,
+        "align_depictions": _dataframe_align_depictions,
+        "alignment_report": _dataframe_alignment_report,
+        "recalculate_depiction_coordinates": _dataframe_recalculate_depiction_coordinates,
+        "copy_molecules": _dataframe_copy_molecules,
+        "highlight_using_column": _dataframe_highlight_using_column,
+        "fingerprint_similarity": _dataframe_fingerprint_similarity,
+        "molgrid": _dataframe_molgrid,
+    }.items():
+        extensions.register_dataframe_method(name, frame_func, overwrite=True)
+    _ATTACHED = True
+
+
+_attach()
 
 
 ########################################################################################################################

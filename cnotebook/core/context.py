@@ -600,6 +600,41 @@ class CNotebookContext:
             device_pixel_ratio=self.device_pixel_ratio,
         )
 
+    def clone(self) -> 'CNotebookContext':
+        """
+        Copy this context keeping deferred options deferred and the same scope.
+
+        Unlike :meth:`copy`, which resolves every option to whatever the global context
+        holds at the moment of the call, this pins nothing: an option left deferred here
+        is still deferred in the clone and keeps following the global context.
+
+        :returns: An independent context with the same options and scope.
+        """
+        def raw(value: DeferredValue[Any]) -> Any:
+            return DEFERRED if value.is_deferred else value.get()
+
+        return CNotebookContext(
+            width=raw(self._width),
+            height=raw(self._height),
+            min_width=raw(self._min_width),
+            min_height=raw(self._min_height),
+            max_width=raw(self._max_width),
+            max_height=raw(self._max_height),
+            structure_scale=raw(self._structure_scale),
+            auto_scale=raw(self._auto_scale),
+            atom_label_font_scale=raw(self._atom_label_font_scale),
+            title_font_scale=raw(self._title_font_scale),
+            title=raw(self._title),
+            image_format=raw(self._image_format),
+            bond_width_scaling=raw(self._bond_width_scaling),
+            # A deferred callback list must stay deferred; a concrete one is copied so the
+            # clone and the original cannot hand each other callbacks later.
+            callbacks=DEFERRED if self._callbacks.is_deferred else list(self._callbacks.get()),
+            max_heavy_atoms=raw(self._max_heavy_atoms),
+            device_pixel_ratio=raw(self._device_pixel_ratio),
+            scope=self._scope,
+        )
+
 
 ########################################################################################################################
 # !!!!!!!!! Global render context !!!!!!!!!
