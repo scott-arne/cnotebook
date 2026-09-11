@@ -2809,3 +2809,47 @@ def test_style_captures_the_frame_when_called():
     assert styler.data["mol"].iloc[0] is shared
     shared.SetTitle("renamed")
     assert styler.data["mol"].iloc[0].GetTitle() == "renamed"
+
+
+def test_style_escapes_a_column_labelled_false():
+    """Pandas reads an all-boolean subset as a positional mask, so a label subset selects nothing."""
+    df = pd.DataFrame({False: ["<script>alert(1)</script>"]})
+
+    html = df.chem.style().to_html()
+
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_style_handles_boolean_labels_on_both_kinds_of_column():
+    df = _frame(1, x=["<b>v</b>"])
+    df["mol"].chem.set_render_options(image_format="svg")
+    df.columns = [False, True]  # the molecule column is False, the ordinary one True
+
+    html = df.chem.style().to_html()
+
+    assert "<svg" in html  # the depiction column still gets its own context
+    assert "<b>v</b>" not in html and "&lt;b&gt;v&lt;/b&gt;" in html
+
+
+def test_style_handles_mixed_boolean_and_string_labels():
+    df = _frame(1, a=["<b>a</b>"], b=["<b>b</b>"])
+    df.columns = pd.Index(["mol", True, "b"], dtype=object)
+
+    html = df.chem.style().to_html()
+
+    assert "<b>a</b>" not in html and "&lt;b&gt;a&lt;/b&gt;" in html
+    assert "<b>b</b>" not in html and "&lt;b&gt;b&lt;/b&gt;" in html
+    assert "<img" in html
+
+
+def test_style_binds_the_float_precision_when_called():
+    """Pandas binds styler.format.precision when the Styler is built, so cnotebook must too."""
+    df = pd.DataFrame({"f": [1.5]})
+    styler = df.chem.style()
+    native = df.style
+
+    with pd.option_context("styler.format.precision", 2):
+        assert _style_cells(styler.to_html()) == ["1.500000"]
+        assert _style_cells(native.to_html()) == ["1.500000"]  # native pandas agrees
+        assert _style_cells(df.chem.style().to_html()) == ["1.50"]

@@ -5,6 +5,7 @@ import threading
 import typing
 from collections.abc import Hashable, Iterable
 from contextlib import ExitStack
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -831,7 +832,7 @@ def _dataframe_molgrid(self, mol_col, title=True, tooltip_fields=None, **kwargs)
                    tooltip_fields=tooltip_fields, **kwargs)
 
 
-def _escape_cell_text(value: Any) -> str:
+def _escape_cell_text(value: Any, *, precision: int | None = None) -> str:
     """The escaped text to display for a value written outside a cnotebook depiction.
 
     Pandas' own ``escape="html"`` handling escapes only values that are already ``str`` and
@@ -839,15 +840,19 @@ def _escape_cell_text(value: Any) -> str:
     reach the document raw. Escaping the final text here keeps the trust boundary unqualified.
 
     :param value: Cell value, axis label or axis name.
+    :param precision: Digits for float and complex values; read from the styler option when
+        ``None``.
     :returns: HTML-escaped display text.
     """
     if isinstance(value, str):
         return html.escape(value)
-    # Replicate the two-line rule of pandas' private _default_formatter, so numeric cells still
-    # render exactly as ``df.style`` renders them: floats and complex numbers at the styler
-    # precision option, everything else as its plain string form.
+    # Replicate the two-line rule of pandas' private _default_formatter: floats and complex
+    # numbers at the styler precision option, as pandas' default formatter does, and everything
+    # else as its plain string form.
     if pd.api.types.is_float(value) or pd.api.types.is_complex(value):
-        return html.escape(f"{value:.{pd.get_option('styler.format.precision')}f}")
+        if precision is None:
+            precision = pd.get_option("styler.format.precision")
+        return html.escape(f"{value:.{precision}f}")
     return html.escape(str(value))
 
 
@@ -887,16 +892,24 @@ def _dataframe_style(self):
     styled = df.rename_axis(index=_escaped_axis_names(df.index.names),
                             columns=_escaped_axis_names(df.columns.names))
     styler = styled.style
-    ordinary = [label for pos, label in enumerate(adapter.columns()) if adapter.kind(pos) is ColumnKind.OTHER]
-    if ordinary:
-        styler = styler.format(_escape_cell_text, subset=ordinary)
-    styler = styler.format_index(_escape_cell_text, axis=0).format_index(_escape_cell_text, axis=1)
-    for pos, label in enumerate(adapter.columns()):
-        kind = adapter.kind(pos)
+    # Pandas reads a subset that is a list of booleans as a positional mask over the columns
+    # rather than as labels, so a frame labelled True/False would select the wrong columns or
+    # none at all. Address every column by a full-length mask instead, which never collides.
+    kinds = [adapter.kind(pos) for pos in range(len(adapter.columns()))]
+    # Pandas binds the precision option when a Styler is built, so bind it once here too
+    # instead of reading it per cell at render time.
+    escape_text = partial(_escape_cell_text, precision=pd.get_option("styler.format.precision"))
+    ordinary = [kind is ColumnKind.OTHER for kind in kinds]
+    if any(ordinary):
+        styler = styler.format(escape_text, subset=(slice(None), ordinary))
+    styler = styler.format_index(escape_text, axis=0).format_index(escape_text, axis=1)
+    for pos, kind in enumerate(kinds):
         if kind is ColumnKind.OTHER:
             continue
         column_ctx = adapter.context(pos)
-        styler = styler.format(lambda value, _kind=kind, _ctx=column_ctx: cell_html(_kind, value, _ctx), subset=[label], escape=None)
+        only_this_column = [i == pos for i in range(len(kinds))]
+        styler = styler.format(lambda value, _kind=kind, _ctx=column_ctx: cell_html(_kind, value, _ctx),
+                               subset=(slice(None), only_this_column), escape=None)
     return styler
 
 
