@@ -1,10 +1,21 @@
-import pytest
-import pandas as pd
+import logging
+import sys
+import types
+import warnings
 from unittest.mock import MagicMock, patch
+
+import oepolars as oeplr
+import pandas as pd
+import polars as pl
+import pytest
 from openeye import oechem, oedepict
-from cnotebook.marimo_ext import _display_mol
+
 # Import the other display functions for testing
 import cnotebook.marimo_ext
+import cnotebook.marimo_ext as me
+import cnotebook.polars_ext as pe
+from cnotebook.core.errors import CNotebookWarning
+from cnotebook.marimo_ext import _display_mol
 
 try:
     import oepandas as oepd
@@ -356,9 +367,6 @@ class TestPolarsSupport:
 
     def test_polars_support_is_decided_by_sys_modules(self):
         """The adapter no longer keeps backend flags: an imported polars gets a formatter."""
-        import sys
-
-        import polars as pl
         from marimo._output.formatting import OPINIONATED_FORMATTERS
 
         import cnotebook.marimo_ext
@@ -906,13 +914,6 @@ def test_marimo_svg_unaffected_by_dpr():
 # Table formatters over the shared cell formatters
 ########################################################################################################################
 
-import oepolars as oeplr
-import polars as pl
-
-import cnotebook.marimo_ext as me
-import cnotebook.polars_ext as pe
-
-
 def _mol():
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "c1ccccc1O")
@@ -963,3 +964,102 @@ def test_ctx_bound_image_uses_logical_size():
 
     css = int(re.search(r"width:(\d+)px", html).group(1))
     assert css == image._cnotebook_logical_size[0]
+
+
+def _fake_marimo(*, version="0.12.9", running=None):
+    """Build a stand-in ``marimo`` module the version guard will reject.
+
+    :param version: Value for ``__version__``; the default is below ``_MIN_MARIMO``.
+    :param running: Return value for ``running_in_notebook``; ``None`` omits the attribute.
+    :returns: An object suitable for ``sys.modules["marimo"]``.
+    """
+    fake = types.SimpleNamespace(__version__=version)
+    if running is not None:
+        fake.running_in_notebook = lambda: running
+    return fake
+
+
+@pytest.mark.parametrize("running", [True, False], ids=["under-marimo", "elsewhere"])
+def test_attach_reports_a_disabled_adapter_only_under_marimo(monkeypatch, caplog, running):
+    """An unusable marimo warns in a marimo notebook and only logs anywhere else.
+
+    Importing marimo is not the same as running under it: cnotebook's own environment
+    detection imports marimo, so a Jupyter user with an old marimo must stay unbothered.
+    """
+    monkeypatch.setitem(sys.modules, "marimo", _fake_marimo(running=running))
+    monkeypatch.setattr(me, "_WARNED", False)
+    monkeypatch.setattr(me, "table", None)
+
+    with caplog.at_level(logging.DEBUG, logger="cnotebook"):
+        if running:
+            with pytest.warns(CNotebookWarning, match="marimo table integration disabled"):
+                me._attach()
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", CNotebookWarning)
+                me._attach()
+            assert "marimo table integration disabled" in caplog.text
+
+    # Either way the adapter stays out of marimo's way.
+    assert me.table is None
+
+
+def test_attach_reports_the_disabled_adapter_once(monkeypatch):
+    """The warn-once flag survives the repeated _attach calls the backends make."""
+    monkeypatch.setitem(sys.modules, "marimo", _fake_marimo(running=True))
+    monkeypatch.setattr(me, "_WARNED", False)
+    monkeypatch.setattr(me, "table", None)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        me._attach()
+        me._attach()
+
+    disabled = [w for w in caught if issubclass(w.category, CNotebookWarning)]
+    assert len(disabled) == 1
+    assert "marimo table integration disabled" in str(disabled[0].message)
+
+
+@pytest.mark.parametrize(
+    ("marimo_module", "expected"),
+    [
+        (None, False),
+        (_fake_marimo(), False),
+        (_fake_marimo(running=False), False),
+        (_fake_marimo(running=True), True),
+    ],
+    ids=["absent", "no-probe", "not-running", "running"],
+)
+def test_running_under_marimo_treats_anything_unusable_as_not_running(
+    monkeypatch, marimo_module, expected
+):
+    """A missing marimo, a marimo without the probe, and a probe that raises all mean no."""
+    if marimo_module is None:
+        monkeypatch.delitem(sys.modules, "marimo", raising=False)
+    else:
+        monkeypatch.setitem(sys.modules, "marimo", marimo_module)
+    assert me._running_under_marimo() is expected
+
+    def boom():
+        raise RuntimeError("marimo could not answer")
+
+    monkeypatch.setitem(sys.modules, "marimo", types.SimpleNamespace(running_in_notebook=boom))
+    assert me._running_under_marimo() is False
+
+
+def test_column_width_consumes_only_the_sample():
+    """_column_width samples a column lazily instead of materialising all of it."""
+    from cnotebook.context import CNotebookContext
+    from cnotebook.core.table import ColumnKind
+
+    ctx = CNotebookContext(image_format="png")
+    consumed = 0
+
+    def counting_column():
+        nonlocal consumed
+        for _ in range(me._WIDTH_SAMPLE * 2):
+            consumed += 1
+            yield None
+
+    assert me._column_width(counting_column(), ColumnKind.MOLECULE, ctx) == 0
+    assert consumed == me._WIDTH_SAMPLE

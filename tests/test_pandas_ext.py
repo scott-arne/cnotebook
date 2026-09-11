@@ -2328,6 +2328,26 @@ def test_attach_is_idempotent_and_guarded(monkeypatch):
     pe._attach()
 
 
+def test_attach_survives_a_failing_marimo_tail(monkeypatch):
+    """A marimo that blows up must cost the caller marimo tables, not pandas support."""
+    import sys
+    import types
+
+    from cnotebook import marimo_ext
+
+    def boom() -> None:
+        raise RuntimeError("marimo exploded")
+
+    monkeypatch.setitem(sys.modules, "marimo", types.SimpleNamespace())
+    monkeypatch.setattr(marimo_ext, "_attach", boom)
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+
+    with pytest.warns(CNotebookWarning, match="marimo table integration disabled: marimo exploded"):
+        pe._attach()
+
+    assert pe._ATTACHED
+
+
 def test_copy_molecules_preserves_integer_index():
     """copy_molecules should preserve non-default integer index."""
     mol1 = oechem.OEGraphMol()

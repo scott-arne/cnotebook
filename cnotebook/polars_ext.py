@@ -1035,9 +1035,14 @@ def _attach() -> None:
     }.items():
         extensions.register_dataframe_method(name, frame_func, overwrite=True)
     if "marimo" in sys.modules:
-        from cnotebook import marimo_ext
+        # A marimo problem must not cost the caller polars support, so the tail cannot
+        # be allowed to escape before _ATTACHED is set.
+        try:
+            from cnotebook import marimo_ext
 
-        marimo_ext._attach()
+            marimo_ext._attach()
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal to polars support
+            warn(f"cnotebook marimo table integration disabled: {exc}")
     _ATTACHED = True
 
 

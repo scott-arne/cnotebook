@@ -1571,6 +1571,25 @@ def test_at_least_without_packaging_rejects_an_unreadable_version(monkeypatch):
         pe._at_least("not-a-version", (0, 4, 0))
 
 
+def test_polars_attach_survives_a_failing_marimo_tail(monkeypatch):
+    """A marimo that blows up must cost the caller marimo tables, not polars support."""
+    import types
+
+    from cnotebook import marimo_ext
+
+    def boom() -> None:
+        raise RuntimeError("marimo exploded")
+
+    monkeypatch.setitem(sys.modules, "marimo", types.SimpleNamespace())
+    monkeypatch.setattr(marimo_ext, "_attach", boom)
+    monkeypatch.setattr(pe, "_ATTACHED", False)
+
+    with pytest.warns(CNotebookWarning, match="marimo table integration disabled: marimo exploded"):
+        pe._attach()
+
+    assert pe._ATTACHED
+
+
 def _spy_on_highlight_column(monkeypatch) -> dict:
     """Record the arguments the polars accessor hands to :func:`columnops.build_highlight_column`."""
     recorded: dict = {}

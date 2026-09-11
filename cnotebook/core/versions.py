@@ -44,6 +44,8 @@ def at_least(version: str, minimum: tuple[int, ...] | str) -> bool:
     """
     floor = minimum if isinstance(minimum, tuple) else tuple(int(part) for part in minimum.split("."))
     try:
+        # Deliberately optional: packaging is not a cnotebook dependency, and the branch
+        # below is the whole point of the try. Do not turn this into a hard import.
         from packaging.version import Version
     except ImportError:
         match = _VERSION_RE.fullmatch(version.strip())

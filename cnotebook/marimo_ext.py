@@ -10,8 +10,10 @@ sizing survive into Marimo's built-in table component.
 Neither pandas nor polars is imported at module level: the formatters and
 :func:`_attach` reach for whichever of them the session has already imported.
 """
+import logging
 import sys
 from collections.abc import Callable, Iterable
+from itertools import islice
 from typing import Any
 
 from openeye import oechem, oedepict
@@ -29,6 +31,8 @@ from cnotebook.core.render import (
 )
 from cnotebook.core.table import ColumnKind, FrameAdapter
 from cnotebook.core.versions import at_least as _at_least
+
+log = logging.getLogger("cnotebook")
 
 ########################################################################################################################
 # MIME handlers for individual OpenEye objects
@@ -187,7 +191,8 @@ def _column_width(values: Iterable[Any], kind: ColumnKind, ctx: CNotebookContext
     :returns: Width in pixels, ``0`` when nothing in the sample is depictable.
     """
     width = 0
-    for value in list(values)[:_WIDTH_SAMPLE]:
+    # islice, not a slice of a list: a column can be long, and only the sample is needed.
+    for value in islice(values, _WIDTH_SAMPLE):
         candidate = 0
         if kind in (ColumnKind.MOLECULE, ColumnKind.QUERY) and isinstance(value, oechem.OEMolBase):
             if not value.IsValid() or value.NumAtoms() == 0 or (
@@ -253,14 +258,15 @@ def _format_frame(
     format_mapping: dict[Any, Any] = {}
     widths: dict[str, int] = {}
     for pos, label in enumerate(adapter.columns()):
-        factory = _FACTORIES.get(adapter.kind(pos))
+        kind = adapter.kind(pos)
+        factory = _FACTORIES.get(kind)
         if factory is None:
             continue
         # A copy, because the closure outlives this call and must not see later edits
         # to the column's stored context.
         ctx = adapter.context(pos).copy()
         format_mapping[label] = factory(ctx)
-        width = _column_width(values_for(pos), adapter.kind(pos), ctx)
+        width = _column_width(values_for(pos), kind, ctx)
         if width:
             widths[str(label)] = width
     style_cell = _make_style_cell(widths) if widths else None
@@ -297,13 +303,32 @@ _MIN_MARIMO = (0, 13, 0)
 _WARNED = False
 
 
+def _running_under_marimo() -> bool:
+    """Report whether this session is actually a marimo notebook.
+
+    ``marimo`` being importable says nothing: cnotebook's own environment detection
+    imports it, so a Jupyter session can hold a marimo the adapter cannot use. Only a
+    marimo that says it is running should be told about it.
+
+    :returns: ``True`` only when an imported marimo reports that it is running a notebook.
+    """
+    running = getattr(sys.modules.get("marimo"), "running_in_notebook", None)
+    if running is None:
+        return False
+    try:
+        return bool(running())
+    except Exception:  # noqa: BLE001 - a probe that fails is not a running notebook
+        return False
+
+
 def _attach() -> None:
     """Register the table formatters for the DataFrame libraries the session has imported.
 
     Safe to call repeatedly, and called again whenever pandas or polars support attaches,
     so a frame library imported after cnotebook still gets its formatter. A marimo that is
-    missing, too old, or no longer exposing the internals warns once and leaves marimo's
-    own table formatting in place.
+    missing, too old, or no longer exposing the internals leaves marimo's own table
+    formatting in place; that is reported once, and only warns when the session really is
+    a marimo notebook, so an unrelated Jupyter session stays quiet.
     """
     global table, _WARNED
     try:
@@ -316,9 +341,14 @@ def _attach() -> None:
         from marimo._output.formatting import OPINIONATED_FORMATTERS
         from marimo._plugins.ui._impl.table import table as marimo_table
     except (ImportError, AttributeError, ValueError) as exc:
+        # The reason cannot change within a session, so one report either way is enough.
         if not _WARNED:
             _WARNED = True
-            warn(f"cnotebook marimo table integration disabled: {exc}")
+            message = f"cnotebook marimo table integration disabled: {exc}"
+            if _running_under_marimo():
+                warn(message)
+            else:
+                log.debug(message)
         return
     table = marimo_table
     if "pandas" in sys.modules and "oepandas" in sys.modules:
