@@ -16,6 +16,18 @@ from cnotebook.polars_ext import render_polars_dataframe
 SMILES = ["c1ccccc1O", "CCO", "C" * 130]
 
 
+class _InvalidMol(oechem.OEGraphMol):
+    """OEChem never yields an invalid molecule that still has atoms, so the defensive
+    'Invalid Molecule' branch is reached through a subclass that reports itself invalid.
+
+    The aligned fixture cannot carry one because alignment copies molecules
+    (_copy() in cnotebook/core/columnops.py) which yields a plain valid OEGraphMol.
+    """
+
+    def IsValid(self):
+        return False
+
+
 def _mols():
     out = []
     for smi in SMILES:
@@ -54,10 +66,21 @@ def test_pandas_and_polars_render_identical_cells(image_format):
     pandas_cells = _images(_cells(render_dataframe(pdf, max_rows=0)))
     polars_cells = _images(_cells(render_polars_dataframe(plf, max_rows=0)))
     assert pandas_cells == polars_cells
+    # Placeholder cells carry the placeholder size
     assert "width:200px;height:200px" in pandas_cells[-1]
     assert "width:200px;height:200px" in pandas_cells[2]
-    if image_format == "svg":
-        assert "Empty Molecule" in pandas_cells[-1] and "Exceeds Max Heavy Atoms" in pandas_cells[2]
+    # Format markers prove PNG vs SVG output
+    if image_format == "png":
+        assert "data:image/png;base64," in pandas_cells[0]
+        assert "data:image/png;base64," in pandas_cells[2]
+        assert "data:image/png;base64," in pandas_cells[-1]
+    else:
+        assert "<svg" in pandas_cells[0]
+        assert "<svg" in pandas_cells[2]
+        assert "<svg" in pandas_cells[-1]
+        # Text assertions for SVG only (PNG has no alt text)
+        assert "Empty Molecule" in pandas_cells[-1]
+        assert "Exceeds Max Heavy Atoms" in pandas_cells[2]
 
 
 def test_marimo_formatters_match_table_renderers(monkeypatch):
@@ -96,6 +119,64 @@ def test_marimo_formatters_match_table_renderers(monkeypatch):
     polars_marimo = [_marimo_html(polars_formatter(m)) for m in plf.get_column("mol").to_list()]
     assert _images(polars_marimo) == _images(_cells(render_polars_dataframe(plf, max_rows=0)))
     assert _images(polars_marimo) == _images(pandas_marimo)
+
+
+def test_invalid_molecule_placeholder(monkeypatch):
+    # Test the invalid-with-atoms branch without alignment (which normalizes the double).
+    # Build frames with [valid, invalid, None], apply only set_render_options (no copying).
+    valid = oechem.OEGraphMol()
+    oechem.OESmilesToMol(valid, "CCO")
+    invalid = _InvalidMol()
+    oechem.OESmilesToMol(invalid, "CCO")
+    mols = [valid, invalid, None]
+
+    # Pandas path
+    pdf = pd.DataFrame({"mol": pd.Series(mols, dtype=oepd.MoleculeDtype())})
+    pdf["mol"].chem.set_render_options(image_format="svg")
+    pandas_cells = _cells(render_dataframe(pdf, max_rows=0))
+    assert "Invalid Molecule" in pandas_cells[1]
+    assert pandas_cells[2] == ""
+
+    # Polars path
+    plf = pl.DataFrame([pl.Series("mol", mols, dtype=oeplr.MoleculeType())])
+    plf = plf.chem.set_render_options("mol", image_format="svg")
+    polars_cells = _cells(render_polars_dataframe(plf, max_rows=0))
+    assert "Invalid Molecule" in polars_cells[1]
+    assert polars_cells[2] == ""
+
+    # Marimo formatters
+    captured: dict[str, object] = {}
+
+    def fake_table(frame, **kwargs):
+        captured.update(kwargs)
+
+        class _T:
+            def _mime_(self):
+                return ("text/html", "")
+
+        return _T()
+
+    monkeypatch.setattr(me, "table", fake_table)
+
+    # Pandas formatter
+    me.marimo_pandas_formatter(pdf)
+    pandas_formatter = captured["format_mapping"]["mol"]
+    pandas_marimo = [_marimo_html(pandas_formatter(m)) for m in pdf["mol"]]
+    assert "Invalid Molecule" in pandas_marimo[1]
+    assert pandas_marimo[2] == ""
+
+    # Polars formatter
+    captured.clear()
+    me.marimo_polars_formatter(plf)
+    polars_formatter = captured["format_mapping"]["mol"]
+    polars_marimo = [_marimo_html(polars_formatter(m)) for m in plf.get_column("mol").to_list()]
+    assert "Invalid Molecule" in polars_marimo[1]
+    assert polars_marimo[2] == ""
+
+    # All four outputs agree cell for cell
+    assert _images(pandas_cells) == _images(polars_cells)
+    assert _images(pandas_marimo) == _images(pandas_cells)
+    assert _images(polars_marimo) == _images(polars_cells)
 
 
 def test_fingerprint_similarity_parity():
