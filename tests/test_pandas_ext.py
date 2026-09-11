@@ -1741,6 +1741,31 @@ class TestDataFrameFingerprintSimilarity:
         # Self-similarity should be 1.0
         assert result["fingerprint_tanimoto"].iloc[0] == pytest.approx(1.0)
 
+    @pytest.mark.skipif(not oepandas_available, reason="oepandas not available")
+    def test_fingerprint_similarity_with_duplicate_output_raises(self):
+        """fingerprint_similarity should raise ValueError if any output column is duplicated."""
+        mol = oechem.OEGraphMol()
+        oechem.OESmilesToMol(mol, "c1ccccc1")
+        oedepict.OEPrepareDepiction(mol)
+
+        # Create DataFrame with duplicate column labels
+        df = pd.DataFrame(
+            [[mol, 1, 2]],
+            columns=["mol", "out", "out"]
+        )
+        df["mol"] = df["mol"].astype(oepd.MoleculeDtype())
+
+        # Capture frame state
+        original_columns = list(df.columns)
+        original_dtypes = list(df.dtypes)
+
+        with pytest.raises(ValueError, match="column label 'out' is not unique"):
+            df.chem.fingerprint_similarity("mol", tanimoto_column="out")
+
+        # Frame should be unchanged (no depiction work done)
+        assert list(df.columns) == original_columns
+        assert list(df.dtypes) == original_dtypes
+
 
 
 def test_highlight_using_column_overlay_produces_different_svg():
@@ -2399,6 +2424,98 @@ def test_copy_molecules_preserves_render_options():
     assert copy_ctx.image_format == "png"
 
 
+def test_copy_molecules_with_duplicate_dest_raises():
+    """copy_molecules should raise ValueError if dest_column is duplicated."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+
+    # Create DataFrame with duplicate column labels
+    df = pd.DataFrame(
+        [[mol, 1, 2]],
+        columns=["mol", "dest", "dest"]
+    )
+    df["mol"] = df["mol"].astype(oepd.MoleculeDtype())
+
+    # Capture frame state before the call
+    original_columns = list(df.columns)
+    original_dtypes = list(df.dtypes)
+    original_mol = df.iloc[0, 0]
+
+    with pytest.raises(ValueError, match="column label 'dest' is not unique"):
+        df.chem.copy_molecules("mol", "dest")
+
+    # Frame should be byte-for-byte unchanged
+    assert list(df.columns) == original_columns
+    assert list(df.dtypes) == original_dtypes
+    assert df.iloc[0, 0] is original_mol
+
+
+def test_copy_molecules_with_duplicate_dest_and_context_raises():
+    """copy_molecules should raise ValueError for duplicated dest even with context."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+
+    # Create DataFrame with duplicate column labels
+    df = pd.DataFrame(
+        [[mol, 1, 2]],
+        columns=["mol", "dest", "dest"]
+    )
+    df["mol"] = df["mol"].astype(oepd.MoleculeDtype())
+    df.iloc[:, 0].chem.highlight("c1ccccc1")
+
+    # Capture frame state
+    original_columns = list(df.columns)
+    original_dtypes = list(df.dtypes)
+    original_mol = df.iloc[0, 0]
+    original_ctx = df.iloc[:, 0].array.metadata.get("cnotebook")
+
+    with pytest.raises(ValueError, match="column label 'dest' is not unique"):
+        df.chem.copy_molecules("mol", "dest")
+
+    # Frame should be unchanged and context intact
+    assert list(df.columns) == original_columns
+    assert list(df.dtypes) == original_dtypes
+    assert df.iloc[0, 0] is original_mol
+    assert df.iloc[:, 0].array.metadata.get("cnotebook") is original_ctx
+
+
+def test_copy_molecules_overwrites_single_existing_dest():
+    """copy_molecules should overwrite an existing single destination column."""
+    mol1 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol1, "CCO")
+    mol2 = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol2, "c1ccccc1")
+
+    df = pd.DataFrame({
+        "mol": pd.Series([mol1], dtype=oepd.MoleculeDtype()),
+        "dest": ["placeholder"],
+    })
+
+    result = df.chem.copy_molecules("mol", "dest")
+
+    # Should overwrite and keep MoleculeDtype
+    assert isinstance(result["dest"].dtype, oepd.MoleculeDtype)
+    assert result["dest"][0] is not None
+    assert result["dest"][0].NumAtoms() == mol1.NumAtoms()
+
+
+def test_copy_molecules_context_is_distinct_object():
+    """Copied column's context should be a distinct object from source."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+
+    df = pd.DataFrame({"mol": pd.Series([mol], dtype=oepd.MoleculeDtype())})
+    df["mol"].chem.highlight("c1ccccc1")
+
+    source_ctx = df["mol"].array.metadata.get("cnotebook")
+
+    result = df.chem.copy_molecules("mol", "copy")
+    dest_ctx = result["copy"].array.metadata.get("cnotebook")
+
+    # Context objects should be distinct
+    assert dest_ctx is not source_ctx
+
+
 def test_bulk_accessor_with_duplicate_labels():
     """Bulk accessors should handle duplicate column labels."""
     mol1 = oechem.OEGraphMol()
@@ -2465,6 +2582,30 @@ def test_highlight_using_column_handles_na_colors():
     # Should not raise TypeError
     result = df.chem.highlight_using_column("mol", "pat", color_column="col")
     assert "highlighted_substructures" in result.columns
+
+
+def test_highlight_using_column_with_duplicate_output_raises():
+    """highlight_using_column should raise ValueError if output column is duplicated."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+
+    # Create DataFrame with duplicate column labels
+    df = pd.DataFrame(
+        [[mol, "c1ccccc1", 1, 2]],
+        columns=["mol", "pat", "out", "out"]
+    )
+    df["mol"] = df["mol"].astype(oepd.MoleculeDtype())
+
+    # Capture frame state
+    original_columns = list(df.columns)
+    original_dtypes = list(df.dtypes)
+
+    with pytest.raises(ValueError, match="column label 'out' is not unique"):
+        df.chem.highlight_using_column("mol", "pat", highlighted_column="out")
+
+    # Frame should be unchanged (no depiction work done)
+    assert list(df.columns) == original_columns
+    assert list(df.dtypes) == original_dtypes
 
 
 def test_attach_with_dev_version(monkeypatch):

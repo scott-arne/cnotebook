@@ -620,6 +620,22 @@ def _unique_column_label(df: pd.DataFrame, label: Hashable, method: str, *, miss
     return matches[0]
 
 
+def _unique_output_label(df: pd.DataFrame, label: Hashable, method: str) -> None:
+    """Validate an output column label is not duplicated.
+
+    Allows zero matches (new column) or one match (overwrite), but raises ValueError
+    for duplicates to prevent pandas from corrupting the frame.
+
+    :param df: DataFrame to check.
+    :param label: Output column label.
+    :param method: Caller method name for diagnostics.
+    :raises ValueError: When the label appears more than once.
+    """
+    matches = [pos for pos in range(len(df.columns)) if df.columns[pos] == label]
+    if len(matches) > 1:
+        raise ValueError(f"{method}: column label {label!r} is not unique; rename the columns or choose another destination")
+
+
 def _dataframe_set_render_options(self, molecule_columns=None, **options) -> None:
     """Set render options for molecule or query columns.
 
@@ -683,19 +699,21 @@ def _dataframe_copy_molecules(self, source_column, dest_column) -> pd.DataFrame:
     :param source_column: Source column name.
     :param dest_column: Destination column name.
     :returns: The DataFrame with the new column.
-    :raises ValueError: If *source_column* is not unique.
+    :raises ValueError: If *source_column* or *dest_column* is not unique.
     """
     pos = _unique_column_label(self._obj, source_column, "copy_molecules", missing=ValueError)
+    _unique_output_label(self._obj, dest_column, "copy_molecules")
     if not isinstance(self._obj.dtypes.iloc[pos], oepd.MoleculeDtype):
         raise TypeError(f"copy_molecules only works on molecule columns; {source_column!r} has dtype {self._obj.dtypes.iloc[pos]}")
     source_series = self._obj[source_column]
     copied = source_series.chem.copy_molecules()
-    self._obj[dest_column] = pd.Series(copied.array, index=self._obj.index)
+    arr = copied.array
     # Copy the context so the copy has independent rendering state
-    if "cnotebook" in copied.array.metadata:
-        ctx = copied.array.metadata["cnotebook"]
+    if "cnotebook" in arr.metadata:
+        ctx = arr.metadata["cnotebook"]
         if isinstance(ctx, CNotebookContext):
-            self._obj[dest_column].array.metadata["cnotebook"] = ctx.copy()
+            arr.metadata["cnotebook"] = ctx.copy()
+    self._obj[dest_column] = pd.Series(arr, index=self._obj.index)
     return self._obj
 
 
@@ -725,6 +743,7 @@ def _dataframe_highlight_using_column(self, molecule_column, pattern_column, *, 
     _unique_column_label(df, pattern_column, "highlight_using_column")
     if color_column is not None:
         _unique_column_label(df, color_column, "highlight_using_column")
+    _unique_output_label(df, highlighted_column, "highlight_using_column")
     arr = _require_molecule_series(df.iloc[:, mol_pos], "highlight_using_column")
     ctx = get_series_context(arr.metadata)
     # Handle color_column properly (test color_column is not None, not truthiness)
@@ -767,6 +786,9 @@ def _dataframe_fingerprint_similarity(self, molecule_column, ref=None, *, tanimo
     """
     df = self._obj if inplace else self._obj.copy()
     mol_pos = _unique_column_label(df, molecule_column, "fingerprint_similarity")
+    _unique_output_label(df, tanimoto_column, "fingerprint_similarity")
+    _unique_output_label(df, reference_similarity_column, "fingerprint_similarity")
+    _unique_output_label(df, target_similarity_column, "fingerprint_similarity")
     if not isinstance(df.dtypes.iloc[mol_pos], oepd.MoleculeDtype):
         raise TypeError(f"Column {molecule_column!r} does not have dtype oepandas.MoleculeDtype")
     arr = df.iloc[:, mol_pos].array
