@@ -365,25 +365,32 @@ def _running_under_marimo() -> bool:
 
 
 def _marimo_owns_display() -> bool:
-    """Report whether marimo, and not another front end, is what renders this session.
+    """Report whether marimo is running this process rather than merely being installed.
 
-    Priming marimo's formatter registry is only safe where marimo is the front end:
-    doing it swaps ``comm.create_comm`` for one that turns every non-anywidget comm into
-    a no-op, and rewrites the Pandas display options. In a Jupyter session those are
-    regressions, and cnotebook reaches this code there because its own environment
-    detection leaves ``marimo`` in ``sys.modules``. A live IPython shell is the signal
-    that something else owns the display; a marimo notebook run as a plain script has no
-    shell, so it still counts as marimo's.
+    Priming marimo's formatter registry has process-wide costs: it swaps
+    ``comm.create_comm`` for one that turns every non-anywidget comm into a no-op, and
+    rewrites the Pandas display options. Neither is acceptable anywhere marimo is only a
+    bystander, and cnotebook reaches this code in every such process, because its own
+    environment detection imports marimo wherever it is installed. A marimo runtime
+    context is what tells the cases apart: a kernel installs one, and so does marimo
+    running a notebook as a script, before any cell executes. A plain script never does.
 
-    :returns: ``True`` when nothing but marimo is in a position to render output.
+    Skipping the priming costs the registration only its permanence: in Jupyter or a
+    plain script marimo's own lazy pass may run later and put its dataframe formatter
+    back over cnotebook's. That is harmless, because neither front end ever asks marimo's
+    registry how to render a frame.
+
+    :returns: ``True`` only when marimo is the runtime behind this process.
     """
     if _running_under_marimo():
         return True
     try:
-        from IPython.core.getipython import get_ipython
-    except ImportError:
-        return True
-    return get_ipython() is None
+        from marimo._runtime.context.types import get_context
+
+        get_context()
+    except Exception:  # noqa: BLE001 - no reachable context means marimo is not running this
+        return False
+    return True
 
 
 def _install_formatters(

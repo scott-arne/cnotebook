@@ -1083,6 +1083,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(me.__file__)))
 # take the better part of a minute on a loaded machine.
 _FRESH_PROCESS_TIMEOUT = 300
 
+# How a child says it is a process marimo owns. Installing a real runtime context would
+# say it too, but a context also stops get_formatter from ever running the lazy pass these
+# scripts exist to defeat, which would leave them passing whether or not the adapter primes
+# marimo. The gate's own answer is tested against a real context in-process instead.
+_OWN_THE_DISPLAY = """
+import cnotebook.marimo_ext as _owned
+_owned._marimo_owns_display = lambda: True
+"""
+
 # What every import-order script does once the session is set up: attach, then ask marimo
 # itself - not the registry - which formatter it would use.
 _LOOKUP_TAIL = """
@@ -1105,7 +1114,7 @@ _IMPORT_ORDERS = {
     ),
 }
 
-_HIGHLIGHT_SCRIPT = """
+_HIGHLIGHT_SCRIPT = _OWN_THE_DISPLAY + """
 import marimo
 import cnotebook
 import cnotebook.marimo_ext as me
@@ -1126,6 +1135,32 @@ print(formatter.__name__)
 highlighted_html = formatter(highlighted)[1]
 plain = highlighted.chem.reset_depictions("mol")
 print(highlighted_html != get_formatter(plain, include_opinionated=True)(plain)[1])
+"""
+
+# A plain script that merely has marimo installed. Nothing here claims the display, so
+# importing cnotebook must leave the interpreter exactly as it found it.
+_PLAIN_SCRIPT = """
+import comm
+import pandas as pd
+
+default_rows = pd.get_option("display.max_rows")
+default_columns = pd.get_option("display.max_columns")
+create_comm = comm.create_comm
+
+import cnotebook
+
+# Everything below only reads what the import above did or did not do.
+import sys
+from marimo._output.formatting import FORMATTERS
+
+import cnotebook.marimo_ext as me
+
+print("adapter imported:", "cnotebook.marimo_ext" in sys.modules)
+print("marimo primed:", not FORMATTERS.is_empty())
+print("max_rows unchanged:", pd.get_option("display.max_rows") == default_rows)
+print("max_columns unchanged:", pd.get_option("display.max_columns") == default_columns)
+print("create_comm unchanged:", comm.create_comm is create_comm)
+print("marimo owns the display:", me._marimo_owns_display())
 """
 
 
@@ -1160,7 +1195,7 @@ def test_marimo_lazy_registration_cannot_displace_the_cnotebook_formatters(order
     Writing the registry is not enough: marimo's lazy start-up pass runs later and puts its
     own dataframe formatter back, so the adapter has to provoke that pass before it writes.
     """
-    assert _run_in_fresh_process(_IMPORT_ORDERS[order] + _LOOKUP_TAIL) == [
+    assert _run_in_fresh_process(_IMPORT_ORDERS[order] + _OWN_THE_DISPLAY + _LOOKUP_TAIL) == [
         "marimo_pandas_formatter",
         "marimo_polars_formatter",
     ]
@@ -1169,6 +1204,23 @@ def test_marimo_lazy_registration_cannot_displace_the_cnotebook_formatters(order
 def test_a_highlight_survives_the_formatter_marimo_actually_looks_up():
     """A highlighted frame and its reset sibling serialise differently through marimo's lookup."""
     assert _run_in_fresh_process(_HIGHLIGHT_SCRIPT) == ["marimo_polars_formatter", "True"]
+
+
+def test_importing_cnotebook_in_a_plain_script_changes_nothing_about_the_interpreter():
+    """A script that only has marimo installed is left exactly as cnotebook found it.
+
+    Priming marimo is a process-wide edit - the Pandas display options drop to ten rows and
+    ``comm.create_comm`` is replaced - so it has to stay out of every process marimo is not
+    actually running.
+    """
+    assert _run_in_fresh_process(_PLAIN_SCRIPT) == [
+        "adapter imported: True",
+        "marimo primed: False",
+        "max_rows unchanged: True",
+        "max_columns unchanged: True",
+        "create_comm unchanged: True",
+        "marimo owns the display: False",
+    ]
 
 
 ########################################################################################################################
@@ -1322,24 +1374,67 @@ def test_attach_survives_a_marimo_that_cannot_prime_its_registry(monkeypatch, ca
     assert me.table is None
 
 
-@pytest.mark.parametrize(
-    ("shell", "owns"), [(None, True), (object(), False)], ids=["no-shell", "ipython-shell"]
-)
-def test_marimo_does_not_own_the_display_of_another_front_end(monkeypatch, shell, owns):
-    """A live IPython shell means Jupyter renders the output, so marimo must not be primed.
+def test_marimo_owns_the_display_only_while_a_runtime_context_is_installed():
+    """A runtime context separates marimo running this process from marimo being installed.
+
+    The context is installed the way marimo's own script runner installs it, which is what
+    ``marimo run`` does before any cell executes; a kernel installs one too.
+    """
+    from marimo._ast.app import App, InternalApp
+    from marimo._messaging.types import NoopStream
+    from marimo._runtime.context.script_context import initialize_script_context
+    from marimo._runtime.context.types import teardown_context
+
+    assert me._marimo_owns_display() is False
+
+    initialize_script_context(app=InternalApp(App()), stream=NoopStream(), filename=None)
+    try:
+        assert me._marimo_owns_display() is True
+    finally:
+        teardown_context()
+
+    assert me._marimo_owns_display() is False
+
+
+def test_a_running_marimo_owns_the_display_without_a_context():
+    """A marimo that reports it is running a notebook is answer enough on its own."""
+    import marimo
+
+    with patch.object(marimo, "running_in_notebook", lambda: True):
+        assert me._marimo_owns_display() is True
+
+
+def test_a_context_probe_that_raises_leaves_marimo_owning_nothing():
+    """Whatever the probe raises, an unanswerable question is not a claim on the display."""
+    from marimo._runtime.context import types as context_types
+
+    def boom():
+        raise RuntimeError("marimo cannot say whether a context is installed")
+
+    with patch.object(context_types, "get_context", boom):
+        assert me._marimo_owns_display() is False
+
+
+def test_a_jupyter_session_is_never_primed(monkeypatch):
+    """Jupyter renders its own output, so an importable marimo must not be primed there.
 
     Priming swaps ``comm.create_comm`` for one that turns every non-anywidget comm into a
     no-op and rewrites the Pandas display options. In Jupyter both are regressions, and
     cnotebook gets here because its own environment detection leaves marimo importable.
+    The live shell is what makes this Jupyter; the gate has to answer no without it.
     """
     import marimo._output.formatters.formatters as marimo_formatters
     from IPython.core import getipython
 
-    monkeypatch.setattr(getipython, "get_ipython", lambda: shell)
-    assert me._marimo_owns_display() is owns
+    monkeypatch.setattr(getipython, "get_ipython", lambda: object())
+    assert me._marimo_owns_display() is False
 
     primed = []
     monkeypatch.setattr(marimo_formatters, "register_formatters", lambda *a, **k: primed.append(1))
     monkeypatch.setattr(me, "_WARNED", False)
+    rows = pd.get_option("display.max_rows")
+
     me._attach()
-    assert bool(primed) is owns
+
+    assert primed == []
+    assert pd.get_option("display.max_rows") == rows
