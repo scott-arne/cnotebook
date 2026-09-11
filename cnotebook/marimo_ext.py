@@ -1,50 +1,34 @@
 """
 Marimo integration for CNotebook.
 
-This module provides MIME handlers for OpenEye objects and patches Marimo's
-internal table implementation to support molecule rendering with callbacks
-(highlighting, alignment, etc.) in Marimo's built-in DataFrame table component.
+This module provides MIME handlers for bare OpenEye objects and registers table
+formatters for pandas and polars frames with Marimo's formatter registry. Molecule,
+query, display and design-unit columns render through the shared cell formatters
+with the render context stored on each column, so highlighting, alignment and
+sizing survive into Marimo's built-in table component.
+
+Neither pandas nor polars is imported at module level: the formatters and
+:func:`_attach` reach for whichever of them the session has already imported.
 """
-import importlib
-import logging
+import sys
+from collections.abc import Callable, Iterable
 from typing import Any
 
-import pandas as pd
 from openeye import oechem, oedepict
 
-# Import oepandas for dtype checking
-try:
-    oepd: Any = importlib.import_module("oepandas")
-    oepandas_available = True
-except ImportError:
-    oepd = None
-    oepandas_available = False
-
-# Import oepolars for dtype checking
-try:
-    pl: Any = importlib.import_module("polars")
-    oeplr: Any = importlib.import_module("oepolars")
-    oepolars_available = True
-except ImportError:
-    pl = None
-    oeplr = None
-    oepolars_available = False
-
-from .context import cnotebook_context, get_series_context
-from .pandas_ext import _is_depictable_molecule_dtype, render_dataframe
-from .render import (
+from cnotebook.core import formatters as _fmt
+from cnotebook.core.context import CNotebookContext, cnotebook_context
+from cnotebook.core.errors import warn
+from cnotebook.core.render import (
+    make_depiction,
     oedisp_to_html,
     oedu_to_disp,
     oedu_to_html,
-    oedu_to_image,
     oeimage_to_html,
-    oemol_to_disp,
     oemol_to_html,
-    oemol_to_image,
 )
-
-log = logging.getLogger("cnotebook")
-
+from cnotebook.core.table import ColumnKind, FrameAdapter
+from cnotebook.core.versions import at_least as _at_least
 
 ########################################################################################################################
 # MIME handlers for individual OpenEye objects
@@ -85,200 +69,161 @@ oedepict.OEImage._mime_ = _display_image  # pyright: ignore
 ########################################################################################################################
 # Context-bound image wrapper
 #
-# Marimo DataFrame formatters capture per-column CNotebookContext in a closure and rasterize an
-# OEImage from it. When marimo serializes the cell, it invokes the image's ``_mime_`` method.
-# The globally-registered ``OEImage._mime_`` hook reads ``cnotebook_context.get()`` — losing the
-# per-column ctx. Wrapping the OEImage in _CtxBoundImage preserves the captured ctx across that
-# boundary so ``oeimage_to_html`` sees per-column ``width``/``height``/``image_format``.
+# Marimo serializes a table cell by calling the cell value's ``_mime_`` method. The globally
+# registered ``OEImage._mime_`` hook reads the ambient ``cnotebook_context``, which is not the
+# column's context, so the per-column width, image format and device pixel ratio would be lost
+# on the way out. Wrapping the image pairs it with the context that rendered it.
 ########################################################################################################################
 
-class _CtxBoundImage:
-    """Pair an ``OEImage`` with the ``CNotebookContext`` that should drive its HTML serialization.
+# Marimo's table factory, bound by :func:`_attach` so that the module imports without marimo.
+table: Any = None
 
-    :param image: The rendered image.
-    :param ctx: The per-column context captured from series/array metadata.
+
+class _CtxBoundImage:
+    """Pair an image with the context that should drive its HTML serialisation.
+
+    :param image: Image rendered for one cell.
+    :param ctx: The column's render context.
     """
 
     __slots__ = ("_ctx", "_image")
 
-    def __init__(self, image: oedepict.OEImage, ctx):
+    def __init__(self, image: oedepict.OEImage, ctx: CNotebookContext):
         self._image = image
         self._ctx = ctx
 
-    def _mime_(self):
+    def _mime_(self) -> tuple[str, str]:
+        """Serialise the image for marimo.
+
+        :returns: ``("text/html", html)``, where the HTML is the trusted depiction
+            markup produced by :func:`~cnotebook.core.render.oeimage_to_html`.
+        """
+        # The raster may be oversampled for HiDPI, so the CSS size has to come from the
+        # logical size the formatter attached rather than from the pixel dimensions.
+        logical = getattr(self._image, "_cnotebook_logical_size", None)
+        if logical:
+            return "text/html", oeimage_to_html(
+                self._image, ctx=self._ctx, logical_width=logical[0], logical_height=logical[1]
+            )
         return "text/html", oeimage_to_html(self._image, ctx=self._ctx)
+
+
+########################################################################################################################
+# Formatter factories for the table's format_mapping
+#
+# Marimo escapes whatever a formatter returns unless it is a MIME object, so only the depiction
+# HTML of a _CtxBoundImage is ever inserted raw: ``None`` becomes an empty cell and anything that
+# is not the column's own object type falls back to its escaped text.
+########################################################################################################################
+
+def _create_molecule_formatter(ctx: CNotebookContext) -> Callable[[Any], Any]:
+    """Build the cell formatter for a molecule or query column.
+
+    :param ctx: The column's render context; its callbacks run once per cell.
+    :returns: Callable turning one cell value into a ``_CtxBoundImage`` or plain text.
+    """
+    def formatter(mol: Any) -> Any:
+        if mol is None:
+            return ""
+        image = _fmt.molecule_cell_image(mol, ctx)
+        return _CtxBoundImage(image, ctx) if image is not None else str(mol)
+    return formatter
+
+
+def _create_display_formatter(ctx: CNotebookContext) -> Callable[[Any], Any]:
+    """Build the cell formatter for a display column.
+
+    :param ctx: The column's render context; its callbacks run once per cell.
+    :returns: Callable turning one cell value into a ``_CtxBoundImage`` or plain text.
+    """
+    def formatter(disp: Any) -> Any:
+        if disp is None:
+            return ""
+        image = _fmt.display_cell_image(disp, ctx)
+        return _CtxBoundImage(image, ctx) if image is not None else str(disp)
+    return formatter
+
+
+def _create_du_formatter(ctx: CNotebookContext) -> Callable[[Any], Any]:
+    """Build the cell formatter for a design-unit column.
+
+    :param ctx: The column's render context; its callbacks run once per cell.
+    :returns: Callable turning one cell value into a ``_CtxBoundImage`` or plain text.
+    """
+    def formatter(du: Any) -> Any:
+        if du is None:
+            return ""
+        image = _fmt.design_unit_cell_image(du, ctx)
+        return _CtxBoundImage(image, ctx) if image is not None else str(du)
+    return formatter
+
+
+_FACTORIES: dict[ColumnKind, Callable[[CNotebookContext], Callable[[Any], Any]]] = {
+    ColumnKind.MOLECULE: _create_molecule_formatter,
+    ColumnKind.QUERY: _create_molecule_formatter,
+    ColumnKind.DISPLAY: _create_display_formatter,
+    ColumnKind.DESIGN_UNIT: _create_du_formatter,
+}
 
 
 ########################################################################################################################
 # Column-width pre-pass
 #
-# Marimo sizes each column from cell CSS. With fixed-scale rendering, different molecules produce
-# different intrinsic canvas widths, so without a uniform wrapper each cell would report its own
-# natural width to the column sizer and narrower cells would clip wider ones. Running a cheap
-# pre-pass over the column (display objects only — no rasterization) lets us emit a uniform
-# fixed-width wrapper around every cell so the column sizes to the widest intrinsic canvas.
+# Marimo sizes a column from cell CSS. With fixed-scale rendering every molecule reports its own
+# intrinsic canvas width, so without a uniform width the narrower cells clip the wider ones. A
+# cheap pre-pass over the column (sizes only, no rasterization) gives every cell in the column the
+# width of its widest structure.
 ########################################################################################################################
 
-def _compute_molecule_column_width(mols, ctx) -> int:
-    """Return the maximum intrinsic canvas width across a molecule column.
+_WIDTH_SAMPLE = 200
 
-    Mirrors the branching in :func:`_create_molecule_formatter` so the computed
-    width matches what each cell will actually render at.
 
-    :param mols: Iterable of ``OEMolBase`` (or ``None``) for one column.
-    :param ctx: The column's rendering context.
-    :returns: Maximum intrinsic width in pixels.
+def _column_width(values: Iterable[Any], kind: ColumnKind, ctx: CNotebookContext) -> int:
+    """Widest intrinsic canvas over the first ``_WIDTH_SAMPLE`` values of a column.
+
+    :param values: The column's cell values, in row order.
+    :param kind: The column's kind; other kinds contribute nothing.
+    :param ctx: The column's render context.
+    :returns: Width in pixels, ``0`` when nothing in the sample is depictable.
     """
-    max_width = 0
-    for mol in mols:
-        if mol is None or not isinstance(mol, oechem.OEMolBase):
-            continue
-
-        if not mol.IsValid() or mol.NumAtoms() == 0 or (ctx.max_heavy_atoms is not None
-              and oechem.OECount(mol, oechem.OEIsHeavy()) > ctx.max_heavy_atoms):
-            candidate = int(ctx.min_width)
-        else:
-            disp = oemol_to_disp(mol, ctx=ctx, apply_callbacks=False)
-            candidate = int(disp.GetWidth())
-
-        max_width = max(max_width, candidate)
-    return max_width
-
-
-def _compute_display_column_width(displays) -> int:
-    """Return the maximum intrinsic canvas width across a display column.
-
-    :param displays: Iterable of ``OE2DMolDisplay`` (or ``None``) for one column.
-    :returns: Maximum intrinsic width in pixels.
-    """
-    max_width = 0
-    for disp in displays:
-        if isinstance(disp, oedepict.OE2DMolDisplay) and disp.IsValid():
-            w = int(disp.GetWidth())
-            max_width = max(max_width, w)
-    return max_width
-
-
-def _compute_du_column_width(dus, ctx) -> int:
-    """Return the maximum intrinsic canvas width across a design-unit column.
-
-    Mirrors :func:`_create_du_formatter`: apo design units render at
-    ``ctx.min_width`` × ``ctx.min_height``; design units with ligands render
-    at the ligand's intrinsic canvas size.
-
-    :param dus: Iterable of ``OEDesignUnit`` (or ``None``) for one column.
-    :param ctx: The column's rendering context.
-    :returns: Maximum intrinsic width in pixels.
-    """
-    max_width = 0
-    for du in dus:
-        if du is None or not isinstance(du, oechem.OEDesignUnit):
-            continue
-
-        result = oedu_to_disp(du, ctx=ctx, apply_callbacks=False)
-        if result is None:
-            candidate = int(ctx.min_width)
-        else:
-            candidate = int(result.display.GetWidth())
-
-        max_width = max(max_width, candidate)
-    return max_width
+    width = 0
+    for value in list(values)[:_WIDTH_SAMPLE]:
+        candidate = 0
+        if kind in (ColumnKind.MOLECULE, ColumnKind.QUERY) and isinstance(value, oechem.OEMolBase):
+            if not value.IsValid() or value.NumAtoms() == 0 or (
+                ctx.max_heavy_atoms is not None and oechem.OECount(value, oechem.OEIsHeavy()) > ctx.max_heavy_atoms
+            ):
+                candidate = int(ctx.min_width or 200)
+            else:
+                # The canvas size does not depend on the annotation callbacks, and the cell
+                # formatters apply them exactly once per render, so the sizing pass must not
+                # run them a second time.
+                candidate = int(make_depiction(value, ctx=ctx, apply_callbacks=False).display.GetWidth())
+        elif kind is ColumnKind.DISPLAY and isinstance(value, oedepict.OE2DMolDisplay) and value.IsValid():
+            candidate = int(value.GetWidth())
+        elif kind is ColumnKind.DESIGN_UNIT and isinstance(value, oechem.OEDesignUnit):
+            dep = oedu_to_disp(value, ctx=ctx, apply_callbacks=False)
+            candidate = int(dep.display.GetWidth()) if dep is not None else int(ctx.min_width or 200)
+        width = max(width, candidate)
+    return width
 
 
 ########################################################################################################################
-# Formatter factories for mo.ui.table format_mapping
-########################################################################################################################
-
-def _create_molecule_formatter(ctx):
-    """
-    Create a formatter closure that renders molecules with callbacks applied.
-
-    :param ctx: CNotebookContext with callbacks (e.g., highlighting)
-    :return: Formatter function for use in mo.ui.table format_mapping
-    """
-    def formatter(mol):
-        if mol is None:
-            return ""
-
-        if not isinstance(mol, oechem.OEMolBase):
-            return str(mol)
-
-        # All cases (callbacks applied by make_depiction in the render path)
-        return _CtxBoundImage(oemol_to_image(mol, ctx=ctx), ctx)
-
-    return formatter
-
-
-def _create_display_formatter(ctx):
-    """
-    Create a formatter closure that renders OE2DMolDisplay objects.
-
-    :param ctx: CNotebookContext for rendering options
-    :return: Formatter function for use in mo.ui.table format_mapping
-    """
-    def formatter(disp):
-        if disp is None:
-            return ""
-
-        if not isinstance(disp, oedepict.OE2DMolDisplay):
-            return str(disp)
-
-        if not disp.IsValid():
-            return str(disp)
-
-        # Copy the display to avoid modifying the original
-        disp_copy = oedepict.OE2DMolDisplay(disp)
-
-        # Apply callbacks if any
-        if ctx.callbacks:
-            for callback in ctx.callbacks:
-                callback(disp_copy)
-
-        # Render to OEImage for consistent return type
-        image = oedepict.OEImage(disp_copy.GetWidth(), disp_copy.GetHeight())
-        oedepict.OERenderMolecule(image, disp_copy)
-        return _CtxBoundImage(image, ctx)
-
-    return formatter
-
-
-def _create_du_formatter(ctx):
-    """
-    Create a formatter closure that renders OEDesignUnit objects.
-
-    :param ctx: CNotebookContext for rendering options.
-    :returns: Formatter function for use in mo.ui.table format_mapping.
-    """
-    def formatter(du):
-        if du is None:
-            return ""
-
-        if not isinstance(du, oechem.OEDesignUnit):
-            return str(du)
-
-        return _CtxBoundImage(oedu_to_image(du, ctx=ctx), ctx)
-
-    return formatter
-
-
-########################################################################################################################
-# style_cell factory for molecule columns
+# style_cell factory for depiction columns
 #
 # Marimo's DataTable hardcodes ``truncate max-w-[300px]`` on every ``<td>``, which caps the cell
 # width and clips overflow. Inline styles emitted through ``table(style_cell=...)`` beat those
-# class rules on specificity, so we use the public ``style_cell`` API to override ``maxWidth``,
-# ``minWidth``, and ``overflow`` on molecule/display/design-unit columns — letting the td expand
-# to the widest intrinsic canvas in each column.
+# class rules on specificity, so the public ``style_cell`` API is what lets a depiction column
+# expand to its widest intrinsic canvas.
 ########################################################################################################################
 
-def _make_style_cell(column_widths: dict[str, int]):
-    """Return a ``style_cell`` callback that lifts the 300px cap on molecule columns.
+def _make_style_cell(column_widths: dict[str, int]) -> Callable[[str, str, Any], dict[str, Any]]:
+    """Build the ``style_cell`` callback that lifts marimo's 300px cap on depiction columns.
 
-    :param column_widths: Mapping of column name to uniform cell width (px).
-    :returns: Callable ``(row_id, column_name, value) -> dict`` for
-        ``mo.ui.table(style_cell=...)``.
+    :param column_widths: Uniform cell width in pixels, keyed by column name.
+    :returns: Callable ``(row_id, column_name, value) -> dict`` for ``table(style_cell=...)``.
     """
-    def style_cell(_row_id, column_name, _value):
+    def style_cell(_row_id: str, column_name: str, _value: Any) -> dict[str, Any]:
         width = column_widths.get(column_name)
         if width is None:
             return {}
@@ -292,211 +237,98 @@ def _make_style_cell(column_widths: dict[str, int]):
 
 
 ########################################################################################################################
-# Marimo DataFrame formatter registration
-#
-# This registers a custom formatter with Marimo's OPINIONATED_FORMATTERS registry
-# to handle DataFrames containing molecule columns. The formatter:
-# - Detects MoleculeDtype and DisplayDtype columns
-# - Creates format_mapping entries that apply callbacks (highlighting, alignment, etc.)
-# - Returns OEImage objects which Marimo renders via their _mime_() method
+# Frame formatters and registration
 ########################################################################################################################
 
-try:
-    # noinspection PyProtectedMember,PyUnusedImports
-    from marimo._output.formatting import (  # pyright: ignore
-        OPINIONATED_FORMATTERS,
-    )
+def _format_frame(
+    adapter: FrameAdapter, df: Any, values_for: Callable[[int], Iterable[Any]]
+) -> tuple[str, str]:
+    """Render a frame as a marimo table with depiction cells.
 
-    # noinspection PyProtectedMember,PyUnusedImports
-    from marimo._plugins.ui._impl.table import table  # pyright: ignore
+    :param adapter: Frame adapter reporting each column's kind and render context.
+    :param df: The frame itself, handed to marimo unchanged.
+    :param values_for: Callable returning the values of the column at one position.
+    :returns: The table's ``_mime_`` pair.
+    """
+    format_mapping: dict[Any, Any] = {}
+    widths: dict[str, int] = {}
+    for pos, label in enumerate(adapter.columns()):
+        factory = _FACTORIES.get(adapter.kind(pos))
+        if factory is None:
+            continue
+        # A copy, because the closure outlives this call and must not see later edits
+        # to the column's stored context.
+        ctx = adapter.context(pos).copy()
+        format_mapping[label] = factory(ctx)
+        width = _column_width(values_for(pos), adapter.kind(pos), ctx)
+        if width:
+            widths[str(label)] = width
+    style_cell = _make_style_cell(widths) if widths else None
+    return table(df, selection=None, format_mapping=format_mapping, pagination=True, style_cell=style_cell)._mime_()
 
 
-    # 1. Define the custom formatting logic
-    def marimo_pandas_formatter(df: pd.DataFrame):
-        """
-        Monkey patch the Marimo DataFrame formatter
-        """
-        format_mapping = {}
-        column_widths: dict[str, int] = {}
+def marimo_pandas_formatter(df: Any) -> tuple[str, str]:
+    """Format a Pandas DataFrame as a marimo table with cnotebook depiction cells.
 
-        # Check for MoleculeDtype / QueryDtype / DisplayDtype (OEPandas specific)
-        if oepd is not None:
-            for col in df.columns:
-                dtype = df[col].dtype
+    :param df: Frame to render; never modified.
+    :returns: The table's ``_mime_`` pair.
+    """
+    from cnotebook.pandas_ext import PandasFrameAdapter
 
-                if _is_depictable_molecule_dtype(dtype):
-                    arr = df[col].array
-                    metadata = arr.metadata  # pyright: ignore
-                    ctx = get_series_context(metadata).copy()
-                    format_mapping[col] = _create_molecule_formatter(ctx)
-                    width = _compute_molecule_column_width(arr, ctx)
-                    if width:
-                        column_widths[col] = width
+    adapter = PandasFrameAdapter(df)
+    return _format_frame(adapter, df, lambda pos: df.iloc[:, pos])
 
-                elif isinstance(dtype, oepd.DisplayDtype):
-                    arr = df[col].array
-                    metadata = arr.metadata  # pyright: ignore
-                    ctx = get_series_context(metadata).copy()
-                    format_mapping[col] = _create_display_formatter(ctx)
-                    width = _compute_display_column_width(arr)
-                    if width:
-                        column_widths[col] = width
 
-        # Check for DesignUnitDtype (OEPandas specific)
-        if oepd is not None:
-            for col in df.columns:
-                if col not in format_mapping:
-                    dtype = df[col].dtype
-                    if isinstance(dtype, oepd.DesignUnitDtype):
-                        arr = df[col].array
-                        metadata = arr.metadata  # pyright: ignore
-                        ctx = get_series_context(metadata).copy()
-                        format_mapping[col] = _create_du_formatter(ctx)
-                        width = _compute_du_column_width(arr, ctx)
-                        if width:
-                            column_widths[col] = width
+def marimo_polars_formatter(df: Any) -> tuple[str, str]:
+    """Format a Polars DataFrame as a marimo table with cnotebook depiction cells.
 
-        style_cell = _make_style_cell(column_widths) if column_widths else None
+    :param df: Frame to render; never modified.
+    :returns: The table's ``_mime_`` pair.
+    """
+    from cnotebook.polars_ext import PolarsFrameAdapter
 
-        # Return a Marimo table with our custom mapping
-        # noinspection PyProtectedMember,PyTypeChecker
-        return table(
-            df,
-            selection=None,
-            format_mapping=format_mapping,
-            pagination=True,
-            style_cell=style_cell,
-        )._mime_()  # type: ignore[attr-defined]
+    adapter = PolarsFrameAdapter(df)
+    return _format_frame(adapter, df, lambda pos: df.to_series(pos))
 
-    # 2. Inject into the Registry
-    def install_marimo_pandas_formatter():
-        # Check if we've already installed it to avoid duplicates
-        for typ, func in OPINIONATED_FORMATTERS.formatters.items():
-            if typ is pd.DataFrame and func.__name__ == "marimo_pandas_formatter":
-                return  # Already installed
+
+# The registry and the table factory this module reaches into are marimo internals, so the
+# adapter refuses to patch a release older than the one it was written against.
+_MIN_MARIMO = (0, 13, 0)
+_WARNED = False
+
+
+def _attach() -> None:
+    """Register the table formatters for the DataFrame libraries the session has imported.
+
+    Safe to call repeatedly, and called again whenever pandas or polars support attaches,
+    so a frame library imported after cnotebook still gets its formatter. A marimo that is
+    missing, too old, or no longer exposing the internals warns once and leaves marimo's
+    own table formatting in place.
+    """
+    global table, _WARNED
+    try:
+        import marimo
+
+        if not _at_least(marimo.__version__, _MIN_MARIMO):
+            raise ImportError(f"marimo {marimo.__version__} is older than {'.'.join(map(str, _MIN_MARIMO))}")
+        # Both of these are marimo internals; the version guard above is what stands
+        # in for the stability guarantee they do not give.
+        from marimo._output.formatting import OPINIONATED_FORMATTERS
+        from marimo._plugins.ui._impl.table import table as marimo_table
+    except (ImportError, AttributeError, ValueError) as exc:
+        if not _WARNED:
+            _WARNED = True
+            warn(f"cnotebook marimo table integration disabled: {exc}")
+        return
+    table = marimo_table
+    if "pandas" in sys.modules and "oepandas" in sys.modules:
+        import pandas as pd
 
         OPINIONATED_FORMATTERS.formatters[pd.DataFrame] = marimo_pandas_formatter
+    if "polars" in sys.modules and "oepolars" in sys.modules:
+        import polars as pl
 
-    # Do the installation
-    install_marimo_pandas_formatter()
-
-    if pl is not None and oeplr is not None:
-        marimo_polars_dataframe = pl.DataFrame  # pyright: ignore
-        molecule_type = oeplr.MoleculeType  # pyright: ignore
-        display_type = oeplr.DisplayType  # pyright: ignore
-        design_unit_type = oeplr.DesignUnitType  # pyright: ignore
-
-        def marimo_polars_formatter(df):
-            """
-            Marimo DataFrame formatter for Polars DataFrames with molecule columns.
-            """
-            format_mapping = {}
-            column_widths: dict[str, int] = {}
-
-            # Check for MoleculeType / DisplayType (OEPolars specific)
-            for col in df.columns:
-                dtype = df.schema[col]
-
-                if isinstance(dtype, molecule_type):
-                    series = df.get_column(col)
-                    if hasattr(series, "chem"):
-                        metadata = series.chem.metadata  # pyright: ignore
-                    else:
-                        metadata = {}
-                    ctx = get_series_context(metadata).copy()
-                    format_mapping[col] = _create_molecule_formatter(ctx)
-                    width = _compute_molecule_column_width(series, ctx)
-                    if width:
-                        column_widths[col] = width
-
-                elif isinstance(dtype, display_type):
-                    series = df.get_column(col)
-                    if hasattr(series, "chem"):
-                        metadata = series.chem.metadata  # pyright: ignore
-                    else:
-                        metadata = {}
-                    ctx = get_series_context(metadata).copy()
-                    format_mapping[col] = _create_display_formatter(ctx)
-                    width = _compute_display_column_width(series)
-                    if width:
-                        column_widths[col] = width
-
-            # Check for DesignUnitType (OEPolars specific)
-            for col in df.columns:
-                if col not in format_mapping:
-                    dtype = df.schema[col]
-                    if isinstance(dtype, design_unit_type):
-                        series = df.get_column(col)
-                        if hasattr(series, "chem"):
-                            metadata = series.chem.metadata  # pyright: ignore
-                        else:
-                            metadata = {}
-                        ctx = get_series_context(metadata).copy()
-                        format_mapping[col] = _create_du_formatter(ctx)
-                        width = _compute_du_column_width(series, ctx)
-                        if width:
-                            column_widths[col] = width
-
-            style_cell = _make_style_cell(column_widths) if column_widths else None
-
-            # Return a Marimo table with our custom mapping
-            # noinspection PyProtectedMember,PyTypeChecker
-            return table(
-                df,
-                selection=None,
-                format_mapping=format_mapping,
-                pagination=True,
-                style_cell=style_cell,
-            )._mime_()  # type: ignore[attr-defined]
-
-        def install_marimo_polars_formatter():
-            """Install the Polars DataFrame formatter if polars is available."""
-            # Check if we've already installed it to avoid duplicates
-            for typ, func in OPINIONATED_FORMATTERS.formatters.items():
-                if (
-                    typ is marimo_polars_dataframe
-                    and func.__name__ == "marimo_polars_formatter"
-                ):
-                    return  # Already installed
-
-            OPINIONATED_FORMATTERS.formatters[marimo_polars_dataframe] = (
-                marimo_polars_formatter
-            )
-
-        install_marimo_polars_formatter()
-
-except (ImportError, AttributeError) as ex:
-    # Marimo not installed or API changed - skip formatter registration
-    log.debug(f'Marimo formatter registration skipped: {ex}')
+        OPINIONATED_FORMATTERS.formatters[pl.DataFrame] = marimo_polars_formatter
 
 
-########################################################################################################################
-# Fallback DataFrame MIME handler for non-Marimo contexts
-########################################################################################################################
-
-def _display_dataframe(self: pd.DataFrame):
-    """
-    Fallback MIME hook for Pandas DataFrames in non-Marimo contexts.
-
-    In Marimo, the internal table patch handles DataFrame display.
-    This is used for static exports or other tools that check _mime_.
-    """
-    return "text/html", render_dataframe(df=self, formatters=None, col_space=None)
-
-pd.DataFrame._mime_ = _display_dataframe  # type: ignore[attr-defined]  # pyright: ignore
-
-if pl is not None and oeplr is not None:
-    polars_dataframe: Any = pl.DataFrame  # pyright: ignore
-
-    from .polars_ext import render_polars_dataframe
-
-    def _display_polars_dataframe(self):
-        """
-        Fallback MIME hook for Polars DataFrames in non-Marimo contexts.
-
-        In Marimo, the internal table patch handles DataFrame display.
-        This is used for static exports or other tools that check _mime_.
-        """
-        return "text/html", render_polars_dataframe(df=self, formatters=None, col_space=None)
-
-    polars_dataframe._mime_ = _display_polars_dataframe  # pyright: ignore
+_attach()

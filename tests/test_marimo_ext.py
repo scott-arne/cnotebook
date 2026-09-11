@@ -354,31 +354,19 @@ class TestDisplayImage:
 class TestPolarsSupport:
     """Test Polars DataFrame support in Marimo"""
 
-    def test_oepolars_available_flag(self):
-        """Test that oepolars_available flag is set correctly"""
+    def test_polars_support_is_decided_by_sys_modules(self):
+        """The adapter no longer keeps backend flags: an imported polars gets a formatter."""
+        import sys
+
+        import polars as pl
+        from marimo._output.formatting import OPINIONATED_FORMATTERS
+
         import cnotebook.marimo_ext
 
-        try:
-            import polars
-            import oepolars
-            assert polars is not None
-            assert oepolars is not None
-            assert cnotebook.marimo_ext.oepolars_available is True
-        except ImportError:
-            assert cnotebook.marimo_ext.oepolars_available is False
-
-    def test_polars_dataframe_has_mime_method(self):
-        """Polars DataFrame MIME hook should render fallback HTML when oepolars is available."""
-        import cnotebook.marimo_ext
-
-        if cnotebook.marimo_ext.oepolars_available:
-            import polars as pl
-            df = pl.DataFrame({"a": [1]})
-
-            mime_type, content = df._mime_()
-
-            assert mime_type == "text/html"
-            assert "<table" in content
+        assert not hasattr(cnotebook.marimo_ext, "oepolars_available")
+        assert "polars" in sys.modules and "oepolars" in sys.modules
+        cnotebook.marimo_ext._attach()
+        assert OPINIONATED_FORMATTERS.formatters[pl.DataFrame] is cnotebook.marimo_ext.marimo_polars_formatter
 
 
 class TestCreateMoleculeFormatter:
@@ -426,7 +414,7 @@ class TestCreateMoleculeFormatter:
         assert isinstance(result._image, oedepict.OEImage)
 
     def test_valid_molecule_without_callbacks(self):
-        """Test that valid molecule without callbacks falls back to oemol_to_image"""
+        """Test that a valid molecule without callbacks still renders an image"""
         from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
 
@@ -546,22 +534,6 @@ class TestCreateDuFormatter:
         assert isinstance(result._image, oedepict.OEImage)
 
 
-class TestDisplayDataframe:
-    """Test the _display_dataframe function"""
-
-    def test_pandas_dataframe_mime_returns_html(self):
-        """Test that _display_dataframe returns text/html MIME tuple"""
-        from cnotebook.marimo_ext import _display_dataframe
-        import pandas as pd
-
-        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
-        mime_type, content = _display_dataframe(df)
-
-        assert mime_type == "text/html"
-        assert isinstance(content, str)
-        assert len(content) > 0
-
-
 class TestCtxBoundImage:
     """Test that marimo DataFrame formatters carry per-column ctx through to HTML serialization."""
 
@@ -600,10 +572,10 @@ class TestCtxBoundImage:
         mock_mol.IsValid.return_value = True
         mock_mol.NumAtoms.return_value = 5
 
-        with patch('cnotebook.marimo_ext.oemol_to_image') as mock_to_image, \
-             patch('cnotebook.marimo_ext.oechem.OECount', return_value=5):
+        # The formatter now delegates the rendering to the shared cell formatters.
+        with patch('cnotebook.marimo_ext._fmt.molecule_cell_image') as mock_cell_image:
             mock_image = MagicMock(spec=oedepict.OEImage)
-            mock_to_image.return_value = mock_image
+            mock_cell_image.return_value = mock_image
             # No callbacks path
             col_ctx._callbacks.set([])
 
@@ -644,9 +616,10 @@ class TestCtxBoundImage:
 
         mock_du = MagicMock(spec=oechem.OEDesignUnit)
 
-        with patch('cnotebook.marimo_ext.oedu_to_image') as mock_to_image:
+        # The formatter now delegates the rendering to the shared cell formatters.
+        with patch('cnotebook.marimo_ext._fmt.design_unit_cell_image') as mock_cell_image:
             mock_image = MagicMock(spec=oedepict.OEImage)
-            mock_to_image.return_value = mock_image
+            mock_cell_image.return_value = mock_image
 
             result = formatter(mock_du)
 
@@ -700,7 +673,7 @@ class TestMarimoPandasFormatter:
         table_result._mime_.return_value = ("text/html", "<table></table>")
 
         with patch("cnotebook.marimo_ext.table", return_value=table_result) as mock_table, \
-             patch("cnotebook.marimo_ext._compute_molecule_column_width", return_value=123):
+             patch("cnotebook.marimo_ext._column_width", return_value=123):
             result = cnotebook.marimo_ext.marimo_pandas_formatter(df)
 
         assert result == ("text/html", "<table></table>")
@@ -741,9 +714,9 @@ class TestColumnStyleCell:
         assert style_cell("0", "Du", None)["minWidth"] == "210px"
 
     def test_compute_molecule_column_width_uses_widest_structure(self):
-        """_compute_molecule_column_width returns the max intrinsic width across a mixed column."""
-        from cnotebook.marimo_ext import _compute_molecule_column_width
+        """_column_width returns the max intrinsic width across a mixed molecule column."""
         from cnotebook.context import CNotebookContext
+        from cnotebook.core.table import ColumnKind
 
         ctx = CNotebookContext(image_format="png")
 
@@ -755,7 +728,7 @@ class TestColumnStyleCell:
         oechem.OESmilesToMol(large, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
         oedepict.OEPrepareDepiction(large)
 
-        width = _compute_molecule_column_width([small, large, None], ctx)
+        width = me._column_width([small, large, None], ColumnKind.MOLECULE, ctx)
 
         # The large molecule must set the column width.
         small_disp = oedepict.OE2DMolDisplay(small, ctx.display_options)
@@ -765,8 +738,8 @@ class TestColumnStyleCell:
 
     def test_compute_molecule_column_width_honors_heavy_atom_limit(self):
         """Molecules exceeding max_heavy_atoms use ctx.min_width, not their structure width."""
-        from cnotebook.marimo_ext import _compute_molecule_column_width
         from cnotebook.context import CNotebookContext
+        from cnotebook.core.table import ColumnKind
 
         ctx = CNotebookContext(image_format="png", max_heavy_atoms=1, min_width=250.0)
 
@@ -774,37 +747,37 @@ class TestColumnStyleCell:
         oechem.OESmilesToMol(big, "c1ccc2c(c1)cc1ccc3ccccc3c1c2")
         oedepict.OEPrepareDepiction(big)
 
-        width = _compute_molecule_column_width([big], ctx)
+        width = me._column_width([big], ColumnKind.MOLECULE, ctx)
 
         assert width == int(ctx.min_width)
 
     def test_compute_molecule_column_width_handles_empty_and_invalid(self):
         """Empty or invalid molecules contribute ctx.min_width (placeholder size)."""
-        from cnotebook.marimo_ext import _compute_molecule_column_width
         from cnotebook.context import CNotebookContext
+        from cnotebook.core.table import ColumnKind
 
         ctx = CNotebookContext(image_format="png", min_width=225.0)
 
         empty = oechem.OEGraphMol()
 
-        width = _compute_molecule_column_width([empty, None], ctx)
+        width = me._column_width([empty, None], ColumnKind.MOLECULE, ctx)
 
         assert width == int(ctx.min_width)
 
     def test_compute_molecule_column_width_empty_column(self):
         """An empty column returns 0 so the caller can skip the wrapper."""
-        from cnotebook.marimo_ext import _compute_molecule_column_width
         from cnotebook.context import CNotebookContext
+        from cnotebook.core.table import ColumnKind
 
         ctx = CNotebookContext(image_format="png")
 
-        assert _compute_molecule_column_width([], ctx) == 0
-        assert _compute_molecule_column_width([None, None], ctx) == 0
+        assert me._column_width([], ColumnKind.MOLECULE, ctx) == 0
+        assert me._column_width([None, None], ColumnKind.MOLECULE, ctx) == 0
 
     def test_compute_display_column_width_uses_max(self):
-        """_compute_display_column_width picks the widest display in the column."""
-        from cnotebook.marimo_ext import _compute_display_column_width
+        """_column_width picks the widest display in a display column."""
         from cnotebook.context import CNotebookContext
+        from cnotebook.core.table import ColumnKind
 
         ctx = CNotebookContext(image_format="png")
 
@@ -818,20 +791,20 @@ class TestColumnStyleCell:
         oedepict.OEPrepareDepiction(m2)
         d2 = oedepict.OE2DMolDisplay(m2, ctx.display_options)
 
-        width = _compute_display_column_width([d1, d2, None])
+        width = me._column_width([d1, d2, None], ColumnKind.DISPLAY, ctx)
 
         assert width == max(int(d1.GetWidth()), int(d2.GetWidth()))
 
     def test_compute_du_column_width_apo_uses_min_width(self):
         """Apo design units (no ligand) contribute ctx.min_width."""
-        from cnotebook.marimo_ext import _compute_du_column_width
         from cnotebook.context import CNotebookContext
+        from cnotebook.core.table import ColumnKind
 
         ctx = CNotebookContext(image_format="png", min_width=240.0)
 
         apo = oechem.OEDesignUnit()
 
-        width = _compute_du_column_width([apo, None], ctx)
+        width = me._column_width([apo, None], ColumnKind.DESIGN_UNIT, ctx)
 
         assert width == int(ctx.min_width)
 
@@ -924,6 +897,69 @@ def test_marimo_svg_unaffected_by_dpr():
         _, content2 = _display_mol(mol)
     finally:
         cnotebook_context.reset(token2)
-    
+
     # SVG should be identical regardless of DPR
     assert content1 == content2
+
+
+########################################################################################################################
+# Table formatters over the shared cell formatters
+########################################################################################################################
+
+import oepolars as oeplr
+import polars as pl
+
+import cnotebook.marimo_ext as me
+import cnotebook.polars_ext as pe
+
+
+def _mol():
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "c1ccccc1O")
+    return mol
+
+
+def test_polars_highlight_visible_in_marimo_formatter(monkeypatch):
+    df = pl.DataFrame([pl.Series("mol", [_mol()], dtype=oeplr.MoleculeType())]).chem.highlight("mol", "c1ccccc1")
+    captured = {}
+
+    def fake_table(frame, **kwargs):
+        captured.update(kwargs)
+
+        class _T:
+            def _mime_(self):
+                return ("text/html", "")
+
+        return _T()
+
+    monkeypatch.setattr(me, "table", fake_table)
+    me.marimo_polars_formatter(df)
+    image = captured["format_mapping"]["mol"](df.get_column("mol")[0])
+    plain = me._create_molecule_formatter(pe.PolarsFrameAdapter(df.chem.reset_depictions("mol")).context(0))(df.get_column("mol")[0])
+    assert isinstance(image, me._CtxBoundImage)
+    assert image._mime_()[1] != plain._mime_()[1]
+
+
+def test_attach_is_idempotent_and_registers_both_backends():
+    from marimo._output.formatting import OPINIONATED_FORMATTERS
+
+    me._attach()
+    me._attach()
+    import pandas as pd
+
+    assert OPINIONATED_FORMATTERS.formatters[pd.DataFrame].__name__ == "marimo_pandas_formatter"
+    assert OPINIONATED_FORMATTERS.formatters[pl.DataFrame].__name__ == "marimo_polars_formatter"
+    assert not hasattr(pd.DataFrame, "_mime_") or pd.DataFrame._mime_.__name__ != "_display_dataframe"
+
+
+def test_ctx_bound_image_uses_logical_size():
+    from cnotebook.core.context import CNotebookContext
+    from cnotebook.core.formatters import molecule_cell_image
+
+    ctx = CNotebookContext(image_format="png", device_pixel_ratio=2.0)
+    image = molecule_cell_image(_mol(), ctx)
+    html = me._CtxBoundImage(image, ctx)._mime_()[1]
+    import re
+
+    css = int(re.search(r"width:(\d+)px", html).group(1))
+    assert css == image._cnotebook_logical_size[0]

@@ -1,6 +1,7 @@
 import html
 import logging
 import re
+import sys
 import threading
 import typing
 from collections.abc import Hashable, Iterable
@@ -12,11 +13,6 @@ import numpy as np
 import oepandas as oepd
 import pandas as pd
 from openeye import oechem, oedepict, oegraphsim
-
-try:
-    from pandas.util.version import InvalidVersion, Version
-except ImportError:
-    from packaging.version import InvalidVersion, Version
 
 from .context import get_series_context, pass_cnotebook_context
 from .core import columnops
@@ -30,6 +26,7 @@ from .core.table import (
     cell_html,
     pandas_max_rows_argument,
 )
+from .core.versions import at_least as _at_least
 from .render import CNotebookContext
 
 get_ipython: Any = None
@@ -916,15 +913,20 @@ def _dataframe_style(self):
 
 
 def _attach() -> None:
-    """Attach cnotebook methods to the oepandas accessors (idempotent, version-guarded)."""
+    """Attach cnotebook methods to the oepandas accessors (idempotent, version-guarded).
+
+    Pandas support becoming available is also what tells the marimo adapter it can
+    register a pandas table formatter.
+    """
     global _ATTACHED
     if _ATTACHED:
         return
     try:
-        if Version(oepd.__version__) < Version(_MIN_OEPANDAS):
+        # InvalidVersion is a ValueError, so an unreadable version lands in the handler below.
+        if not _at_least(oepd.__version__, _MIN_OEPANDAS):
             raise ImportError(f"oepandas {oepd.__version__} is older than {_MIN_OEPANDAS}")
         from oepandas.pandas_extensions import OEDataFrameAccessor, OESeriesAccessor
-    except (ImportError, AttributeError, ValueError, InvalidVersion) as exc:
+    except (ImportError, AttributeError, ValueError) as exc:
         warn(f"cnotebook pandas integration disabled: {exc}")
         return
     for name, func in {
@@ -945,6 +947,10 @@ def _attach() -> None:
         "style": _dataframe_style,
     }.items():
         setattr(OEDataFrameAccessor, name, func)
+    if "marimo" in sys.modules:
+        from cnotebook import marimo_ext
+
+        marimo_ext._attach()
     _ATTACHED = True
 
 

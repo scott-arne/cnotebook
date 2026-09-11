@@ -1,6 +1,6 @@
 import html as _html
 import logging
-import re
+import sys
 import typing
 import uuid
 from collections import OrderedDict
@@ -18,6 +18,7 @@ from .core import formatters as _fmt
 from .core.columnops import AlignmentReport
 from .core.errors import warn
 from .core.table import ColumnKind, RowWindow, polars_row_window, render_table
+from .core.versions import at_least as _at_least
 from .render import CNotebookContext
 
 get_ipython: Any = None
@@ -378,57 +379,6 @@ def render_polars_dataframe(
 # from this release on.
 _MIN_OEPOLARS = (0, 4, 0)
 _ATTACHED = False
-
-# The optional segments of a PEP 440 version. The epoch is matched so that it can be
-# ignored: oepolars does not use one, and a project that starts using epochs only ever
-# moves forward, which is the side of the comparison that already attaches.
-_VERSION_RE = re.compile(
-    r"""
-    v?
-    (?:\d+!)?                                                   # epoch, ignored
-    (?P<release>\d+(?:\.\d+)*)
-    (?P<pre>[-._]?(?:a|b|c|rc|alpha|beta|pre|preview)[-._]?\d*)?
-    (?P<post>[-._]?(?:post|rev|r)[-._]?\d*|-\d+)?
-    (?P<dev>[-._]?dev[-._]?\d*)?
-    (?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?                         # local version
-    $
-    """,
-    re.VERBOSE | re.IGNORECASE | re.ASCII,
-)
-
-
-def _at_least(version: str, minimum: tuple[int, ...]) -> bool:
-    """
-    Check whether an installed version is *minimum* or later, in PEP 440 order.
-
-    ``packaging`` is not a declared dependency of cnotebook, so a smaller parse of the
-    same grammar stands in when it cannot be imported. The two agree on the spellings a
-    release can take: ``0.4.0.post1``, ``0.4.0-1`` and ``0.4.0-r1`` are all after
-    ``0.4.0``, while ``0.4.0rc1`` and ``0.4.0.dev1`` are before it.
-
-    :param version: Installed version string.
-    :param minimum: Release to compare against, as a tuple of numbers.
-    :returns: ``True`` when *version* is that release or later.
-    :raises ValueError: When the string cannot be read as a version.
-    """
-    try:
-        from packaging.version import Version
-    except ImportError:
-        match = _VERSION_RE.fullmatch(version.strip())
-        if match is None:
-            raise ValueError(f"cannot read a release number from {version!r}") from None
-        release = tuple(int(part) for part in match.group("release").split("."))
-        # 0.4 and 0.4.0 are the same release, so compare over a common length.
-        width = max(len(release), len(minimum))
-        padded = release + (0,) * (width - len(release))
-        floor_release = minimum + (0,) * (width - len(minimum))
-        if padded != floor_release:
-            return padded > floor_release
-        # At the floor's own release: a pre-release comes before it, and so does a
-        # development build, unless it is a development build of a post-release.
-        return not (match.group("pre") or (match.group("dev") and not match.group("post")))
-    # InvalidVersion is a ValueError, so a malformed version reaches the caller's handler.
-    return Version(version) >= Version(".".join(map(str, minimum)))
 
 
 def _require_molecule(
@@ -1051,7 +1001,8 @@ def _attach() -> None:
 
     The call is idempotent and version-guarded: an oepolars too old for the hooks, or one
     whose version cannot be read, leaves the accessors unregistered and warns rather than
-    failing the import of cnotebook.
+    failing the import of cnotebook. Polars support becoming available is also what tells
+    the marimo adapter it can register a polars table formatter.
     """
     global _ATTACHED
     if _ATTACHED:
@@ -1083,6 +1034,10 @@ def _attach() -> None:
         "molgrid": _dataframe_molgrid,
     }.items():
         extensions.register_dataframe_method(name, frame_func, overwrite=True)
+    if "marimo" in sys.modules:
+        from cnotebook import marimo_ext
+
+        marimo_ext._attach()
     _ATTACHED = True
 
 
