@@ -317,6 +317,8 @@ class TestRenderExceedsMaxHeavyAtoms:
     def test_render_exceeds_max_heavy_atoms(self, mock_create_image, mock_image_to_html):
         """Test the HTML rendering function delegates to the helper"""
         mock_image = MagicMock()
+        mock_image.GetWidth.return_value = 200
+        mock_image.GetHeight.return_value = 150
         mock_create_image.return_value = mock_image
         mock_image_to_html.return_value = '<img>exceeds</img>'
 
@@ -326,7 +328,7 @@ class TestRenderExceedsMaxHeavyAtoms:
         result = render_exceeds_max_heavy_atoms(mock_mol, ctx=ctx)
 
         mock_create_image.assert_called_once_with(mock_mol, ctx=ctx)
-        mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx)
+        mock_image_to_html.assert_called_once_with(mock_image, ctx=ctx, logical_width=200, logical_height=150)
         assert result == '<img>exceeds</img>'
 
 

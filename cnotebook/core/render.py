@@ -204,7 +204,7 @@ def render_empty_molecule(*, ctx: CNotebookContext) -> str:
         )
     )
 
-    return oeimage_to_html(image, ctx=ctx)
+    return oeimage_to_html(image, ctx=ctx, logical_width=min_width, logical_height=min_height)
 
 
 def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
@@ -228,7 +228,7 @@ def render_invalid_molecule(*, ctx: CNotebookContext) -> str:
         )
     )
 
-    return oeimage_to_html(image, ctx=ctx)
+    return oeimage_to_html(image, ctx=ctx, logical_width=min_width, logical_height=min_height)
 
 
 def _create_exceeds_heavy_atoms_image(
@@ -302,7 +302,7 @@ def render_exceeds_max_heavy_atoms(
     :returns: HTML image tag.
     """
     image = _create_exceeds_heavy_atoms_image(mol, ctx=ctx)
-    return oeimage_to_html(image, ctx=ctx)
+    return oeimage_to_html(image, ctx=ctx, logical_width=image.GetWidth(), logical_height=image.GetHeight())
 
 
 def oemol_to_disp(
