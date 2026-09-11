@@ -122,3 +122,12 @@ def test_render_html_embeds_the_public_escaper_output():
     )
     html = viewer3d.render_html(payload, width=640, height=480)
     assert f"window.__C3D_INIT__ = {viewer3d.escape_script_json(payload)};" in html
+
+
+def test_bundled_gui_exposes_host_api():
+    # Resolve the bundle from the imported package, not the cwd, so the test always
+    # reads the assets that ship with the code under test.
+    bundle_path = Path(viewer3d.__file__).parent / "static" / "3dmol-gui.js"
+    bundle = bundle_path.read_text()
+    assert "window.c3d" in bundle or "c3d=" in bundle, f"no host API in {bundle_path}"
+    assert '"0.4.0"' in bundle or "0.4.0" in bundle, f"no 0.4.0 marker in {bundle_path}"

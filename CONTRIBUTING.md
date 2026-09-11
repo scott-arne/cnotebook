@@ -350,6 +350,15 @@ invoke update-gui --ref v0.3.0
 
 This requires Node.js and npm to be installed. The task fetches the specified version, runs the Vite build, and copies the output to `cnotebook/core/static/`.
 
+Before the GUI release is pushed, point the submodule at a local checkout with `git -C vendor/3dmol-js-gui fetch <path> <ref>` and `git -C vendor/3dmol-js-gui checkout FETCH_HEAD`, then run the build and copy steps above. The invoke task cannot be used for this, because it fetches from `origin` and would discard the local checkout, so run the build and copy by hand:
+
+```bash
+rm -rf vendor/3dmol-js-gui/dist
+(cd vendor/3dmol-js-gui && npm ci && npm run build)
+cp vendor/3dmol-js-gui/dist/assets/main-*.js cnotebook/core/static/3dmol-gui.js
+cp vendor/3dmol-js-gui/dist/assets/main-*.css cnotebook/core/static/3dmol-gui.css
+```
+
 ### IDE Setup
 
 **VS Code** recommended extensions:
