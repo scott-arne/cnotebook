@@ -192,3 +192,242 @@ describe("the asset substitution sentinel", () => {
     expect(before.slice(before.lastIndexOf("\n"))).not.toContain("//");
   });
 });
+
+import { createController } from "../../cnotebook/c3d/static/c3d_widget.js";
+
+class FakeModel {
+  constructor(state) {
+    this.state = { commands: [], command_results: [], view: [], view_origin: "js", picked: {}, screenshot_request: 0, screenshot: {}, status: "loading", status_message: "", ...state };
+    this.handlers = {};
+    this.saved = 0;
+  }
+  get(name) { return this.state[name]; }
+  set(name, value) { this.state[name] = value; }
+  save_changes() { this.saved += 1; }
+  on(event, handler) { (this.handlers[event] ||= []).push(handler); }
+  emit(name, value) { this.state[name] = value; (this.handlers[`change:${name}`] || []).forEach((h) => h()); }
+}
+
+function fakeApi() {
+  const listeners = {};
+  return {
+    ready: Promise.resolve(),
+    executed: [],
+    execute(command) { this.executed.push(command); if (command === "boom") throw new Error("nope"); return { ok: true, output: [`ran ${command}`] }; },
+    getView() { return [0, 0, 0, 1, 0, 0, 0, 1]; },
+    setView(view) { this.lastSet = view; },
+    pngDataUrl() { return "data:image/png;base64,QUJD"; },
+    on(event, handler) { (listeners[event] ||= []).push(handler); return () => {}; },
+    fire(event, payload) { (listeners[event] || []).forEach((h) => h(payload)); },
+  };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+describe("createController", () => {
+  it("drains commands queued before and after connect, in order, and reports results", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "zoom" }] });
+    const api = fakeApi();
+    const el = document.createElement("div");
+    createController(model, el, { connect: () => Promise.resolve(api) });
+    await flush();
+    expect(model.get("status")).toBe("ready");
+    expect(api.executed).toEqual(["zoom"]);
+    expect(model.get("command_results")).toEqual([{ id: 1, ok: true, output: ["ran zoom"] }]);
+    const burst = Array.from({ length: 10 }, (_, i) => ({ id: i + 2, command: `c${i + 2}` }));
+    model.emit("commands", burst);
+    expect(api.executed).toHaveLength(11);
+    expect(model.get("command_results").map((r) => r.id)).toEqual(burst.map((c) => c.id));
+    model.emit("commands", [{ id: 12, command: "boom" }, { id: 13, command: "ok" }]);
+    expect(model.get("command_results")).toEqual([{ id: 12, ok: false, output: ["nope"] }, { id: 13, ok: true, output: ["ran ok"] }]);
+  });
+
+  it("answers screenshot requests, forwards picks and views, applies python views", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    createController(model, document.createElement("div"), { connect: () => Promise.resolve(api) });
+    await flush();
+    model.emit("screenshot_request", 1);
+    expect(model.get("screenshot")).toEqual({ seq: 1, png_base64: "QUJD" });
+    api.fire("pick", { atom: { serial: 3 }, modifiers: { shift: true } });
+    api.fire("pick", { atom: { serial: 4 }, modifiers: { shift: false } });
+    expect(model.get("picked")).toEqual({ seq: 2, atom: { serial: 4 }, modifiers: { shift: false } });
+    api.fire("view", [1, 2, 3]);
+    expect(model.get("view")).toEqual([1, 2, 3]);
+    expect(model.get("view_origin")).toBe("js");
+    model.state.view_origin = "python";
+    model.emit("view", [9, 9, 9]);
+    expect(api.lastSet).toEqual([9, 9, 9]);
+  });
+
+  it("answers the highest screenshot request pending at connect, exactly once", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, screenshot_request: 1 });
+    const api = fakeApi();
+    let resolveConnect;
+    createController(model, document.createElement("div"), { connect: () => new Promise((resolve) => { resolveConnect = resolve; }) });
+    model.emit("screenshot_request", 2);
+    expect(model.get("screenshot")).toEqual({});
+    resolveConnect(api);
+    await flush();
+    expect(model.get("screenshot")).toEqual({ seq: 2, png_base64: "QUJD" });
+    const saves = model.saved;
+    model.emit("screenshot_request", 2);
+    expect(model.saved).toBe(saves);
+  });
+
+  it("does not re-answer a screenshot already published when a view re-renders", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, screenshot_request: 3, screenshot: { seq: 3, png_base64: "old" } });
+    createController(model, document.createElement("div"), { connect: () => Promise.resolve(fakeApi()) });
+    await flush();
+    expect(model.get("screenshot")).toEqual({ seq: 3, png_base64: "old" });
+  });
+
+  it("reports connection failures through status", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    createController(model, document.createElement("div"), { connect: () => Promise.reject(new Error("no api")) });
+    await flush();
+    expect(model.get("status")).toBe("error");
+    expect(model.get("status_message")).toBe("no api");
+  });
+
+  it("creates an iframe with the payload inlined and sized from the model", () => {
+    const model = new FakeModel({ payload: '{"molecules":[]}', width: 321, height: 123 });
+    const el = document.createElement("div");
+    const { iframe } = createController(model, el, { connect: () => new Promise(() => {}) });
+    expect(el.contains(iframe)).toBe(true);
+    expect(iframe.style.width).toBe("321px");
+    expect(iframe.srcdoc).toContain('window.__C3D_INIT__ = {"molecules":[]}');
+  });
+});
+
+/**
+ * Fake host API whose commands finish asynchronously.
+ *
+ * The real `execute` (spec C1) returns immediately and hands back a `done` promise for a
+ * command that is still running; the settle handles let a test decide when that happens.
+ */
+function asyncFakeApi() {
+  const listeners = {};
+  return {
+    ready: Promise.resolve(),
+    executed: [],
+    settle: [],
+    execute(command) {
+      this.executed.push(command);
+      const done = new Promise((resolve, reject) => { this.settle.push({ resolve, reject }); });
+      return { ok: true, output: [`started ${command}`], done };
+    },
+    getView() { return [0, 0, 0, 1, 0, 0, 0, 1]; },
+    setView(view) { this.lastSet = view; },
+    pngDataUrl() { return "data:image/png;base64,QUJD"; },
+    on(event, handler) { (listeners[event] ||= []).push(handler); return () => {}; },
+    fire(event, payload) { (listeners[event] || []).forEach((h) => h(payload)); },
+  };
+}
+
+describe("createController with asynchronous commands", () => {
+  it("publishes a result only once the command has finished", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "load a" }] });
+    const api = asyncFakeApi();
+    createController(model, document.createElement("div"), { connect: () => Promise.resolve(api) });
+    await flush();
+    // The Python handle must settle after the command finished, not when execute returned.
+    expect(api.executed).toEqual(["load a"]);
+    expect(model.get("command_results")).toEqual([]);
+    api.settle[0].resolve();
+    await flush();
+    expect(model.get("command_results")).toEqual([{ id: 1, ok: true, output: ["started load a"] }]);
+  });
+
+  it("runs a command queued during an outstanding one exactly once, after it", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, commands: [{ id: 1, command: "load a" }] });
+    const api = asyncFakeApi();
+    createController(model, document.createElement("div"), { connect: () => Promise.resolve(api) });
+    await flush();
+    model.emit("commands", [{ id: 1, command: "load a" }, { id: 2, command: "load b" }]);
+    // The running drain owns the queue: the second command waits rather than racing.
+    expect(api.executed).toEqual(["load a"]);
+    api.settle[0].resolve();
+    await flush();
+    expect(api.executed).toEqual(["load a", "load b"]);
+    expect(model.get("command_results")).toEqual([{ id: 1, ok: true, output: ["started load a"] }]);
+    api.settle[1].resolve();
+    await flush();
+    expect(model.get("command_results")).toEqual([{ id: 2, ok: true, output: ["started load b"] }]);
+  });
+
+  it("reports a rejected command instead of leaving the rejection unhandled", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80, commands: [{ id: 4, command: "load a" }] });
+    const api = asyncFakeApi();
+    createController(model, document.createElement("div"), { connect: () => Promise.resolve(api) });
+    await flush();
+    api.settle[0].reject(new Error("file not found"));
+    await flush();
+    expect(model.get("command_results")).toEqual([{ id: 4, ok: false, output: ["file not found"] }]);
+  });
+});
+
+describe("createController screenshot capture", () => {
+  async function connected(model, pngDataUrl) {
+    const api = fakeApi();
+    if (pngDataUrl) api.pngDataUrl = pngDataUrl;
+    createController(model, document.createElement("div"), { connect: () => Promise.resolve(api) });
+    await flush();
+    return api;
+  }
+
+  it("reports a capture that throws, so Python fails fast instead of timing out", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    await connected(model, () => { throw new Error("no canvas"); });
+    model.emit("screenshot_request", 1);
+    expect(model.get("screenshot")).toEqual({ seq: 1, error: "no canvas" });
+  });
+
+  it("reports a capture that yields no image data", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    await connected(model, () => "data:image/png;base64,");
+    model.emit("screenshot_request", 1);
+    const answer = model.get("screenshot");
+    expect(answer.seq).toBe(1);
+    expect(typeof answer.error).toBe("string");
+    expect(answer.png_base64).toBeUndefined();
+  });
+
+  it("publishes bare base64 that Python can decode with validate=True", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    await connected(model, () => "data:image/png;base64,QUJD\n");
+    model.emit("screenshot_request", 1);
+    expect(model.get("screenshot")).toEqual({ seq: 1, png_base64: "QUJD" });
+  });
+});
+
+describe("createController teardown", () => {
+  it("detaches the frame and stops answering the model", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    const api = fakeApi();
+    const el = document.createElement("div");
+    const controller = createController(model, el, { connect: () => Promise.resolve(api) });
+    await flush();
+    const saves = model.saved;
+    controller.destroy();
+    expect(el.contains(controller.iframe)).toBe(false);
+    model.emit("commands", [{ id: 1, command: "zoom" }]);
+    model.emit("screenshot_request", 4);
+    // The fake's unsubscribe is a no-op, standing in for a host that keeps its listeners.
+    api.fire("pick", { atom: { serial: 1 }, modifiers: {} });
+    api.fire("view", [4, 5, 6]);
+    expect(api.executed).toEqual([]);
+    expect(model.saved).toBe(saves);
+  });
+
+  it("ignores a connection that resolves after teardown", async () => {
+    const model = new FakeModel({ payload: "{}", width: 100, height: 80 });
+    let resolveConnect;
+    const controller = createController(model, document.createElement("div"), { connect: () => new Promise((resolve) => { resolveConnect = resolve; }) });
+    controller.destroy();
+    resolveConnect(fakeApi());
+    await flush();
+    expect(model.get("status")).toBe("loading");
+    expect(model.saved).toBe(0);
+  });
+});
