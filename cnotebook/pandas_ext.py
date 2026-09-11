@@ -831,6 +831,37 @@ def _dataframe_molgrid(self, mol_col, title=True, tooltip_fields=None, **kwargs)
                    tooltip_fields=tooltip_fields, **kwargs)
 
 
+def _dataframe_style(self):
+    """A pandas Styler with molecule cells rendered by cnotebook and everything else escaped.
+
+    Formatters are registered by column label because that is how ``Styler.format``
+    addresses columns, so columns sharing a label share one formatter and one render
+    context. Pandas itself rejects a frame with a non-unique index or non-unique columns
+    only in ``Styler.apply`` and ``Styler.map``, which raise ``KeyError``; that error is
+    left to surface from pandas.
+
+    :returns: ``pandas.io.formats.style.Styler``.
+    """
+    df = self._obj
+    adapter = PandasFrameAdapter(df)
+    styler = df.style
+    ordinary = [label for pos, label in enumerate(adapter.columns()) if adapter.kind(pos) is ColumnKind.OTHER]
+    if ordinary:
+        styler = styler.format(escape="html", subset=ordinary)
+    styler = styler.format_index(escape="html", axis=0).format_index(escape="html", axis=1)
+    # Pandas writes the axis names into the header itself and only gained a hook for
+    # escaping them in 3.0, so on older pandas an axis name is left as pandas renders it.
+    if hasattr(styler, "format_index_names"):
+        styler = styler.format_index_names(escape="html", axis=0).format_index_names(escape="html", axis=1)
+    for pos, label in enumerate(adapter.columns()):
+        kind = adapter.kind(pos)
+        if kind is ColumnKind.OTHER:
+            continue
+        column_ctx = adapter.context(pos)
+        styler = styler.format(lambda value, _kind=kind, _ctx=column_ctx: cell_html(_kind, value, _ctx), subset=[label], escape=None)
+    return styler
+
+
 def _attach() -> None:
     """Attach cnotebook methods to the oepandas accessors (idempotent, version-guarded)."""
     global _ATTACHED
@@ -858,6 +889,7 @@ def _attach() -> None:
         "highlight": _dataframe_highlight, "copy_molecules": _dataframe_copy_molecules,
         "highlight_using_column": _dataframe_highlight_using_column,
         "fingerprint_similarity": _dataframe_fingerprint_similarity, "molgrid": _dataframe_molgrid,
+        "style": _dataframe_style,
     }.items():
         setattr(OEDataFrameAccessor, name, func)
     _ATTACHED = True

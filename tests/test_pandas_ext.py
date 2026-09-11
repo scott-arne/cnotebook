@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 from openeye import oechem, oedepict
+from pandas.io.formats.style import Styler
 
 import cnotebook.pandas_ext as pe
 from cnotebook.context import CNotebookContext
@@ -2629,3 +2630,93 @@ def test_attach_with_local_version(monkeypatch):
     assert hasattr(OESeriesAccessor, "highlight")
     monkeypatch.setattr(oepd, "__version__", oepd.__version__)
     pe._attach()
+
+
+########################################################################################################################
+# df.chem.style()
+########################################################################################################################
+
+
+def _style_cells(html_out):
+    """Body cell contents of a Styler table, in row-major order."""
+    import re
+
+    return re.findall(r"<td[^>]*>(.*?)</td>", html_out, re.DOTALL)
+
+
+def test_style_formats_each_molecule_column_with_its_own_context():
+    df = _frame(1)
+    df["png"] = df["mol"].chem.copy_molecules()
+    df["mol"].chem.set_render_options(image_format="svg")
+    df["png"].chem.set_render_options(image_format="png", device_pixel_ratio=1.0)
+    html = df.chem.style().to_html()
+    assert "<svg" in html and "data:image/png" in html
+
+
+def test_style_escapes_ordinary_values_and_labels():
+    df = _frame(1, **{"<b>bad</b>": ["<script>alert(1)</script>"]})
+    df.index = ["<i>row</i>"]
+    html = df.chem.style().to_html()
+    assert "<script>alert(1)</script>" not in html and "&lt;script&gt;" in html
+    assert "<b>bad</b>" not in html and "&lt;b&gt;bad&lt;/b&gt;" in html
+    assert "<i>row</i>" not in html and "&lt;i&gt;row&lt;/i&gt;" in html
+    assert "<img" in html or "<svg" in html
+
+
+def test_style_renders_a_missing_molecule_cell_as_an_empty_cell():
+    df = pd.DataFrame({
+        "mol": pd.Series([None, *_mols(1)], dtype=oepd.MoleculeDtype()),
+        "<b>label</b>": ["<script>alert(1)</script>", "plain"],
+    })
+    html = df.chem.style().to_html()
+    cells = _style_cells(html)
+
+    assert [cells[0], cells[1], cells[3]] == ["", "&lt;script&gt;alert(1)&lt;/script&gt;", "plain"]
+    assert cells[2].startswith("<img")
+    # A missing molecule must not leak Pandas' own scalar text into the cell.
+    assert ">None<" not in html and ">nan<" not in html
+    assert "<script>alert(1)</script>" not in html
+    assert "<b>label</b>" not in html and "&lt;b&gt;label&lt;/b&gt;" in html
+
+
+def test_style_applies_column_callbacks_once_per_rendered_cell():
+    df = _frame(2)
+    seen = []
+    df["mol"].array.metadata["cnotebook"] = CNotebookContext(image_format="svg", callbacks=[seen.append])
+
+    html = df.chem.style().to_html()
+
+    assert html.count("<svg") == 2 and len(seen) == 2
+    assert all(isinstance(disp, oedepict.OE2DMolDisplay) for disp in seen)
+    # Each callback gets the depiction copy, which carries the 2D coordinates the
+    # caller's molecules (parsed from SMILES) never gain.
+    assert [disp.GetMolecule().GetDimension() for disp in seen] == [2, 2]
+    assert [mol.GetDimension() for mol in df["mol"]] == [0, 0]
+
+
+@pytest.mark.skipif(not hasattr(Styler, "format_index_names"),
+                    reason="pandas older than 3.0 has no hook for escaping axis names")
+def test_style_escapes_axis_names():
+    df = _frame(1, x=["v"])
+    df.index = pd.Index(["r0"], name="<i>rows</i>")
+    df.columns = pd.Index(["mol", "x"], name="<i>cols</i>")
+    html = df.chem.style().to_html()
+    assert "<i>rows</i>" not in html and "&lt;i&gt;rows&lt;/i&gt;" in html
+    assert "<i>cols</i>" not in html and "&lt;i&gt;cols&lt;/i&gt;" in html
+
+
+def test_style_with_duplicate_column_labels_keeps_every_value_escaped():
+    """Styler.format addresses columns by label, so same-labelled columns share one formatter."""
+    df = pd.concat([
+        pd.DataFrame({"mol": pd.Series(_mols(1), dtype=oepd.MoleculeDtype())}),
+        pd.DataFrame({"mol": ["<script>alert(1)</script>"]}),
+    ], axis=1)
+
+    styler = df.chem.style()
+    html = styler.to_html()
+    assert html.count("<img") == 1
+    assert "<script>alert(1)</script>" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+    # Pandas' own uniqueness guard lives in apply/map, not in format or to_html.
+    with pytest.raises(KeyError, match="non-unique"):
+        styler.map(lambda value: "color: red").to_html()
