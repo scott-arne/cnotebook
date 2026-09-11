@@ -1255,9 +1255,15 @@ def test_configured_max_rows_handles_unset():
         assert pe.configured_max_rows() == 7
     with pl.Config(restore_defaults=True):
         assert pe.configured_max_rows() is None
-        # An unset option falls back to the spec B1 default of 10: five head rows,
-        # the ellipsis row and five tail rows.
-        assert pe.render_polars_dataframe(pl.DataFrame({"a": list(range(11))})).count("<td>") == 11
+        # An unset option falls back to the spec B1 default of 10: five head rows, the
+        # ellipsis row and five tail rows. A bare cell count cannot tell that apart from
+        # output that stopped truncating, so pin which values survive the window.
+        html = pe.render_polars_dataframe(pl.DataFrame({"a": list(range(11))}))
+        assert html.count("<td>") == 11
+        assert html.count("<td>...</td>") == 1
+        assert "<td>5</td>" not in html  # the dropped middle row
+        for value in (0, 1, 2, 3, 4, 6, 7, 8, 9, 10):
+            assert f"<td>{value}</td>" in html
 
 
 def test_render_polars_resolves_context_by_token():
@@ -1299,9 +1305,11 @@ def test_render_polars_null_ordinary_cells():
 def test_render_polars_warns_when_a_formatter_targets_a_depiction_column():
     """A caller formatter aimed at a depiction column is reported and never reaches the document."""
     df = _pframe(1)
-    with pytest.warns(CNotebookWarning, match="Overwriting the formatter"):
+    with pytest.warns(CNotebookWarning, match="Overwriting the formatter") as record:
         html = pe.render_polars_dataframe(df, formatters={"mol": lambda v: "LEAKED"})
     assert "LEAKED" not in html
+    # The warning must blame the caller's render call, not a line inside polars_ext.py.
+    assert record[0].filename == __file__
 
 
 def test_render_polars_warns_when_col_space_is_ignored():

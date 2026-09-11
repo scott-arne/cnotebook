@@ -182,7 +182,7 @@ class PolarsFrameAdapter:
             each column's context from its dtype token.
         :param formatters: Optional caller formatters for ordinary columns, keyed by
             column label; their output is escaped by the writer. A formatter aimed at a
-            depiction column is reported and ignored.
+            depiction column is ignored, and reported by :func:`render_polars_dataframe`.
         """
         self.df = df
         self._ctx = ctx
@@ -190,11 +190,6 @@ class PolarsFrameAdapter:
         self._labels: list[Hashable] = list(df.columns)
         self._series = [df.to_series(pos) for pos in range(df.width)]
         self._kinds = [classify_dtype(s.dtype) for s in self._series]
-        # Depiction cells go through cell_html, so a caller formatter on such a column is
-        # silently unused; say so rather than let the caller believe it took effect.
-        for label, kind in zip(self._labels, self._kinds, strict=True):
-            if kind is not ColumnKind.OTHER and label in self._formatters:
-                warn(f"Overwriting the formatter for column {label!r} with the depiction formatter")
 
     def columns(self) -> list[Hashable]:
         """
@@ -358,7 +353,8 @@ def render_polars_dataframe(
     Render a Polars DataFrame with molecule-aware cells.
 
     :param df: Frame to render (never modified).
-    :param formatters: Optional formatters for ordinary columns (output is escaped).
+    :param formatters: Optional formatters for ordinary columns (output is escaped); one aimed
+        at a depiction column is reported and ignored.
     :param col_space: Accepted for compatibility and ignored; depiction columns take their width
         from their column context and ordinary columns are not given a minimum width.
     :param ctx: Overrides every column context when given.
@@ -368,7 +364,15 @@ def render_polars_dataframe(
     if col_space:
         warn("render_polars_dataframe sizes depiction columns from their column context; "
              "the col_space argument is ignored")
-    return render_table(PolarsFrameAdapter(df, ctx=ctx, formatters=formatters), ctx=ctx, max_rows=max_rows)
+    adapter = PolarsFrameAdapter(df, ctx=ctx, formatters=formatters)
+    if formatters:
+        # Depiction cells go through cell_html, so a caller formatter on such a column is
+        # silently unused; say so rather than let the caller believe it took effect. The
+        # check lives here, not in the adapter, so the warning blames the caller's line.
+        for pos, label in enumerate(adapter.columns()):
+            if adapter.kind(pos) is not ColumnKind.OTHER and label in formatters:
+                warn(f"Overwriting the formatter for column {label!r} with the depiction formatter")
+    return render_table(adapter, ctx=ctx, max_rows=max_rows)
 
 
 ########################################################################################################################
