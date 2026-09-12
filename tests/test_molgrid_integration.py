@@ -117,8 +117,8 @@ def test_selection_workflow():
     mols = create_test_molecules()
     grid = MolGrid(mols, name="integration-test-grid", select=True)
 
-    # Simulate selection via widget
-    grid.widget.selection = '{"0": "CCO", "2": "c1ccccc1"}'
+    # Simulate a selection arriving from the front end
+    grid.selection = [0, 2]
 
     # Get selected molecules
     selected = grid.get_selection()
@@ -245,39 +245,35 @@ def test_search_fields_in_html():
     assert "Category" in html
 
 
-def test_smarts_query_widget_integration():
-    """Test SMARTS query through widget integration."""
+def test_smarts_query_returns_matching_indices():
+    """Test a SMARTS query returns the matching molecule indices."""
     from cnotebook import MolGrid
-    import json
 
     mols = create_test_molecules()
     grid = MolGrid(mols)
 
-    # Simulate SMARTS query via widget
-    grid._on_smarts_query({"new": "[OH]"})
+    matches, error = grid.search_smarts("[OH]")
 
-    matches = json.loads(grid.widget.smarts_matches)
     assert isinstance(matches, list)
     assert len(matches) >= 2  # At least Ethanol and Acetaminophen
+    assert error is None
 
 
-def test_smarts_query_empty_clears_filter():
-    """Test that empty SMARTS query returns all molecules."""
+def test_smarts_query_empty_pattern_is_rejected():
+    """Test an empty SMARTS query is reported as invalid rather than matching all."""
     from cnotebook import MolGrid
-    import json
 
     mols = create_test_molecules()
     grid = MolGrid(mols)
 
-    # First filter with SMARTS
-    grid._on_smarts_query({"new": "[OH]"})
-    filtered = json.loads(grid.widget.smarts_matches)
+    filtered, error = grid.search_smarts("[OH]")
     assert len(filtered) < 5
+    assert error is None
 
-    # Then clear filter
-    grid._on_smarts_query({"new": ""})
-    all_matches = json.loads(grid.widget.smarts_matches)
-    assert len(all_matches) == 5
+    # Clearing the query is a front-end concern; the search itself rejects it.
+    all_matches, error = grid.search_smarts("")
+    assert all_matches == []
+    assert "Invalid SMARTS" in error
 
 
 def test_multiple_grid_instances():
@@ -291,8 +287,8 @@ def test_multiple_grid_instances():
     grid2 = MolGrid(mols2, name="grid2")
 
     # Set different selections
-    grid1.widget.selection = '{"0": "CCO"}'
-    grid2.widget.selection = '{"0": "benzene"}'
+    grid1.selection = [0]
+    grid2.selection = [0]
 
     # Verify isolation
     assert grid1.get_selection_indices() == [0]

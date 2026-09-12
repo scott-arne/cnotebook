@@ -1,6 +1,5 @@
 """Tests for MolGrid interactive molecule grid."""
 
-import json
 import pytest
 from openeye import oechem, oedepict
 from cnotebook.context import CNotebookContext
@@ -418,15 +417,15 @@ def test_molgrid_auto_generates_name(simple_mol):
     assert grid2.name.startswith("molgrid-")
 
 
-def test_molgrid_creates_widget(simple_mol):
-    """Test that MolGrid creates an AnyWidget."""
+def test_molgrid_construction_creates_no_widget(simple_mol):
+    """Construction must not build a front end; the widget is created on demand."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
 
-    assert grid.widget is not None
-    assert hasattr(grid.widget, 'grid_id')
-    assert grid.widget.grid_id == grid.name
+    assert grid._widget is None
+    assert grid.closed is False
+    assert grid.name.startswith("molgrid-")
 
 
 def test_molgrid_empty_molecules():
@@ -760,40 +759,40 @@ def test_molgrid_search_smarts_empty_pattern(sample_molecules):
     assert matches == []
 
 
-def test_molgrid_on_smarts_query_empty(sample_molecules):
-    """Test _on_smarts_query with empty query returns all indices."""
+def test_molgrid_search_smarts_empty_query_reports_error(sample_molecules):
+    """Test search_smarts reports an empty query as an invalid pattern."""
     from cnotebook import MolGrid
 
     grid = MolGrid(sample_molecules)
-    grid._on_smarts_query({"new": ""})
+    matches, error = grid.search_smarts("")
 
-    matches = json.loads(grid.widget.smarts_matches)
-    assert len(matches) == 5  # All molecules
+    assert matches == []
+    assert "Invalid SMARTS" in error
 
 
-def test_molgrid_on_smarts_query_with_pattern(sample_molecules):
-    """Test _on_smarts_query with valid pattern."""
+def test_molgrid_search_smarts_with_pattern(sample_molecules):
+    """Test search_smarts returns matching indices and no error for a valid query."""
     from cnotebook import MolGrid
 
     grid = MolGrid(sample_molecules)
-    grid._on_smarts_query({"new": "[OH]"})
+    matches, error = grid.search_smarts("[OH]")
 
-    matches = json.loads(grid.widget.smarts_matches)
     assert len(matches) >= 2
+    assert error is None
 
 
 # ============================================================================
 # Selection Tests
 # ============================================================================
 
-def test_molgrid_selection_via_widget(sample_molecules):
-    """Test selection state via widget update."""
+def test_molgrid_selection_indices_sorted(sample_molecules):
+    """Test selection indices are reported in ascending order."""
     from cnotebook import MolGrid
 
     grid = MolGrid(sample_molecules, name="selection-test")
 
-    # Simulate selection via widget
-    grid.widget.selection = '{"0": "CCO", "2": "c1ccccc1"}'
+    # The front end reports selected indices in click order.
+    grid.selection = [2, 0]
 
     indices = grid.get_selection_indices()
     assert indices == [0, 2]
@@ -804,7 +803,7 @@ def test_molgrid_get_selection_molecules(sample_molecules):
     from cnotebook import MolGrid
 
     grid = MolGrid(sample_molecules, name="selection-mol-test")
-    grid.widget.selection = '{"0": "CCO"}'
+    grid.selection = [0]
 
     selected = grid.get_selection()
     assert len(selected) == 1
@@ -831,31 +830,18 @@ def test_molgrid_get_selection_empty(sample_molecules):
     assert selected == []
 
 
-def test_molgrid_selection_change_handler(sample_molecules):
-    """Test _on_selection_change updates internal state."""
+def test_molgrid_selection_survives_render_option_change(sample_molecules):
+    """Test changing render options drops cached images but keeps the selection."""
     from cnotebook import MolGrid
 
     grid = MolGrid(sample_molecules, name="change-handler-test")
+    grid.selection = [1, 3]
+    grid.render_item(0)
 
-    # Directly call change handler
-    grid._on_selection_change({"new": '{"1": "CC(=O)O", "3": "acetaminophen"}'})
+    grid.set_render_options(width=300)
 
-    indices = grid.get_selection_indices()
-    assert indices == [1, 3]
-
-
-def test_molgrid_selection_change_invalid_json(sample_molecules):
-    """Test _on_selection_change handles invalid JSON gracefully."""
-    from cnotebook import MolGrid
-
-    grid = MolGrid(sample_molecules, name="invalid-json-test")
-
-    # Should not raise exception
-    grid._on_selection_change({"new": "not valid json{"})
-
-    # Selection should remain empty
-    indices = grid.get_selection_indices()
-    assert indices == []
+    assert grid.get_selection_indices() == [1, 3]
+    assert grid._images == {}
 
 
 def test_molgrid_selection_isolated_between_grids(sample_molecules):
@@ -865,8 +851,8 @@ def test_molgrid_selection_isolated_between_grids(sample_molecules):
     grid1 = MolGrid(sample_molecules, name="grid1-isolated")
     grid2 = MolGrid(sample_molecules, name="grid2-isolated")
 
-    grid1.widget.selection = '{"0": "CCO"}'
-    grid2.widget.selection = '{"1": "CC(=O)O", "2": "benzene"}'
+    grid1.selection = [0]
+    grid2.selection = [1, 2]
 
     assert grid1.get_selection_indices() == [0]
     assert grid2.get_selection_indices() == [1, 2]
@@ -1817,3 +1803,187 @@ def test_molgrid_html_no_combined_filter_without_cluster():
     assert "applyCombinedFilter" in html
     # But cluster-specific UI should not be present
     assert 'class="molgrid-cluster-row"' not in html
+
+
+# ============================================================================
+# Data Model, Render Cache and Cluster Forms
+# ============================================================================
+
+def _mol(smiles="CCO", title=None):
+    """Build a molecule for the data model tests."""
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, smiles)
+    if title:
+        mol.SetTitle(title)
+    return mol
+
+
+def test_constructor_has_no_display_side_effect(capsys, monkeypatch):
+    """Test construction renders nothing, displays nothing and creates no widget."""
+    import cnotebook.grid.grid as grid_module
+    from cnotebook.grid import MolGrid
+
+    called = []
+    monkeypatch.setattr(grid_module, "display", lambda *a, **k: called.append(a), raising=False)
+    grid = MolGrid([_mol()])
+    assert called == [] and capsys.readouterr().out == ""
+    assert grid._widget is None
+
+
+def test_grid_module_imports_without_pandas():
+    """Test the grid module imports and renders static HTML without pandas or anywidget."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, builtins; real = builtins.__import__\n"
+        "def guard(name, *a, **k):\n"
+        "    if name.split('.')[0] in ('pandas', 'anywidget'): raise ImportError(name)\n"
+        "    return real(name, *a, **k)\n"
+        "builtins.__import__ = guard\n"
+        "from cnotebook.grid.grid import MolGrid\n"
+        "from openeye import oechem\n"
+        "m = oechem.OEGraphMol(); oechem.OESmilesToMol(m, 'CCO')\n"
+        "print(len(MolGrid([m]).to_html()) > 0)"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("True")
+
+
+def test_none_molecule_renders_placeholder():
+    """Test None and empty molecules produce empty SMILES and a placeholder image."""
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), None, oechem.OEGraphMol()])
+    items = grid.items()
+    assert [it["smiles"] for it in items] == ["CCO", "", ""]
+    html = grid.render_item(1)
+    assert "Empty Molecule" in html or "<img" in html or "<svg" in html
+    assert grid.render_item(2)
+
+
+def test_invalid_smarts_reports_error():
+    """Test search_smarts returns matches plus an error message for invalid patterns."""
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol("c1ccccc1"), _mol()])
+    assert grid.search_smarts("c1ccccc1") == ([0], None)
+    matches, error = grid.search_smarts("c1cc(")
+    assert matches == [] and "SMARTS" in error
+
+
+def test_cluster_mapping_and_sequence_forms():
+    """Test cluster labels from a sequence, an index mapping and a DataFrame column."""
+    import pandas as pd
+
+    from cnotebook.grid import MolGrid
+
+    mols = [_mol(), _mol(), _mol()]
+    assert MolGrid(mols, cluster=["a", "b", "a"]).cluster_labels() == ["a", "b", "a"]
+    assert MolGrid(mols, cluster={0: "x", 2: "y"}).cluster_labels() == ["x", "Uncategorized", "y"]
+    df = pd.DataFrame({"c": ["p", None, "q"]})
+    assert MolGrid(mols, dataframe=df, cluster="c").cluster_labels() == ["p", "Uncategorized", "q"]
+    with pytest.raises(ValueError):
+        MolGrid(mols, cluster=["only-two", "labels"])
+
+
+def test_non_string_column_labels():
+    """Test non-string DataFrame column labels become string field names."""
+    import pandas as pd
+
+    from cnotebook.grid import MolGrid
+
+    df = pd.DataFrame({0: [1, 2], ("t", 1): ["a", "b"]})
+    grid = MolGrid([_mol(), _mol()], dataframe=df)
+    assert set(grid.items()[0]["fields"]) == {"0", "('t', 1)"}
+    assert grid.to_html()
+
+
+def test_render_cache_and_revision_on_set_render_options():
+    """Test rendered images are cached and set_render_options clears them."""
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("c1ccccc1")])
+    first = grid.render_indices([0, 1])
+    assert set(first) == {"0", "1"} and grid.revision == 0
+    assert grid.render_indices([0]) == {"0": first["0"]}
+    grid.set_render_options(image_format="png", device_pixel_ratio=1.0)
+    assert grid.revision == 1 and len(grid._images) == 0
+    assert "data:image/png" in grid.render_item(0)
+
+
+def test_config_defaults_and_theme_validation(monkeypatch):
+    """Test configured defaults apply, explicit arguments win and themes are validated."""
+    from cnotebook import config as cn_config
+    from cnotebook.grid import MolGrid
+
+    monkeypatch.setattr(cn_config, "_CONFIG", None)
+    cn_config.configure(molgrid={"n_items_per_page": 12, "theme": "dark"})
+    try:
+        grid = MolGrid([_mol()])
+        assert grid.n_items_per_page == 12 and grid.theme == "dark" and grid._display_mode == "widget"
+        assert MolGrid([_mol()], n_items_per_page=5).n_items_per_page == 5
+    finally:
+        cn_config.configure(molgrid={"n_items_per_page": 24, "theme": "auto"})
+    with pytest.raises(ValueError):
+        MolGrid([_mol()], theme="sepia")
+
+
+def test_display_mode_snapshotted_at_construction_molgrid(monkeypatch):
+    """Test the display mode is captured at construction, not at display time."""
+    from cnotebook import config as cn_config
+    from cnotebook.grid import MolGrid
+
+    monkeypatch.setattr(cn_config, "_CONFIG", None)
+    before = MolGrid([_mol()])
+    cn_config.configure(display_mode="static")
+    try:
+        after = MolGrid([_mol()])
+        assert before._display_mode == "widget" and after._display_mode == "static"
+    finally:
+        cn_config.configure(display_mode="widget")
+
+
+def test_badges_sort_and_fields_in_items():
+    """Test items carry badge strings, DataFrame fields and the initial sort."""
+    import pandas as pd
+
+    from cnotebook.grid import MolGrid
+
+    df = pd.DataFrame({"MW": [46.07, 78.11], "Name": ["ethanol", "benzene"]})
+    grid = MolGrid([_mol(title="e"), _mol("c1ccccc1", title="b")], dataframe=df, badges=["MW"],
+                   sort_by=("MW", True))
+    items = grid.items()
+    assert items[0]["badges"] == ["MW: 46.07"] and items[0]["fields"]["Name"] == "ethanol"
+    assert grid.sort_by == ("MW", True)
+
+
+def test_grid_is_collectable_after_close():
+    """Test a closed grid is garbage collected (no global registry keeps it alive)."""
+    import gc
+    import weakref
+
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol()])
+    ref = weakref.ref(grid)
+    grid.close()
+    del grid
+    gc.collect()
+    assert ref() is None
+
+
+def test_grid_does_not_mutate_source_molecules():
+    """Test rendering leaves the caller's 3D molecule untouched."""
+    from openeye import oeomega
+
+    from cnotebook.grid import MolGrid
+
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(1)
+    assert omega(mol)
+    MolGrid([mol]).render_item(0)
+    assert mol.GetDimension() == 3

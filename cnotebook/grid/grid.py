@@ -1,19 +1,23 @@
-"""MolGrid class for displaying molecules in an interactive grid."""
+"""MolGrid: molecule grid with a live front end and a static HTML fallback."""
+
+from __future__ import annotations
 
 import json
 import sys
 import uuid
+from collections import OrderedDict
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from html import escape
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Union
+from typing import Any
 
-import anywidget
-import pandas as pd
-from traitlets.traitlets import Unicode
 from openeye import oechem, oedepict  # type: ignore[import-untyped]
 
-from cnotebook.context import CNotebookContext
-from cnotebook.render import oedisp_to_html, oemol_to_html
+from cnotebook import config as _config
+from cnotebook.config import UNSET
+from cnotebook.core.context import CNotebookContext
+from cnotebook.core.errors import warn
+from cnotebook.core.render import oedisp_to_html, oemol_to_html, prepare_depiction_copy
 
 # Load List.js from local static file
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -42,16 +46,24 @@ _BEST_FIT_CANDIDATES = (
 # small enough to render at the full structure scale are unaffected.
 _GRID_DEPICTION_MARGIN = 3.0
 
+# Card themes accepted by the front end.
+_THEMES = ("auto", "light", "dark")
+
+# Label used for molecules with no cluster value.
+_UNCATEGORIZED = "Uncategorized"
+
+# Rendered images are cached per grid; the cap bounds memory for very large
+# grids, where only the visited pages are ever rendered.
+_MAX_CACHE = 5000
+
 HTML: Any = None
-display: Callable[..., Any] | None = None
 
 try:
-    from IPython.display import HTML as _HTML, display as _display
+    from IPython.display import HTML as _HTML
 except ModuleNotFoundError:
     pass
 else:
     HTML = _HTML
-    display = _display
 
 
 _RENDER_OPTION_UNSET = object()
@@ -84,77 +96,36 @@ def _is_marimo() -> bool:
         return False
 
 
-class MolGridWidget(anywidget.AnyWidget):
-    """Jupyter widget for MolGrid selection synchronization.
+def _is_missing(value: Any) -> bool:
+    """Check whether a field value should be treated as missing.
 
-    This widget handles communication between the MolGrid iframe and the
-    Jupyter kernel for selection state and SMARTS query functionality.
+    Works without pandas: ``None``, ``NaN`` and pandas' ``NA`` are the only
+    values that are missing, and the last two are recognised by not comparing
+    equal to themselves. ``NA`` goes one step further and has no truth value at
+    all, which is why the ``TypeError`` branch counts as missing; array-like
+    values compare elementwise and raise ``ValueError`` instead, so they are
+    reported as present.
 
-    :ivar grid_id: Unique identifier for this grid instance.
-    :ivar selection: JSON-encoded dictionary of selected molecule indices.
-    :ivar smarts_query: Current SMARTS query string from user input.
-    :ivar smarts_matches: JSON-encoded list of molecule indices matching the SMARTS query.
+    :param value: Value to inspect.
+    :returns: ``True`` when the value is missing.
     """
+    if value is None:
+        return True
+    try:
+        return bool(value != value)  # noqa: PLR0124 (self-comparison is the NaN test)
+    except TypeError:
+        return True
+    except ValueError:
+        return False
 
-    _esm = """
-    function render({ model, el }) {
-        const gridId = model.get("grid_id");
-        const globalName = "_MOLGRID_" + gridId;
 
-        // Store model globally so iframe can access it
-        window[globalName] = model;
+def _text(value: Any) -> str:
+    """Render a field value as display text.
 
-        // Listen for postMessage from iframe
-        window.addEventListener("message", (event) => {
-            if (event.data && event.data.gridId === gridId) {
-                if (event.data.type === "MOLGRID_SELECTION") {
-                    model.set("selection", JSON.stringify(event.data.selection));
-                    model.save_changes();
-                } else if (event.data.type === "MOLGRID_SMARTS_QUERY") {
-                    model.set("smarts_query", event.data.query);
-                    model.save_changes();
-                }
-            }
-        });
-
-        // Listen for SMARTS match results from Python
-        model.on("change:smarts_matches", () => {
-            const matches = model.get("smarts_matches");
-            // Broadcast to iframe
-            const iframe = document.querySelector("#molgrid-iframe-" + gridId);
-            if (iframe && iframe.contentWindow) {
-                iframe.contentWindow.postMessage({
-                    type: "MOLGRID_SMARTS_RESULTS",
-                    gridId: gridId,
-                    matches: matches
-                }, "*");
-            }
-        });
-
-        // Listen for height updates from iframe
-        window.addEventListener("message", (event) => {
-            const isHeightMsg = event.data &&
-                event.data.gridId === gridId &&
-                event.data.type === "MOLGRID_HEIGHT";
-            if (isHeightMsg) {
-                const iframe = document.querySelector(
-                    "#molgrid-iframe-" + gridId
-                );
-                if (iframe) {
-                    iframe.style.height = event.data.height + "px";
-                }
-            }
-        });
-
-    }
-
-    export default { render };
+    :param value: Value to convert.
+    :returns: Empty string for missing values, ``str(value)`` otherwise.
     """
-
-    grid_id = Unicode("").tag(sync=True)
-    selection = Unicode("{}").tag(sync=True)
-    smarts_query = Unicode("").tag(sync=True)
-    smarts_matches = Unicode("[]").tag(sync=True)
+    return "" if _is_missing(value) else str(value)
 
 
 # CSS matching backup styling
@@ -818,54 +789,59 @@ body {
 
 
 class MolGrid:
-    """Interactive molecule grid widget for displaying and selecting molecules."""
-
-    # Class-level selection storage
-    _selections: Dict[str, Dict[int, str]] = {}
+    """Interactive molecule grid (live widget by default, static HTML on request)."""
 
     def __init__(
         self,
         mols: Iterable,
         *,
         dataframe=None,
-        mol_col: Optional[str] = None,
-        title: Union[bool, str, None] = True,
-        tooltip_fields: Optional[List[str]] = None,
-        n_items_per_page: int = 24,
-        width: int = 260,
-        height: int = 240,
-        min_width: Optional[float] = 260.0,
-        min_height: Optional[float] = 240.0,
-        max_width: Optional[float] = None,
-        max_height: Optional[float] = None,
+        mol_col: str | None = None,
+        title: bool | str | None = True,
+        tooltip_fields: list[str] | None = None,
+        n_items_per_page: int = UNSET,
+        width: int = UNSET,
+        height: int = UNSET,
+        min_width: float | None = 260.0,
+        min_height: float | None = 240.0,
+        max_width: float | None = None,
+        max_height: float | None = None,
         structure_scale: float = DEFAULT_STRUCTURE_SCALE,
         auto_scale: bool = False,
         atom_label_font_scale: float = DEFAULT_ATOM_LABEL_FONT_SCALE,
         title_font_scale: float = 1.0,
-        image_format: str = "svg",
+        image_format: str = UNSET,
         bond_width_scaling: bool = True,
         render_title: bool = False,
         depict_orientation: int = BEST_FIT_ORIENTATION,
-        max_heavy_atoms: Optional[int] = 100,
+        max_heavy_atoms: int | None = 100,
         select: bool = True,
         information: bool = True,
-        data: Optional[Union[str, List[str]]] = None,
-        search_fields: Optional[List[str]] = None,
-        name: Optional[str] = None,
-        cluster: Optional[Union[str, Dict]] = None,
+        data: str | list[str] | None = None,
+        search_fields: list[str] | None = None,
+        name: str | None = None,
+        cluster: str | Sequence[Hashable] | Mapping[int, Hashable] | None = None,
         cluster_counts: bool = True,
+        theme: str = UNSET,
+        sort_by: str | tuple | None = None,
+        badges: Sequence[str] | None = None,
+        static_max_items: int = 2000,
     ):
-        """Create an interactive molecule grid widget.
+        """Create a molecule grid; nothing is rendered or displayed until asked for.
 
-        :param mols: Iterable of OpenEye molecule objects.
-        :param dataframe: Optional DataFrame with molecule data.
-        :param mol_col: Column name containing molecules (if using DataFrame).
-        :param title: Title display mode. True uses molecule's title, a string
-            specifies a field name, None/False hides titles.
-        :param tooltip_fields: List of fields for tooltip display.
-        :param n_items_per_page: Number of molecules per page.
-        :param width: Image width in pixels.
-        :param height: Image height in pixels.
+        :param mols: Molecules to show. ``None`` entries become placeholders.
+        :param dataframe: Optional pandas DataFrame with per-molecule data
+            (polars frames are converted by the polars accessor).
+        :param mol_col: Molecule column of *dataframe*, excluded from data fields.
+        :param title: Card label mode. ``True`` uses the molecule title, a
+            string names a field, ``None``/``False`` hides labels.
+        :param tooltip_fields: Fields shown in the hover tooltip.
+        :param n_items_per_page: Cards per page. Defaults to the configured
+            ``molgrid.n_items_per_page``.
+        :param width: Image width in pixels. Defaults to the configured
+            ``molgrid.width``.
+        :param height: Image height in pixels. Defaults to the configured
+            ``molgrid.height``.
         :param min_width: Minimum image width in pixels.
         :param min_height: Minimum image height in pixels.
         :param max_width: Maximum image width in pixels, or None for no limit.
@@ -876,112 +852,164 @@ class MolGrid:
             shrink-to-fit is needed. Ignored when ``auto_scale`` is ``True``.
         :param auto_scale: When ``True``, size structures to fill each grid
             card (OpenEye AutoScale) instead of using ``structure_scale``.
-            Defaults to ``False``.
         :param atom_label_font_scale: Scale factor for atom labels.
         :param title_font_scale: Scale factor for title font.
-        :param image_format: Image format ("svg" or "png").
+        :param image_format: ``"svg"`` or ``"png"``. Defaults to the configured
+            ``molgrid.image_format``.
         :param bond_width_scaling: Whether MolGrid should reduce bond widths
             when a molecule is shrunk below the baseline structure scale.
-        :param render_title: Whether to draw molecule titles inside rendered images.
-            Card labels remain controlled by the ``title`` parameter.
-        :param depict_orientation: Preferred 2D depiction orientation for grid
-            renderings. Defaults to :data:`BEST_FIT_ORIENTATION`, which prepares
-            each molecule in whichever orientation renders largest in the card.
-            Pass an explicit ``oedepict.OEDepictOrientation_*`` value to force a
-            single orientation for every molecule.
-        :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
+        :param render_title: Whether to draw molecule titles inside rendered
+            images. Card labels remain controlled by ``title``.
+        :param depict_orientation: Preferred 2D depiction orientation. Defaults
+            to :data:`BEST_FIT_ORIENTATION`, which prepares each molecule in
+            whichever orientation renders largest in the card. Pass an explicit
+            ``oedepict.OEDepictOrientation_*`` value to force one orientation.
+        :param max_heavy_atoms: Maximum heavy atom count to render, or None.
         :param select: Enable selection checkboxes.
-        :param information: Enable info button with hover tooltip.
-        :param data: Column(s) to display in info tooltip. If None, auto-detects
-            simple types (string, int, float) from DataFrame.
-        :param search_fields: Fields for text search.
-        :param name: Grid identifier.
-        :param cluster: Cluster filtering mode. A string specifies a DataFrame column
-            name containing cluster labels. A dict maps values to display labels.
-            None disables cluster filtering.
-        :param cluster_counts: Show molecule count next to cluster labels in dropdown.
+        :param information: Enable the per-card information button.
+        :param data: Field(s) shown in the information tooltip. ``None``
+            auto-detects the data columns of *dataframe*.
+        :param search_fields: Fields for text search. ``None`` auto-detects the
+            text columns of *dataframe*.
+        :param name: Grid identifier. Defaults to a generated unique name.
+        :param cluster: Cluster labels as a *dataframe* column name, a
+            per-molecule sequence, or an ``{index: label}`` mapping. Molecules
+            with no label are reported as ``"Uncategorized"``.
+        :param cluster_counts: Show molecule counts next to cluster labels.
+        :param theme: ``"auto"``, ``"light"`` or ``"dark"``. Defaults to the
+            configured ``molgrid.theme``.
+        :param sort_by: Initial sort field, or ``(field, descending)``.
+        :param badges: Fields shown as chips on each card.
+        :param static_max_items: :meth:`to_html` warns above this many molecules.
+        :raises ValueError: For an unknown theme, a cluster sequence whose
+            length does not match *mols*, or a cluster column that does not
+            exist in *dataframe*.
+        :raises TypeError: For a cluster argument that is not a column name,
+            sequence or mapping.
         """
         self._molecules = list(mols)
         self._dataframe = dataframe
         self._mol_col = mol_col
         self.title = title if title else None
-        self.tooltip_fields = tooltip_fields or []
-        self.n_items_per_page = n_items_per_page
+        self.tooltip_fields = list(tooltip_fields or [])
+        self.n_items_per_page = _config.resolve("molgrid", "n_items_per_page", n_items_per_page)
+        self.width = _config.resolve("molgrid", "width", width)
+        self.height = _config.resolve("molgrid", "height", height)
+        self.image_format = _config.resolve("molgrid", "image_format", image_format)
+        self.theme = _config.resolve("molgrid", "theme", theme)
+        if self.theme not in _THEMES:
+            raise ValueError(f"Unknown theme '{self.theme}'. Choose 'auto', 'light', or 'dark'.")
+
+        # The display mode is snapshotted here so a later configuration change
+        # cannot retroactively alter how an existing grid displays itself.
+        self._display_mode = _config.resolve("display", "mode", UNSET)
+
         self.selection_enabled = select
         self.information_enabled = information
-        if name is None:
-            self.name = f"molgrid-{uuid.uuid4().hex[:8]}"
-        else:
-            self.name = name
-
-        # Cluster filtering
-        if cluster is not None:
-            if isinstance(cluster, str):
-                if dataframe is None:
-                    raise ValueError("cluster parameter requires a DataFrame when using a column name")
-                if cluster not in dataframe.columns:
-                    raise ValueError(f"Column '{cluster}' not found in DataFrame")
-            elif not isinstance(cluster, dict):
-                raise TypeError("cluster must be a string (column name) or dict")
-        self.cluster = cluster
-        self.cluster_counts = cluster_counts
-
-        # Handle data parameter for info tooltip columns
-        if data is not None:
-            if isinstance(data, str):
-                self.information_fields = [data]
-            else:
-                self.information_fields = list(data)
-        elif dataframe is not None:
-            # Auto-detect simple type columns
-            self.information_fields = self._auto_detect_info_fields(dataframe, mol_col)
-        else:
-            self.information_fields = []
-
-        # Auto-detect search fields from DataFrame if not provided
-        self.search_fields: Optional[List[str]]
-        if search_fields is None and dataframe is not None:
-            self.search_fields = self._auto_detect_search_fields(dataframe, mol_col)
-        else:
-            self.search_fields = search_fields
-
-        # Rendering settings
-        self.width = width
-        self.height = height
+        self.name = name or f"molgrid-{uuid.uuid4().hex[:8]}"
         self.min_width = min_width
         self.min_height = min_height
         self.max_width = max_width
         self.max_height = max_height
         self.structure_scale = structure_scale
         self.auto_scale = auto_scale
-        self.image_format = image_format
         self.atom_label_font_scale = atom_label_font_scale
         self.title_font_scale = title_font_scale
         self.bond_width_scaling = bond_width_scaling
         self.render_title = render_title
         self.depict_orientation = depict_orientation
         self.max_heavy_atoms = max_heavy_atoms
+        self.device_pixel_ratio = 2.0
+        self.cluster_counts = cluster_counts
+        self.static_max_items = static_max_items
+        self.badges = list(badges or [])
+        if isinstance(sort_by, str):
+            self.sort_by: tuple | None = (sort_by, False)
+        elif sort_by:
+            field, descending = sort_by
+            self.sort_by = (str(field), bool(descending))
+        else:
+            self.sort_by = None
+        self.cluster = self._validate_cluster(cluster)
 
-        # Initialize selection storage
-        MolGrid._selections[self.name] = {}
+        if data is not None:
+            self.information_fields = [data] if isinstance(data, str) else list(data)
+        elif dataframe is not None:
+            self.information_fields = self._auto_detect_info_fields(dataframe, mol_col)
+        else:
+            self.information_fields = []
 
-        # Create widget
-        self.widget = MolGridWidget(grid_id=self.name)
+        if search_fields is None and dataframe is not None:
+            self.search_fields: list[str] = self._auto_detect_search_fields(dataframe, mol_col)
+        else:
+            self.search_fields = list(search_fields or [])
 
-        # Observe selection changes
-        self.widget.observe(self._on_selection_change, names=["selection"])
+        self._images: OrderedDict[int, str] = OrderedDict()
+        self.revision = 0
+        self.selection: list[int] = []
+        self._widget: Any = None
+        self.closed = False
 
-        # Observe SMARTS query changes
-        self.widget.observe(self._on_smarts_query, names=["smarts_query"])
+    # -- validation and data --------------------------------------------------
 
-        # Display widget immediately (critical for model availability)
-        # In Jupyter: display widget here so model is available when iframe loads
-        # In Marimo: widget is returned from display() method instead
-        if not _is_marimo() and display is not None:
-            display(self.widget)
+    def _validate_cluster(self, cluster):
+        """Normalize and validate the ``cluster`` constructor argument.
 
-    def _auto_detect_search_fields(self, dataframe, mol_col: Optional[str]) -> List[str]:
-        """Auto-detect searchable text columns from DataFrame.
+        :param cluster: Column name, per-molecule sequence, or index mapping.
+        :returns: The validated column name, label list, or label mapping.
+        :raises ValueError: For a missing column or a mismatched sequence length.
+        :raises TypeError: For any other argument type.
+        """
+        if cluster is None:
+            return None
+        if isinstance(cluster, str):
+            if self._dataframe is None:
+                raise ValueError("cluster requires a DataFrame when given as a column name")
+            if cluster not in self._dataframe.columns:
+                raise ValueError(f"Column '{cluster}' not found in DataFrame")
+            return cluster
+        if isinstance(cluster, Mapping):
+            return dict(cluster)
+        if isinstance(cluster, Sequence):
+            labels = list(cluster)
+            if len(labels) != len(self._molecules):
+                raise ValueError(
+                    f"cluster sequence has {len(labels)} entries for {len(self._molecules)} molecules"
+                )
+            return labels
+        raise TypeError(
+            "cluster must be a string (column name), a sequence of labels, "
+            "or a mapping from index to label"
+        )
+
+    def cluster_labels(self) -> list[str] | None:
+        """Per-molecule cluster labels.
+
+        :returns: One label per molecule, or ``None`` when clustering is off.
+        """
+        if self.cluster is None:
+            return None
+        if isinstance(self.cluster, str):
+            values = list(self._dataframe[self.cluster])
+            return [_UNCATEGORIZED if _is_missing(v) else str(v) for v in values]
+        if isinstance(self.cluster, dict):
+            return [
+                _UNCATEGORIZED if _is_missing(self.cluster.get(i)) else str(self.cluster[i])
+                for i in range(len(self._molecules))
+            ]
+        return [_UNCATEGORIZED if _is_missing(v) else str(v) for v in self.cluster]
+
+    def _frame_columns(self) -> list[str]:
+        """Data column names of the source frame, as strings.
+
+        :returns: Column names excluding the molecule column, or an empty list.
+        """
+        if self._dataframe is None:
+            return []
+        return [str(c) for c in self._dataframe.columns if c != self._mol_col]
+
+    def _auto_detect_search_fields(self, dataframe, mol_col: str | None) -> list[str]:
+        """Auto-detect searchable text columns from a DataFrame.
 
         :param dataframe: DataFrame to inspect.
         :param mol_col: Molecule column name to exclude.
@@ -989,225 +1017,178 @@ class MolGrid:
         """
         search_fields = []
         for col in dataframe.columns:
-            # Skip the molecule column
             if col == mol_col:
                 continue
 
-            dtype = dataframe[col].dtype
-            dtype_str = str(dtype).lower()
+            dtype_str = str(dataframe[col].dtype).lower()
 
-            # Skip molecule dtypes (oepandas MoleculeDtype)
+            # Skip molecule dtypes (oepandas MoleculeDtype) and numbers.
             if "molecule" in dtype_str:
                 continue
-
-            # Skip numeric dtypes
-            if any(t in dtype_str for t in ["int", "float", "double", "decimal"]):
+            if any(t in dtype_str for t in ("int", "float", "double", "decimal")):
                 continue
 
-            # Include string/object columns that likely contain text
-            if "object" in dtype_str or "string" in dtype_str or "str" in dtype_str:
-                search_fields.append(col)
+            if "object" in dtype_str or "str" in dtype_str:
+                search_fields.append(str(col))
                 continue
 
-            # Also check if column contains string values (fallback for edge cases)
+            # Extension dtypes such as ``category`` hide their value type, so
+            # fall back to inspecting the first value actually stored.
             try:
-                first_valid = dataframe[col].dropna().iloc[0] if len(dataframe[col].dropna()) > 0 else None
-                if first_valid is not None and isinstance(first_valid, str):
-                    search_fields.append(col)
+                present = dataframe[col].dropna()
+                first_valid = present.iloc[0] if len(present) > 0 else None
+                if isinstance(first_valid, str):
+                    search_fields.append(str(col))
             except (IndexError, KeyError):
                 pass
 
         return search_fields
 
-    def _auto_detect_info_fields(self, dataframe, mol_col: Optional[str]) -> List[str]:
-        """Auto-detect simple type columns from DataFrame for info tooltip.
-
-        Includes string, int, and float columns (excludes molecule columns).
+    def _auto_detect_info_fields(self, dataframe, mol_col: str | None) -> list[str]:
+        """Auto-detect data columns from a DataFrame for the information tooltip.
 
         :param dataframe: DataFrame to inspect.
         :param mol_col: Molecule column name to exclude.
-        :returns: List of column names with simple types.
+        :returns: List of column names holding displayable data.
         """
         info_fields = []
         for col in dataframe.columns:
-            # Skip the molecule column
             if col == mol_col:
                 continue
 
-            dtype = dataframe[col].dtype
-            dtype_str = str(dtype).lower()
-
-            # Skip molecule dtypes (oepandas MoleculeDtype)
-            if "molecule" in dtype_str:
+            # Skip the chemistry dtypes, whose values have no useful text form.
+            dtype_str = str(dataframe[col].dtype).lower()
+            if "molecule" in dtype_str or "display" in dtype_str or "design" in dtype_str:
                 continue
 
-            # Include numeric types (int, float)
-            if any(t in dtype_str for t in ["int", "float", "double", "decimal"]):
-                info_fields.append(col)
-                continue
-
-            # Include string/object columns
-            if "object" in dtype_str or "string" in dtype_str or "str" in dtype_str:
-                info_fields.append(col)
-                continue
-
-            # Include category dtype
-            if "category" in dtype_str:
-                info_fields.append(col)
-                continue
+            info_fields.append(str(col))
 
         return info_fields
 
-    def _on_selection_change(self, change):
-        """Handle selection change from widget.
-
-        :param change: Traitlet change dict with 'new' key.
-        """
-        try:
-            selection = json.loads(change["new"])
-            MolGrid._selections[self.name] = {int(k): v for k, v in selection.items()}
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-
-    def _on_smarts_query(self, change):
-        """Handle SMARTS query from widget.
-
-        Performs substructure search and sends matching indices back.
-
-        :param change: Traitlet change dict with 'new' key.
-        """
-        query = change["new"]
-        if not query:
-            # Empty query - return all indices
-            matches = list(range(len(self._molecules)))
-        else:
-            matches = self._search_smarts(query)
-
-        # Send results back to widget
-        self.widget.smarts_matches = json.dumps(matches)
-
-    def _search_smarts(self, smarts_pattern: str) -> List[int]:
-        """Search molecules by SMARTS pattern.
-
-        :param smarts_pattern: SMARTS pattern string.
-        :returns: List of indices of matching molecules.
-        """
-        matches: List[int] = []
-        try:
-            ss = oechem.OESubSearch(smarts_pattern)
-            if not ss.IsValid():
-                return matches
-
-            for idx, mol in enumerate(self._molecules):
-                oechem.OEPrepareSearch(mol, ss)
-                if ss.SingleMatch(mol):
-                    matches.append(idx)
-        except Exception:
-            # Invalid SMARTS or other error - return empty
-            pass
-
-        return matches
-
-    def _get_field_value(self, idx: int, mol, field: str):
-        """Get a field value from DataFrame column or molecule property.
+    def _field_value(self, idx: int, mol, field: str):
+        """Get a field value from a DataFrame column or a molecule property.
 
         :param idx: Row index in the dataframe.
-        :param mol: OpenEye molecule object.
+        :param mol: OpenEye molecule object, or None.
         :param field: Field name to retrieve.
-        :returns: Field value or None.
+        :returns: Raw field value, or None when the field is unknown.
         """
-        # Try DataFrame column first
-        if self._dataframe is not None and field in self._dataframe.columns:
-            return self._dataframe.iloc[idx][field]
+        if self._dataframe is not None:
+            columns = {str(c): c for c in self._dataframe.columns}
+            if field in columns:
+                return self._dataframe.iloc[idx][columns[field]]
 
-        # Fall back to molecule properties
+        if not isinstance(mol, oechem.OEMolBase):
+            return None
         if field == "Title":
             return mol.GetTitle() or None
-        else:
-            return oechem.OEGetSDData(mol, field) or None
+        return oechem.OEGetSDData(mol, field) or None
 
-    def set_render_options(
-        self,
-        *,
-        width=_RENDER_OPTION_UNSET,
-        height=_RENDER_OPTION_UNSET,
-        min_width=_RENDER_OPTION_UNSET,
-        min_height=_RENDER_OPTION_UNSET,
-        max_width=_RENDER_OPTION_UNSET,
-        max_height=_RENDER_OPTION_UNSET,
-        structure_scale=_RENDER_OPTION_UNSET,
-        auto_scale=_RENDER_OPTION_UNSET,
-        atom_label_font_scale=_RENDER_OPTION_UNSET,
-        title_font_scale=_RENDER_OPTION_UNSET,
-        image_format=_RENDER_OPTION_UNSET,
-        bond_width_scaling=_RENDER_OPTION_UNSET,
-        title=_RENDER_OPTION_UNSET,
-        depict_orientation=_RENDER_OPTION_UNSET,
-        max_heavy_atoms=_RENDER_OPTION_UNSET,
-    ) -> None:
-        """Set rendering options for molecules in this grid.
+    def items(self) -> list[dict[str, Any]]:
+        """Build the per-molecule index consumed by the front end.
 
-        These options mirror the molecule render settings used by Pandas
-        chemistry accessors. The ``title`` option controls titles drawn inside
-        molecule images; grid card labels remain controlled by the MolGrid
-        ``title`` constructor argument.
+        The payload is plain JSON-serializable data and carries no images;
+        images are rendered on demand by :meth:`render_indices`.
 
-        :param width: Image width in pixels. If 0, determined by structure scale.
-        :param height: Image height in pixels. If 0, determined by structure scale.
-        :param min_width: Minimum image width in pixels.
-        :param min_height: Minimum image height in pixels.
-        :param max_width: Maximum image width in pixels, or None for no limit.
-        :param max_height: Maximum image height in pixels, or None for no limit.
-        :param structure_scale: Scale factor applied to OpenEye's default
-            structure scale. Ignored when ``auto_scale`` is ``True``.
-        :param auto_scale: When ``True``, size structures to fill each grid card
-            (OpenEye AutoScale) instead of using ``structure_scale``.
-        :param atom_label_font_scale: Scale factor for atom labels.
-        :param title_font_scale: Scale factor for title font.
-        :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
-        :param bond_width_scaling: Whether to scale bond widths with structure scale.
-        :param title: Whether to display molecule titles inside rendered images.
-        :param depict_orientation: Preferred 2D depiction orientation for grid
-            renderings, or :data:`BEST_FIT_ORIENTATION` to pick per molecule.
-        :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
+        :returns: One dict per molecule with index, title, SMILES, fields,
+            badges and cluster label.
         """
-        options = _collect_render_options(
-            width=width,
-            height=height,
-            min_width=min_width,
-            min_height=min_height,
-            max_width=max_width,
-            max_height=max_height,
-            structure_scale=structure_scale,
-            auto_scale=auto_scale,
-            atom_label_font_scale=atom_label_font_scale,
-            title_font_scale=title_font_scale,
-            image_format=image_format,
-            bond_width_scaling=bond_width_scaling,
-            title=title,
-            depict_orientation=depict_orientation,
-            max_heavy_atoms=max_heavy_atoms,
+        labels = self.cluster_labels()
+        fields = list(dict.fromkeys([
+            *self._frame_columns(),
+            *self.search_fields,
+            *self.information_fields,
+            *self.tooltip_fields,
+        ]))
+        out: list[dict[str, Any]] = []
+        for idx, mol in enumerate(self._molecules):
+            valid = isinstance(mol, oechem.OEMolBase) and mol.IsValid()
+            title = None
+            if self.title is True:
+                title = mol.GetTitle() if valid else None
+            elif self.title:
+                title = _text(self._field_value(idx, mol, self.title)) or None
+            out.append({
+                "i": idx,
+                "title": title or None,
+                "smiles": oechem.OEMolToSmiles(mol) if valid else "",
+                "fields": {f: _text(self._field_value(idx, mol, f)) for f in fields},
+                "badges": [f"{b}: {_text(self._field_value(idx, mol, b))}" for b in self.badges],
+                "cluster": labels[idx] if labels else None,
+            })
+        return out
+
+    def widget_config(self, *, static: bool) -> dict[str, Any]:
+        """Build the configuration dictionary consumed by the front end.
+
+        :param static: Whether the front end runs without a kernel connection.
+        :returns: JSON-serializable grid configuration.
+        """
+        labels = self.cluster_labels()
+        return {
+            "page_size": int(self.n_items_per_page),
+            "sort_by": (
+                {"field": self.sort_by[0], "descending": bool(self.sort_by[1])}
+                if self.sort_by else None
+            ),
+            "badges": list(self.badges),
+            "search_fields": list(self.search_fields),
+            "info_fields": list(self.information_fields),
+            "export_columns": list(dict.fromkeys([*self._frame_columns(), *self.information_fields])),
+            "cluster_labels": sorted(set(labels)) if labels else None,
+            "cluster_counts": bool(self.cluster_counts),
+            "theme": self.theme,
+            "static": static,
+            "select": bool(self.selection_enabled),
+            "information": bool(self.information_enabled),
+            "title": self.title is not None,
+            "image_width": int(self.width),
+            "image_height": int(self.height),
+        }
+
+    # -- rendering ------------------------------------------------------------
+
+    def _create_render_context(self) -> CNotebookContext:
+        """Create a render context from the grid's current render options.
+
+        :returns: CNotebook context used to render each grid molecule.
+        """
+        return CNotebookContext(
+            width=self.width,
+            height=self.height,
+            min_width=self.min_width,
+            min_height=self.min_height,
+            max_width=self.max_width,
+            max_height=self.max_height,
+            structure_scale=self.structure_scale,
+            auto_scale=self.auto_scale,
+            atom_label_font_scale=self.atom_label_font_scale,
+            title_font_scale=self.title_font_scale,
+            image_format=self.image_format,
+            bond_width_scaling=False,
+            title=self.render_title,
+            max_heavy_atoms=self.max_heavy_atoms,
+            device_pixel_ratio=self.device_pixel_ratio,
+            scope="local",
         )
-        if not options:
-            return
-
-        if "title" in options:
-            options["render_title"] = options.pop("title")
-
-        for name, value in options.items():
-            setattr(self, name, value)
 
     @staticmethod
     def _prepare_in_orientation(mol, orientation: int):
         """Create a depiction-prepared copy of ``mol`` in a given orientation.
 
+        The copy is made through :func:`prepare_depiction_copy` so multiconformer
+        and query molecules become plain 2D depiction molecules and the caller's
+        molecule is never touched. Coordinates are cleared again because the
+        requested orientation only takes effect when the layout is recomputed.
+
         :param mol: OpenEye molecule object.
         :param orientation: OEDepictOrientation value.
         :returns: Prepared molecule copy.
         """
-        render_mol = mol.CreateCopy()
+        render_mol = prepare_depiction_copy(mol, clear_coords=True)
         opts = oedepict.OEPrepareDepictionOptions()
         opts.SetDepictOrientation(orientation)
+        opts.SetClearCoords(True)
         oedepict.OEPrepareDepiction(render_mol, opts)
         return render_mol
 
@@ -1274,42 +1255,19 @@ class MolGrid:
         while compact molecules keep their natural single-molecule depiction.
         Any explicit orientation is honored as-is.
 
-        :param mol: OpenEye molecule object.
-        :returns: Prepared molecule copy.
+        :param mol: OpenEye molecule object, or None.
+        :returns: Prepared molecule copy, or the input for anything that cannot
+            be depicted (placeholders are rendered from the original).
         """
         if not isinstance(mol, oechem.OEMolBase):
             return mol
-
         if not (mol.IsValid() and mol.NumAtoms() > 0):
-            return mol.CreateCopy()
+            return mol
 
         if self.depict_orientation == BEST_FIT_ORIENTATION:
             return self._prepare_best_fit(mol)
 
         return self._prepare_in_orientation(mol, self.depict_orientation)
-
-    def _create_render_context(self) -> CNotebookContext:
-        """Create a render context from the grid's current render options.
-
-        :returns: CNotebook context used to render each grid molecule.
-        """
-        return CNotebookContext(
-            width=self.width,
-            height=self.height,
-            min_width=self.min_width,
-            min_height=self.min_height,
-            max_width=self.max_width,
-            max_height=self.max_height,
-            structure_scale=self.structure_scale,
-            auto_scale=self.auto_scale,
-            atom_label_font_scale=self.atom_label_font_scale,
-            title_font_scale=self.title_font_scale,
-            image_format=self.image_format,
-            bond_width_scaling=False,
-            title=self.render_title,
-            max_heavy_atoms=self.max_heavy_atoms,
-            scope="local",
-        )
 
     @staticmethod
     def _set_bond_display_line_width(
@@ -1360,7 +1318,7 @@ class MolGrid:
     def _create_molecule_display(
         self,
         mol: oechem.OEMolBase,
-        ctx: Optional[CNotebookContext] = None,
+        ctx: CNotebookContext | None = None,
     ) -> oedepict.OE2DMolDisplay:
         """Create a grid molecule display with MolGrid bond-width handling.
 
@@ -1383,126 +1341,249 @@ class MolGrid:
         else:
             disp = ctx.create_molecule_display(mol)
 
+        # The display keeps no reference to the molecule it was built from, so
+        # hold one here to stop the prepared copy from being collected early.
+        disp._cnotebook_owner = mol  # type: ignore[attr-defined]
         self._scale_bond_widths_for_display(disp, baseline_scale=self._baseline_scale)
         return disp
 
-    def _render_molecule_html(
-        self,
-        mol: oechem.OEMolBase,
-        *,
-        ctx: CNotebookContext,
-    ) -> str:
-        """Render a molecule using MolGrid display post-processing.
+    def render_item(self, idx: int) -> str:
+        """Render one molecule as HTML image markup.
 
-        :param mol: Molecule to render.
-        :param ctx: Render context.
-        :returns: HTML image markup.
+        Results are cached until the next :meth:`set_render_options` call.
+
+        :param idx: Molecule index.
+        :returns: HTML image markup, or placeholder markup for molecules that
+            cannot be depicted.
         """
+        cached = self._images.get(idx)
+        if cached is not None:
+            self._images.move_to_end(idx)
+            return cached
+
+        ctx = self._create_render_context()
+        mol = self._molecules[idx]
+        render_mol = self._prepare_molecule_for_rendering(mol)
         if (
-            isinstance(mol, oechem.OEMolBase)
-            and mol.IsValid()
+            isinstance(render_mol, oechem.OEMolBase)
+            and render_mol.IsValid()
+            and render_mol.NumAtoms() > 0
             and (
                 ctx.max_heavy_atoms is None
-                or oechem.OECount(mol, oechem.OEIsHeavy()) <= ctx.max_heavy_atoms
+                or oechem.OECount(render_mol, oechem.OEIsHeavy()) <= ctx.max_heavy_atoms
             )
         ):
-            disp = self._create_molecule_display(mol, ctx=ctx)
-            return oedisp_to_html(disp, ctx=ctx)
+            image_html = oedisp_to_html(self._create_molecule_display(render_mol, ctx), ctx=ctx)
+        elif isinstance(mol, oechem.OEMolBase):
+            image_html = oemol_to_html(mol, ctx=ctx)
+        else:
+            image_html = oemol_to_html(oechem.OEGraphMol(), ctx=ctx)
 
-        return oemol_to_html(mol, ctx=ctx)
+        self._images[idx] = image_html
+        while len(self._images) > _MAX_CACHE:
+            self._images.popitem(last=False)
+        return image_html
 
-    def _prepare_data(self) -> List[Dict[str, Any]]:
-        """Prepare molecule data for template rendering.
+    def render_indices(self, indices: Iterable[int]) -> dict[str, str]:
+        """Render the given molecules.
+
+        :param indices: Molecule indices; out-of-range entries are ignored.
+        :returns: Mapping of ``"<index>"`` to HTML image markup.
+        """
+        return {
+            str(i): self.render_item(int(i))
+            for i in indices
+            if 0 <= int(i) < len(self._molecules)
+        }
+
+    def search_smarts(self, pattern: str) -> tuple:
+        """Find molecules matching a SMARTS pattern.
+
+        :param pattern: SMARTS pattern.
+        :returns: ``(matching indices, error message)``; the error is ``None``
+            for a valid pattern and the indices are empty for an invalid one.
+        """
+        query = oechem.OESubSearch()
+        if not query.Init(pattern):
+            return [], f"Invalid SMARTS pattern: {pattern}"
+
+        matches = []
+        for idx, mol in enumerate(self._molecules):
+            if isinstance(mol, oechem.OEMolBase) and mol.IsValid():
+                oechem.OEPrepareSearch(mol, query)
+                if query.SingleMatch(mol):
+                    matches.append(idx)
+        return matches, None
+
+    def set_render_options(
+        self,
+        *,
+        width=_RENDER_OPTION_UNSET,
+        height=_RENDER_OPTION_UNSET,
+        min_width=_RENDER_OPTION_UNSET,
+        min_height=_RENDER_OPTION_UNSET,
+        max_width=_RENDER_OPTION_UNSET,
+        max_height=_RENDER_OPTION_UNSET,
+        structure_scale=_RENDER_OPTION_UNSET,
+        auto_scale=_RENDER_OPTION_UNSET,
+        atom_label_font_scale=_RENDER_OPTION_UNSET,
+        title_font_scale=_RENDER_OPTION_UNSET,
+        image_format=_RENDER_OPTION_UNSET,
+        bond_width_scaling=_RENDER_OPTION_UNSET,
+        title=_RENDER_OPTION_UNSET,
+        depict_orientation=_RENDER_OPTION_UNSET,
+        max_heavy_atoms=_RENDER_OPTION_UNSET,
+        device_pixel_ratio=_RENDER_OPTION_UNSET,
+    ) -> None:
+        """Set rendering options for molecules in this grid.
+
+        These options mirror the molecule render settings used by the dataframe
+        chemistry accessors. The ``title`` option controls titles drawn inside
+        molecule images; grid card labels remain controlled by the MolGrid
+        ``title`` constructor argument. Applying any option clears the rendered
+        images and increments :attr:`revision`.
+
+        :param width: Image width in pixels. If 0, determined by structure scale.
+        :param height: Image height in pixels. If 0, determined by structure scale.
+        :param min_width: Minimum image width in pixels.
+        :param min_height: Minimum image height in pixels.
+        :param max_width: Maximum image width in pixels, or None for no limit.
+        :param max_height: Maximum image height in pixels, or None for no limit.
+        :param structure_scale: Scale factor applied to OpenEye's default
+            structure scale. Ignored when ``auto_scale`` is ``True``.
+        :param auto_scale: When ``True``, size structures to fill each grid card
+            (OpenEye AutoScale) instead of using ``structure_scale``.
+        :param atom_label_font_scale: Scale factor for atom labels.
+        :param title_font_scale: Scale factor for title font.
+        :param image_format: Output image format, such as ``"png"`` or ``"svg"``.
+        :param bond_width_scaling: Whether to scale bond widths with structure scale.
+        :param title: Whether to display molecule titles inside rendered images.
+        :param depict_orientation: Preferred 2D depiction orientation for grid
+            renderings, or :data:`BEST_FIT_ORIENTATION` to pick per molecule.
+        :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
+        :param device_pixel_ratio: Raster oversampling factor for PNG output.
+        :raises ValueError: If an option value is rejected by the render context.
+        """
+        options = _collect_render_options(
+            width=width,
+            height=height,
+            min_width=min_width,
+            min_height=min_height,
+            max_width=max_width,
+            max_height=max_height,
+            structure_scale=structure_scale,
+            auto_scale=auto_scale,
+            atom_label_font_scale=atom_label_font_scale,
+            title_font_scale=title_font_scale,
+            image_format=image_format,
+            bond_width_scaling=bond_width_scaling,
+            title=title,
+            depict_orientation=depict_orientation,
+            max_heavy_atoms=max_heavy_atoms,
+            device_pixel_ratio=device_pixel_ratio,
+        )
+        if not options:
+            return
+
+        if "title" in options:
+            options["render_title"] = options.pop("title")
+
+        for name, value in options.items():
+            setattr(self, name, value)
+
+        # Building a context validates the new values through its setters
+        # before any cached image is thrown away.
+        self._create_render_context()
+
+        self._images.clear()
+        self.revision += 1
+
+    def close(self) -> None:
+        """Release the front end and drop cached images."""
+        if self._widget is not None:
+            try:
+                self._widget.close()
+            finally:
+                self._widget = None
+        self._images.clear()
+        self.closed = True
+
+    # -- legacy helpers for the static template below --------------------------
+    # ``to_html`` still renders through the original List.js template, which
+    # needs the raw (unstringified) field values these helpers return. They go
+    # away with the template when the new front end lands.
+
+    def _get_field_value(self, idx: int, mol, field: str):
+        """Get a field value from a DataFrame column or a molecule property.
+
+        :param idx: Row index in the dataframe.
+        :param mol: OpenEye molecule object.
+        :param field: Field name to retrieve.
+        :returns: Raw field value, or None.
+        """
+        return self._field_value(idx, mol, field)
+
+    def _search_smarts(self, smarts_pattern: str) -> list[int]:
+        """Search molecules by SMARTS pattern.
+
+        :param smarts_pattern: SMARTS pattern string.
+        :returns: List of indices of matching molecules (empty when invalid).
+        """
+        return self.search_smarts(smarts_pattern)[0]
+
+    def _prepare_data(self) -> list[dict[str, Any]]:
+        """Prepare molecule data for the static template.
 
         :returns: List of dicts with molecule data for each item.
         """
-        data: List[Dict[str, Any]] = []
-        ctx = self._create_render_context()
+        data: list[dict[str, Any]] = []
+        labels = self.cluster_labels()
 
         for idx, mol in enumerate(self._molecules):
-            render_mol = self._prepare_molecule_for_rendering(mol)
-            item: Dict[str, Any] = {
+            valid = isinstance(mol, oechem.OEMolBase) and mol.IsValid()
+            item: dict[str, Any] = {
                 "index": idx,
                 "title": None,
-                "mol_title": mol.GetTitle() if mol.IsValid() else None,
+                "mol_title": mol.GetTitle() if valid else None,
                 "tooltip": {},
-                "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
-                "img": self._render_molecule_html(render_mol, ctx=ctx),
+                "smiles": oechem.OEMolToSmiles(mol) if valid else "",
+                "img": self.render_item(idx),
             }
 
-            # Extract title
             if self.title is True:
-                # Use molecule's built-in title
-                item["title"] = mol.GetTitle() if mol.IsValid() else None
+                item["title"] = mol.GetTitle() if valid else None
             elif self.title:
-                # Use specified field name
-                item["title"] = self._get_field_value(idx, mol, self.title)
+                item["title"] = self._field_value(idx, mol, self.title)
 
-            # Extract tooltip fields
             for field in self.tooltip_fields:
-                item["tooltip"][field] = self._get_field_value(idx, mol, field)
+                item["tooltip"][field] = self._field_value(idx, mol, field)
 
-            # Extract search fields
-            item["search_fields"] = {}
-            if self.search_fields:
-                for field in self.search_fields:
-                    item["search_fields"][field] = self._get_field_value(idx, mol, field)
+            item["search_fields"] = {
+                field: self._field_value(idx, mol, field) for field in self.search_fields
+            }
+            item["info_fields"] = {
+                field: self._field_value(idx, mol, field) for field in self.information_fields
+            }
 
-            # Extract information fields for tooltip
-            item["info_fields"] = {}
-            if self.information_fields:
-                for field in self.information_fields:
-                    item["info_fields"][field] = self._get_field_value(idx, mol, field)
-
-            # Extract cluster value
-            if self.cluster is not None:
-                if isinstance(self.cluster, str):
-                    # Column name - get value from DataFrame
-                    assert self._dataframe is not None
-                    raw_value = self._dataframe.iloc[idx][self.cluster]
-                    if pd.isna(raw_value):
-                        item["cluster"] = "Uncategorized"
-                    else:
-                        item["cluster"] = str(raw_value)
-                else:
-                    # Dict mapping - use index to look up label
-                    item["cluster"] = str(idx)  # Will be mapped in JS
+            if labels is not None:
+                item["cluster"] = labels[idx]
 
             data.append(item)
 
         return data
 
-    def _prepare_export_data(self) -> List[dict]:
+    def _prepare_export_data(self) -> list[dict]:
         """Prepare molecule data for CSV/SMILES export.
 
         :returns: List of dicts with all exportable data for each molecule.
         """
+        columns = self._frame_columns()
         export_data = []
-
-        # Determine columns to export
-        if self._dataframe is not None:
-            columns = [c for c in self._dataframe.columns if c != self._mol_col]
-        else:
-            columns = []
-
-        for idx, mol in enumerate(self._molecules):
-            row = {
-                "index": idx,
-                "smiles": oechem.OEMolToSmiles(mol) if mol.IsValid() else "",
-            }
-
-            # Add DataFrame columns
-            if self._dataframe is not None:
-                for col in columns:
-                    val = self._dataframe.iloc[idx][col]
-                    # Convert to string for JSON serialization
-                    if val is None or (hasattr(val, '__len__') and len(str(val)) == 0):
-                        row[col] = ""
-                    else:
-                        row[col] = str(val)
-
+        for item in self.items():
+            row: dict[str, Any] = {"index": item["i"], "smiles": item["smiles"]}
+            for col in columns:
+                row[col] = item["fields"].get(col, "")
             export_data.append(row)
-
         return export_data
 
     def to_html(self) -> str:
@@ -1510,6 +1591,13 @@ class MolGrid:
 
         :returns: Complete HTML document as string.
         """
+        if len(self._molecules) > self.static_max_items:
+            warn(
+                f"Rendering {len(self._molecules)} molecules as static HTML; "
+                f"grids above {self.static_max_items} items may be slow to load. "
+                "Pass static_max_items to raise the threshold."
+            )
+
         items = self._prepare_data()
         export_data = self._prepare_export_data()
         grid_id = self.name
@@ -1519,16 +1607,14 @@ class MolGrid:
         # Prepare export data as JSON for JavaScript
         export_data_js = json.dumps(export_data)
         # Get column names for CSV header
-        export_columns = ["smiles"]
-        if self._dataframe is not None:
-            export_columns.extend([c for c in self._dataframe.columns if c != self._mol_col])
+        export_columns = ["smiles", *self._frame_columns()]
         export_columns_js = json.dumps(export_columns)
 
         # Prepare cluster data for JavaScript
         cluster_data_js = "null"
         cluster_counts_js = "null"
         cluster_enabled = self.cluster is not None
-        cluster_map: Dict[str, List[int]] = {}
+        cluster_map: dict[str, list[int]] = {}
 
         if cluster_enabled:
             # Build cluster metadata: {label: [indices], ...}
@@ -2450,27 +2536,24 @@ class MolGrid:
 </body>
 </html>'''
 
-    def get_selection(self) -> List:
+    def get_selection(self) -> list:
         """Get list of selected molecules.
 
         :returns: List of selected OEMol objects.
         """
-        selection = MolGrid._selections.get(self.name, {})
-        return [self._molecules[idx] for idx in sorted(selection.keys())]
+        return [self._molecules[idx] for idx in sorted(self.selection)]
 
-    def get_selection_indices(self) -> List[int]:
+    def get_selection_indices(self) -> list[int]:
         """Get indices of selected molecules.
 
         :returns: List of selected indices.
         """
-        return sorted(MolGrid._selections.get(self.name, {}).keys())
+        return sorted(self.selection)
 
     def display(self):
         """Display the grid in the notebook.
 
         Automatically detects Jupyter vs Marimo environment.
-        Note: The widget was already displayed in __init__ to ensure
-        the anywidget model is available when the iframe loads.
 
         :returns: Displayable HTML object.
         """
@@ -2486,7 +2569,7 @@ class MolGrid:
 
         if _is_marimo():
             import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
-            return mo.vstack([self.widget, mo.Html(iframe_html)])
+            return mo.Html(iframe_html)
         else:
             if HTML is None:
                 return iframe_html
@@ -2504,6 +2587,6 @@ class MolGrid:
             raise RuntimeError("This method is only available in a marimo notebook.")
 
         def get_state():
-            return list(MolGrid._selections.get(self.name, {}).keys())
+            return sorted(self.selection)
 
         return get_state
