@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [master, release/**]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned to the same series as the dev extra so CI measures the rule set the branch was
+      # cleaned against; ruff's stable rules change on every minor release.
+      - run: pip install "ruff~=0.16.6" "mypy~=2.3.1"
+      - run: ruff check cnotebook tests
+      - run: mypy cnotebook
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r docs/requirements.txt
+      - run: sphinx-build -W -b html docs docs/_build/html
+
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        deps: [latest, minimum]
+        # openeye_min and pandas_min are attached to each Python through include rather than
+        # declared as matrix axes. An include entry can add a new key to the existing combinations
+        # but can never overwrite an axis value, so a per-Python floor exception is a one-line edit
+        # here and never spawns an extra job. 2025.2.1 publishes one manylinux_2_28 wheel tagged
+        # py310.py311.py312.py313, which covers every entry below. The pandas floor differs on 3.13:
+        # 2.2.0 is the package floor but its last Linux wheel is cp312, so 3.13 pins 2.2.3, the
+        # first release with a cp313 wheel, rather than building pandas from source on the runner.
+        include:
+          - python: "3.11"
+            openeye_min: "2025.2.1"
+            pandas_min: "2.2.0"
+          - python: "3.12"
+            openeye_min: "2025.2.1"
+            pandas_min: "2.2.0"
+          - python: "3.13"
+            openeye_min: "2025.2.1"
+            pandas_min: "2.2.3"
+    env:
+      OE_LICENSE_PRESENT: ${{ secrets.OE_LICENSE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Write the OpenEye licence
+        if: env.OE_LICENSE_PRESENT == 'true'
+        run: printf '%s' "${{ secrets.OE_LICENSE }}" > "$RUNNER_TEMP/oe_license.txt"
+      - name: Install (latest dependencies)
+        if: env.OE_LICENSE_PRESENT == 'true' && matrix.deps == 'latest'
+        run: pip install --extra-index-url https://pypi.anaconda.org/openeye/simple ".[test,dataframes,notebook]"
+      - name: Install (minimum dependencies)
+        if: env.OE_LICENSE_PRESENT == 'true' && matrix.deps == 'minimum'
+        # openeye_min and pandas_min are the floors attached to this Python by the include above.
+        run: |
+          pip install --extra-index-url https://pypi.anaconda.org/openeye/simple ".[test]" \
+            "openeye-toolkits==${{ matrix.openeye_min }}" \
+            "pandas==${{ matrix.pandas_min }}" "oepandas==3.3.0" "polars==1.44.1" "oepolars==0.4.0" \
+            "anywidget==0.9.0" "ipython==8.0.0" "marimo==0.13.0"
+      - name: Run the Python suite
+        if: env.OE_LICENSE_PRESENT == 'true'
+        env:
+          OE_LICENSE: ${{ runner.temp }}/oe_license.txt
+        run: python -m pytest -m "not browser"
+      - name: Skipped notice
+        if: env.OE_LICENSE_PRESENT != 'true'
+        run: echo "Python tests skipped - no OE_LICENSE secret configured"

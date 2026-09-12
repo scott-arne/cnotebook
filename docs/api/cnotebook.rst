@@ -5,6 +5,7 @@ cnotebook
    :members:
    :undoc-members:
    :show-inheritance:
+   :exclude-members: __weakref__, C3D, MolGrid
 
 Package Overview
 ----------------

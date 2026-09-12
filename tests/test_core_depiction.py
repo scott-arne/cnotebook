@@ -269,11 +269,6 @@ def test_primitives_exported_from_core():
         assert hasattr(core, name)
 
 
-def test_version_bumped():
-    import cnotebook
-    assert cnotebook.__version__ == "3.1.3"
-
-
 def test_render_summary_png_honors_terminal_color():
     """summary_image respects terminal color when drawing the terminal line."""
     mol = _mol("c1ccccc1")

@@ -1209,3 +1209,9 @@ def test_lazy_exports_and_get_env_is_live():
     assert env.c3d_available is True
     assert isinstance(env.pandas_available, bool)
     assert cnotebook.get_env() is not env
+
+
+def test_changelog_lists_current_version():
+    """The changelog documents the version the package reports, so a bump cannot ship undocumented."""
+    text = (Path(_REPO_ROOT) / "CHANGELOG.md").read_text()
+    assert f"## [{cnotebook.__version__}]" in text

@@ -3,6 +3,8 @@
 import os
 import sys
 
+from sphinx.ext.autodoc.mock import _MockObject
+
 # Add project root to path for autodoc
 sys.path.insert(0, os.path.abspath(".."))
 
@@ -42,15 +44,31 @@ autodoc_default_options = {
     "exclude-members": "__weakref__",
 }
 autodoc_typehints = "description"
-# Note: OpenEye libraries (openeye, oechem, oedepict, oepandas, oepolars) are NOT mocked
-# so that autodoc can extract docstrings. Ensure OE_LICENSE is set when building docs.
-# IPython is mocked to avoid TerminalIPythonApp issues during doc builds.
+# The docs build runs without OpenEye or the optional notebook/DataFrame libraries; autodoc imports
+# cnotebook against these mocks. Keep the list in sync with the imports in the package.
 autodoc_mock_imports = [
-    "marimo",
-    "anywidget",
-    "traitlets",
-    "IPython",
+    "openeye", "openeye.oechem", "openeye.oedepict", "openeye.oegraphsim", "openeye.oegrapheme",
+    "openeye.oeomega", "openeye.oegrid",
+    "numpy", "pandas", "oepandas", "oepandas.pandas_extensions", "polars", "oepolars", "oepolars.extensions",
+    "anywidget", "traitlets", "marimo", "IPython", "IPython.core.getipython", "IPython.display",
 ]
+
+
+def _mock_union(self, other):
+    """Return the left operand so ``X | Y`` over mocked names yields a mock.
+
+    :param self: The mocked operand the union is built from.
+    :param other: The other operand, which is a mock as well and carries no extra information.
+    :returns: ``self``, which autodoc renders as the mocked name.
+    """
+    return self
+
+
+# A mocked attribute is an instance, not a class, so a module-level ``X | Y`` type alias written
+# over mocked names (cnotebook.core.helpers.HighlightColors) raises TypeError and autodoc then
+# fails to import the whole package. Give the mock the union operators so such aliases evaluate.
+_MockObject.__or__ = _mock_union
+_MockObject.__ror__ = _mock_union
 
 # Intersphinx mapping
 intersphinx_mapping = {

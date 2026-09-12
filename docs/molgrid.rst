@@ -390,6 +390,8 @@ Selecting cluster label "B":
 API Reference
 -------------
 
+.. _molgrid-class:
+
 MolGrid Class
 ^^^^^^^^^^^^^
 
