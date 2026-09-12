@@ -96,10 +96,10 @@ classifiers = [
 # branch's clean baseline was measured with, which is what CI installs.
 dev = ["invoke", "build", "twine", "pytest", "ruff~=0.16.6", "mypy~=2.3.1"]
 test = ["pytest", "pytest-cov"]
-pandas = ["pandas>=2.2.0", "oepandas>=3.3.0"]
+pandas = ["pandas>=2.2.2", "oepandas>=3.3.0"]
 polars = ["polars>=1.44.1", "oepolars>=0.4.0"]
 dataframes = [
-    "pandas>=2.2.0",
+    "pandas>=2.2.2",
     "oepandas>=3.3.0",
     "polars>=1.44.1",
     "oepolars>=0.4.0",

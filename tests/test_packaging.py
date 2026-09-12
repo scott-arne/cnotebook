@@ -26,7 +26,7 @@ _PYTHON_CLASSIFIERS = {
     "Programming Language :: Python :: 3 :: Only",
 }
 
-_PANDAS_EXTRA = {"pandas": ">=2.2.0", "oepandas": ">=3.3.0"}
+_PANDAS_EXTRA = {"pandas": ">=2.2.2", "oepandas": ">=3.3.0"}
 _POLARS_EXTRA = {"polars": ">=1.44.1", "oepolars": ">=0.4.0"}
 
 _EXTRAS = {

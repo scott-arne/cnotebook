@@ -64,28 +64,34 @@ jobs:
         # declared as matrix axes. An include entry can add a new key to the existing combinations
         # but can never overwrite an axis value, so a per-Python floor exception is a one-line edit
         # here and never spawns an extra job. 2025.2.1 publishes one manylinux_2_28 wheel tagged
-        # py310.py311.py312.py313, which covers every entry below. The pandas floor differs on 3.13:
-        # 2.2.0 is the package floor but its last Linux wheel is cp312, so 3.13 pins 2.2.3, the
-        # first release with a cp313 wheel, rather than building pandas from source on the runner.
+        # py310.py311.py312.py313, which covers every entry below. The pandas floor is 2.2.2
+        # because 2.2.0 and 2.2.1 cap NumPy below 2 while oepandas 3.3.0 requires NumPy 2, so
+        # anything older is unresolvable rather than merely old. 3.13 takes 2.2.3 on top of that:
+        # 2.2.2 ships no cp313 wheel, and building pandas from source on the runner is not the
+        # thing this leg is meant to test.
         include:
           - python: "3.11"
             openeye_min: "2025.2.1"
-            pandas_min: "2.2.0"
+            pandas_min: "2.2.2"
           - python: "3.12"
             openeye_min: "2025.2.1"
-            pandas_min: "2.2.0"
+            pandas_min: "2.2.2"
           - python: "3.13"
             openeye_min: "2025.2.1"
             pandas_min: "2.2.3"
     env:
       OE_LICENSE_PRESENT: ${{ secrets.OE_LICENSE != '' }}
+      # The licence-bearing steps run on pushes only. A same-repository pull request receives the
+      # repository secrets, so running them there would hand the commercial licence to package and
+      # test code that has not been reviewed yet; the four non-secret jobs still run on every PR.
+      LICENCE_RUN: ${{ secrets.OE_LICENSE != '' && github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - name: Write the OpenEye licence
-        if: env.OE_LICENSE_PRESENT == 'true'
+        if: env.LICENCE_RUN == 'true'
         # The secret reaches the script through the environment. An expression interpolated into
         # the run line is substituted into the script text before bash sees it, so a quote,
         # backtick, dollar or backslash in the licence body would change the command.
@@ -93,10 +99,10 @@ jobs:
           OE_LICENSE_CONTENT: ${{ secrets.OE_LICENSE }}
         run: printf '%s' "$OE_LICENSE_CONTENT" > "$RUNNER_TEMP/oe_license.txt"
       - name: Install (latest dependencies)
-        if: env.OE_LICENSE_PRESENT == 'true' && matrix.deps == 'latest'
+        if: env.LICENCE_RUN == 'true' && matrix.deps == 'latest'
         run: pip install --extra-index-url https://pypi.anaconda.org/openeye/simple ".[test,dataframes,notebook]"
       - name: Install (minimum dependencies)
-        if: env.OE_LICENSE_PRESENT == 'true' && matrix.deps == 'minimum'
+        if: env.LICENCE_RUN == 'true' && matrix.deps == 'minimum'
         # openeye_min and pandas_min are the floors attached to this Python by the include above.
         run: |
           pip install --extra-index-url https://pypi.anaconda.org/openeye/simple ".[test]" \
@@ -104,10 +110,10 @@ jobs:
             "pandas==${{ matrix.pandas_min }}" "oepandas==3.3.0" "polars==1.44.1" "oepolars==0.4.0" \
             "anywidget==0.9.0" "ipython==8.0.0" "marimo==0.13.0"
       - name: Run the Python suite
-        if: env.OE_LICENSE_PRESENT == 'true'
+        if: env.LICENCE_RUN == 'true'
         env:
           OE_LICENSE: ${{ runner.temp }}/oe_license.txt
         run: python -m pytest -m "not browser"
       - name: Skipped notice
-        if: env.OE_LICENSE_PRESENT != 'true'
-        run: echo "Python tests skipped - no OE_LICENSE secret configured"
+        if: env.LICENCE_RUN != 'true'
+        run: echo "Python suite skipped - either no OE_LICENSE secret is configured (OE_LICENSE_PRESENT=$OE_LICENSE_PRESENT) or this is a $GITHUB_EVENT_NAME run, and only pushes are given the licence."
