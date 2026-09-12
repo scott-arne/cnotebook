@@ -982,20 +982,54 @@ class C3D:
         """
         return self.set_color(name, color, hets=hets)
 
-    def label_residues(
-        self,
-        selection: str | dict[str, Any],
-        template: str = "{resn}{resi}",
-    ) -> C3D:
+    @staticmethod
+    def _require_text(value: Any, label: str) -> str:
+        """Check a field the front end reads as text.
+
+        The label, distance and animate operations read their selections, template,
+        measurement name and entry name as text: anything else, or a blank string, is
+        an initialization error reported in the viewer's terminal once the cell has
+        already returned, with nothing drawn. Checking here puts the error on the call
+        that made it.
+
+        :param value: The value the caller gave.
+        :param label: Parameter name, for the error message.
+        :returns: The value unchanged; the front end trims it as it reads it.
+        :raises TypeError: If *value* is not a string.
+        :raises ValueError: If *value* is empty or only whitespace.
+        """
+        if not isinstance(value, str):
+            raise TypeError(f"{label} must be a string, got {type(value).__name__}")
+        if not value.strip():
+            raise ValueError(f"{label} must not be blank")
+        return value
+
+    def _loaded_entry_names(self, *, frames_only: bool = False) -> list[str]:
+        """Return the names the front end will give the entries added so far.
+
+        The loader trims an entry name before registering the object under it, so names
+        are compared trimmed here too.
+
+        :param frames_only: If True, list only the entries whose models are frames.
+        :returns: Entry names in the order they were added.
+        """
+        return [m.name.strip() for m in self._molecules if m.frames or not frames_only]
+
+    def label_residues(self, selection: str, template: str = "{resn}{resi}") -> C3D:
         """Label every atom matching *selection* from a template.
 
         The template is passed to the front end as it stands, never assembled into a
         command line, so a template containing a comma survives.
 
-        :param selection: Atoms to label, in the same forms :meth:`add_style` accepts.
+        :param selection: Atoms to label, as a selection expression string (e.g.
+            ``"chain A"``, ``"resn LIG"``) or an entry name. Unlike
+            :meth:`add_style`, this operation reads the selection as text, so a raw
+            3Dmol.js selection dict is not accepted.
         :param template: Label text with ``{name}``, ``{atom}``, ``{resn}``,
             ``{resi}``, ``{chain}``, ``{elem}`` and ``{index}`` placeholders.
         :returns: Self, for method chaining.
+        :raises TypeError: If *selection* or *template* is not a string.
+        :raises ValueError: If *selection* or *template* is blank.
         :raises CNotebookError: If this viewer is displayed as a widget.
 
         Example::
@@ -1003,27 +1037,45 @@ class C3D:
             viewer.label_residues("resn LIG and elem N", "{resn}{resi} {atom}")
         """
         self._assert_mutable()
-        self._operations.append({"op": "label", "selection": selection, "template": template})
+        self._operations.append(
+            {
+                "op": "label",
+                "selection": self._require_text(selection, "selection"),
+                "template": self._require_text(template, "template"),
+            }
+        )
         return self
 
     def measure_distance(
         self,
-        selection_a: str | dict[str, Any],
-        selection_b: str | dict[str, Any],
+        selection_a: str,
+        selection_b: str,
         name: str | None = None,
     ) -> C3D:
         """Draw a dashed distance between the centroids of two selections.
 
-        :param selection_a: First selection, in the forms :meth:`add_style` accepts.
-        :param selection_b: Second selection.
+        :param selection_a: First selection, as a selection expression string or an
+            entry name. As with :meth:`label_residues`, the front end reads this as
+            text, so a raw 3Dmol.js selection dict is not accepted.
+        :param selection_b: Second selection, in the same form.
         :param name: Label for the measurement. ``None`` (the default) lets the viewer
             number it, the way the ``distance`` command does when given no name.
         :returns: Self, for method chaining.
+        :raises TypeError: If a selection, or a name other than ``None``, is not a
+            string.
+        :raises ValueError: If a selection, or a given name, is blank.
         :raises CNotebookError: If this viewer is displayed as a widget.
         """
         self._assert_mutable()
         self._operations.append(
-            {"op": "distance", "a": selection_a, "b": selection_b, "name": name}
+            {
+                "op": "distance",
+                "a": self._require_text(selection_a, "selection_a"),
+                "b": self._require_text(selection_b, "selection_b"),
+                # Only a null name asks the viewer to number the measurement; a blank
+                # string is a name it refuses.
+                "name": None if name is None else self._require_text(name, "name"),
+            }
         )
         return self
 
@@ -1035,17 +1087,27 @@ class C3D:
 
         :param mol: Multi-conformer OpenEye molecule (``OEMCMolBase``), such as the
             output of OEOmega.
-        :param name: Optional display name. Falls back to the molecule title, then to
-            ``"conformers"``.
+        :param name: Optional display name, unique among the entries added so far.
+            Falls back to the molecule title, then to ``"conformers"``.
         :param disabled: If True, the entry is hidden when the viewer starts.
         :returns: Self, for method chaining.
         :raises TypeError: If *mol* is not an ``OEMCMolBase``.
         :raises ValueError: If *mol* holds fewer than two conformers; a single model
-            has no frames to step through.
+            has no frames to step through. Also if an entry of that name was already
+            added, including when the name comes from the molecule title or the
+            ``"conformers"`` default.
         :raises CNotebookError: If this viewer is displayed as a widget.
         """
         self._assert_mutable()
-        self._molecules.append(convert_conformers(mol, name=name, disabled=disabled))
+        mol_data = convert_conformers(mol, name=name, disabled=disabled)
+        # The loader renames a duplicate entry to "<name>_2" rather than refusing it, so
+        # an accepted collision would leave animate(name) playing the entry loaded
+        # first, which may be an ordinary molecule with no frames at all.
+        if mol_data.name.strip() in self._loaded_entry_names():
+            raise ValueError(
+                f"an entry named '{mol_data.name}' already exists; pass name=..."
+            )
+        self._molecules.append(mol_data)
         return self
 
     @staticmethod
@@ -1074,19 +1136,32 @@ class C3D:
     def animate(self, entry: str, interval_ms: int = 100, loop: str = "forward") -> C3D:
         """Play the frames of *entry*.
 
-        The animation starts once every entry has loaded, so *entry* may name a
-        molecule added to this same viewer.
+        The animation starts once every entry has loaded, so *entry* names a conformer
+        entry of this same viewer; it has to be added before this call.
 
         :param entry: Name of an entry added with :meth:`add_conformers`, exactly as
-            it was registered.
+            it was registered. Only such an entry has frames to play.
         :param interval_ms: Whole milliseconds per frame, from 1 to 2147483647.
         :param loop: ``"forward"``, ``"backward"`` or ``"backAndForth"``.
         :returns: Self, for method chaining.
-        :raises ValueError: If *loop* is not one of the accepted values, or
+        :raises TypeError: If *entry* is not a string.
+        :raises ValueError: If *entry* is blank or does not name a conformer entry of
+            this viewer, if *loop* is not one of the accepted values, or if
             *interval_ms* is not a whole number of milliseconds in range.
         :raises CNotebookError: If this viewer is displayed as a widget.
         """
         self._assert_mutable()
+        target = self._require_text(entry, "entry")
+        # An entry with a single model has nothing to play, and the front end says so in
+        # its terminal long after the cell returned. Which entries have frames is known
+        # here, so a name that is not one of them is refused on the call.
+        frame_entries = self._loaded_entry_names(frames_only=True)
+        if target.strip() not in frame_entries:
+            known = ", ".join(f"'{name}'" for name in frame_entries) or "none"
+            raise ValueError(
+                f"No conformer entry named '{entry}'. animate() plays the frames of an "
+                f"entry added with add_conformers(); this viewer has {known}."
+            )
         if loop not in _ANIMATION_LOOPS:
             raise ValueError(
                 f"Unknown loop mode '{loop}'. Choose 'forward', 'backward', or 'backAndForth'."

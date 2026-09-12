@@ -2119,8 +2119,8 @@ def _mutations(viewer, mol):
         "color_entry": lambda: viewer.color_entry("lig", "red"),
         "label_residues": lambda: viewer.label_residues("resn LIG"),
         "measure_distance": lambda: viewer.measure_distance("resi 1", "resi 2"),
-        # One conformer would be refused by add_conformers, and a loop mode of
-        # "sideways" by animate: a frozen viewer has to refuse both before it looks.
+        # One conformer would be refused by add_conformers, and an entry this viewer
+        # never had by animate: a frozen viewer has to refuse both before it looks.
         "add_conformers": lambda: viewer.add_conformers(mol),
         "animate": lambda: viewer.animate("confs", loop="sideways"),
     }
@@ -2262,13 +2262,13 @@ def test_widget_output_is_small(viewer):
 _MAX_INTERVAL_MS = 2147483647
 
 
-def _conformers(n: int = 3) -> oechem.OEMol:
-    """Return a molecule carrying *n* Omega conformers."""
+def _conformers(n: int = 3, title: str = "butanol") -> oechem.OEMol:
+    """Return a molecule carrying *n* Omega conformers, titled *title*."""
     from openeye import oeomega
 
     mol = oechem.OEMol()
     oechem.OESmilesToMol(mol, "CCCCO")
-    mol.SetTitle("butanol")
+    mol.SetTitle(title)
     omega = oeomega.OEOmega()
     omega.SetMaxConfs(n)
     omega.SetStrictStereo(False)
@@ -2341,7 +2341,7 @@ def test_animate_validates_the_loop_mode_and_the_interval():
     cell that has already returned; rejecting it here puts the error on the call."""
     from cnotebook.c3d import C3D
 
-    viewer = C3D()
+    viewer = C3D().add_conformers(_conformers(), name="confs")
     for loop in ("forward", "backward", "backAndForth"):
         viewer.animate("confs", loop=loop)
     viewer.animate("confs", interval_ms=1)
@@ -2389,3 +2389,110 @@ def test_color_entry_is_set_color(ethanol_3d):
     direct = C3D().add_molecule(ethanol_3d, name="lig").set_color("lig", "magenta")
     assert entry._operations == direct._operations
     assert entry._operations[-1]["hets"] is True
+
+
+def test_label_residues_takes_a_selection_string_only():
+    """The front end reads the label selection and template as text: a dict builds a
+    payload here and then fails as an initialization error, with no label drawn."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D()
+    with pytest.raises(TypeError, match="selection must be a string, got dict"):
+        viewer.label_residues({"resn": "LIG"})
+    with pytest.raises(TypeError, match="template must be a string"):
+        viewer.label_residues("resn LIG", template={"text": "{resn}"})
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="selection must not be blank"):
+            viewer.label_residues(blank)
+        with pytest.raises(ValueError, match="template must not be blank"):
+            viewer.label_residues("resn LIG", template=blank)
+    # Nothing refused reached the payload; the string path is untouched.
+    assert viewer._operations == []
+    assert viewer.label_residues("resn LIG")._operations[-1]["selection"] == "resn LIG"
+
+
+def test_measure_distance_takes_selection_strings_only():
+    """Both distance selections and a given name go through the same text check."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D()
+    with pytest.raises(TypeError, match="selection_a must be a string, got dict"):
+        viewer.measure_distance({"resi": 1}, "resi 2")
+    with pytest.raises(TypeError, match="selection_b must be a string, got dict"):
+        viewer.measure_distance("resi 1", {"resi": 2})
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="selection_a must not be blank"):
+            viewer.measure_distance(blank, "resi 2")
+        with pytest.raises(ValueError, match="selection_b must not be blank"):
+            viewer.measure_distance("resi 1", blank)
+        # Only None asks the viewer to number the measurement; a blank name is refused
+        # by the front end exactly as a blank selection is.
+        with pytest.raises(ValueError, match="name must not be blank"):
+            viewer.measure_distance("resi 1", "resi 2", name=blank)
+    with pytest.raises(TypeError, match="name must be a string"):
+        viewer.measure_distance("resi 1", "resi 2", name=2)
+    assert viewer._operations == []
+
+
+def test_add_conformers_refuses_a_name_another_entry_holds(ethanol_3d):
+    """The loader renames a duplicate to "<name>_2" instead of refusing it, so animate()
+    would play the entry loaded first: here an ordinary molecule with no frames."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().add_molecule(ethanol_3d, name="lig")
+    with pytest.raises(ValueError, match="an entry named 'lig' already exists"):
+        viewer.add_conformers(_conformers(), name="lig")
+    # The loader trims the name it registers, so " lig " and "lig" are one entry there.
+    with pytest.raises(ValueError, match="already exists"):
+        viewer.add_conformers(_conformers(), name=" lig ")
+    assert [m.name for m in viewer._molecules] == ["lig"]
+
+
+def test_add_conformers_refuses_a_second_entry_under_the_default_name():
+    """Two untitled multi-conformer molecules both default to "conformers"."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().add_conformers(_conformers(title=""))
+    assert [m.name for m in viewer._molecules] == ["conformers"]
+    with pytest.raises(ValueError, match="an entry named 'conformers' already exists"):
+        viewer.add_conformers(_conformers(title=""))
+    assert len(viewer._molecules) == 1
+
+
+def test_add_conformers_refuses_a_title_that_names_an_existing_entry(ethanol_3d):
+    """The default name is the molecule title, so a collision can happen with no name
+    passed at all, which is why the error asks for one."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().add_molecule(ethanol_3d, name="butanol")
+    with pytest.raises(ValueError, match=r"pass name=\.\.\."):
+        viewer.add_conformers(_conformers())
+    assert len(viewer._molecules) == 1
+
+
+def test_animate_requires_an_entry_that_has_frames(ethanol_3d):
+    """Only an entry added with add_conformers has frames; animating anything else is a
+    terminal message from a cell that has already returned."""
+    from cnotebook.c3d import C3D
+
+    viewer = (
+        C3D()
+        .add_molecule(ethanol_3d, name="lig")
+        .add_conformers(_conformers(), name="confs")
+    )
+    with pytest.raises(ValueError, match="No conformer entry named 'lig'"):
+        viewer.animate("lig")
+    # The message names the entries that do have frames.
+    with pytest.raises(ValueError, match="this viewer has 'confs'"):
+        viewer.animate("typo")
+    with pytest.raises(TypeError, match="entry must be a string"):
+        viewer.animate({"name": "confs"})
+    with pytest.raises(ValueError, match="entry must not be blank"):
+        viewer.animate("   ")
+    assert viewer._operations == []
+
+    # The happy path is unchanged, and matches the entry the loader would register.
+    viewer.animate(" confs ")
+    assert viewer._operations[-1] == {
+        "op": "animate", "entry": " confs ", "interval": 100, "loop": "forward",
+    }
