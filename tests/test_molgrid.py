@@ -1832,14 +1832,15 @@ def test_constructor_has_no_display_side_effect(capsys, monkeypatch):
 
 
 def test_grid_module_imports_without_pandas():
-    """Test the grid module imports and renders static HTML without pandas or anywidget."""
+    """Test the grid module imports and renders static HTML without pandas, anywidget or IPython."""
     import subprocess
     import sys
 
     code = (
         "import sys, builtins; real = builtins.__import__\n"
         "def guard(name, *a, **k):\n"
-        "    if name.split('.')[0] in ('pandas', 'anywidget'): raise ImportError(name)\n"
+        "    if name.split('.')[0] in ('pandas', 'anywidget', 'IPython'):"
+        " raise ImportError(name)\n"
         "    return real(name, *a, **k)\n"
         "builtins.__import__ = guard\n"
         "from cnotebook.grid.grid import MolGrid\n"
@@ -1874,6 +1875,27 @@ def test_invalid_smarts_reports_error():
     assert matches == [] and "SMARTS" in error
 
 
+def test_search_smarts_does_not_mutate_source_molecules():
+    """Test SMARTS searching perceives a copy and leaves the caller's molecule alone."""
+    from cnotebook.grid import MolGrid
+
+    benzene = _mol("c1ccccc1")
+    # OEPrepareSearch re-perceives aromaticity, so a molecule whose flags were
+    # deliberately cleared shows the mutation plainly.
+    oechem.OEClearAromaticFlags(benzene)
+    atoms_before = [atom.IsAromatic() for atom in benzene.GetAtoms()]
+    bonds_before = [bond.IsAromatic() for bond in benzene.GetBonds()]
+    bytes_before = oechem.OEWriteMolToBytes("oeb", benzene)
+    assert not any(atoms_before) and not any(bonds_before)
+
+    grid = MolGrid([benzene, _mol("CCO")])
+    assert grid.search_smarts("c1ccccc1") == ([0], None)
+
+    assert [atom.IsAromatic() for atom in benzene.GetAtoms()] == atoms_before
+    assert [bond.IsAromatic() for bond in benzene.GetBonds()] == bonds_before
+    assert oechem.OEWriteMolToBytes("oeb", benzene) == bytes_before
+
+
 def test_cluster_mapping_and_sequence_forms():
     """Test cluster labels from a sequence, an index mapping and a DataFrame column."""
     import pandas as pd
@@ -1901,17 +1923,76 @@ def test_non_string_column_labels():
     assert grid.to_html()
 
 
-def test_render_cache_and_revision_on_set_render_options():
-    """Test rendered images are cached and set_render_options clears them."""
+def test_colliding_column_labels_rejected():
+    """Test column labels that become the same field name are rejected, not silently merged."""
+    import pandas as pd
+
     from cnotebook.grid import MolGrid
 
-    grid = MolGrid([_mol(), _mol("c1ccccc1")])
+    frame = pd.DataFrame({0: [1, 2], "0": [3, 4]})
+    with pytest.raises(ValueError, match="grid field names"):
+        MolGrid([_mol(), _mol()], dataframe=frame)
+
+    # Distinct non-string labels remain acceptable.
+    ok = MolGrid([_mol(), _mol()], dataframe=pd.DataFrame({0: [1, 2], 1: [3, 4]}))
+    assert set(ok.items()[0]["fields"]) == {"0", "1"}
+
+
+def test_render_cache_and_revision_on_set_render_options(monkeypatch):
+    """Test the render cache serves repeats, evicts by recency and is cleared by option changes."""
+    import cnotebook.grid.grid as grid_module
+    from cnotebook.grid import MolGrid
+
+    renders = []
+    original = MolGrid._create_molecule_display
+
+    def spy(self, mol, ctx=None):
+        renders.append(mol)
+        return original(self, mol, ctx)
+
+    monkeypatch.setattr(MolGrid, "_create_molecule_display", spy)
+    # A small capacity keeps the eviction assertions readable.
+    monkeypatch.setattr(grid_module, "_MAX_CACHE", 3)
+
+    grid = MolGrid([_mol(), _mol("c1ccccc1"), _mol("CCC"), _mol("CCCC")])
     first = grid.render_indices([0, 1])
     assert set(first) == {"0", "1"} and grid.revision == 0
+    assert len(renders) == 2 and list(grid._images) == [0, 1]
+
+    # A repeat is served from the cache and refreshes that entry's recency.
     assert grid.render_indices([0]) == {"0": first["0"]}
+    assert len(renders) == 2 and list(grid._images) == [1, 0]
+
+    grid.render_item(2)
+    assert list(grid._images) == [1, 0, 2]
+
+    # Index 1 is now the least recently used, so it is evicted rather than 0.
+    grid.render_item(3)
+    assert list(grid._images) == [0, 2, 3] and len(renders) == 4
+
     grid.set_render_options(image_format="png", device_pixel_ratio=1.0)
     assert grid.revision == 1 and len(grid._images) == 0
     assert "data:image/png" in grid.render_item(0)
+
+
+def test_set_render_options_applies_atomically():
+    """Test a rejected render option leaves attributes, cached images and revision untouched."""
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("c1ccccc1")])
+    grid.render_indices([0, 1])
+    cached = dict(grid._images)
+    before = {name: getattr(grid, name) for name in MolGrid._CONTEXT_ATTRS}
+
+    with pytest.raises(ValueError):
+        grid.set_render_options(image_format="png", width=-1)
+
+    assert {name: getattr(grid, name) for name in MolGrid._CONTEXT_ATTRS} == before
+    assert dict(grid._images) == cached
+    assert grid.revision == 0
+
+    grid.set_render_options(image_format="png")
+    assert grid.image_format == "png" and grid.revision == 1 and not grid._images
 
 
 def test_config_defaults_and_theme_validation(monkeypatch):

@@ -56,16 +56,6 @@ _UNCATEGORIZED = "Uncategorized"
 # grids, where only the visited pages are ever rendered.
 _MAX_CACHE = 5000
 
-HTML: Any = None
-
-try:
-    from IPython.display import HTML as _HTML
-except ModuleNotFoundError:
-    pass
-else:
-    HTML = _HTML
-
-
 _RENDER_OPTION_UNSET = object()
 
 
@@ -126,6 +116,24 @@ def _text(value: Any) -> str:
     :returns: Empty string for missing values, ``str(value)`` otherwise.
     """
     return "" if _is_missing(value) else str(value)
+
+
+def _search_copy(mol: oechem.OEMolBase) -> oechem.OEMolBase:
+    """Copy a molecule for substructure searching.
+
+    ``OEPrepareSearch`` rewrites perception (aromaticity, hybridisation) on the
+    molecule it is handed, so searching has to work on a copy or it would mutate
+    the caller's molecules. The copy keeps the source's kind so query and
+    multiconformer molecules survive the round trip.
+
+    :param mol: Source molecule.
+    :returns: A copy safe to perceive into.
+    """
+    if isinstance(mol, oechem.OEQMolBase):
+        return oechem.OEQMol(mol)
+    if isinstance(mol, oechem.OEMCMolBase):
+        return oechem.OEMol(mol)
+    return oechem.OEGraphMol(mol)
 
 
 # CSS matching backup styling
@@ -791,6 +799,26 @@ body {
 class MolGrid:
     """Interactive molecule grid (live widget by default, static HTML on request)."""
 
+    # Grid attributes that become render context arguments. Named here so a
+    # candidate context can be built from proposed values before they are
+    # committed to the instance.
+    _CONTEXT_ATTRS = (
+        "width",
+        "height",
+        "min_width",
+        "min_height",
+        "max_width",
+        "max_height",
+        "structure_scale",
+        "auto_scale",
+        "atom_label_font_scale",
+        "title_font_scale",
+        "image_format",
+        "render_title",
+        "max_heavy_atoms",
+        "device_pixel_ratio",
+    )
+
     def __init__(
         self,
         mols: Iterable,
@@ -890,6 +918,9 @@ class MolGrid:
         self._molecules = list(mols)
         self._dataframe = dataframe
         self._mol_col = mol_col
+        # Reject ambiguous column labels here rather than dropping a column
+        # silently the first time items() or to_html() is asked for.
+        self._frame_columns()
         self.title = title if title else None
         self.tooltip_fields = list(tooltip_fields or [])
         self.n_items_per_page = _config.resolve("molgrid", "n_items_per_page", n_items_per_page)
@@ -1004,11 +1035,27 @@ class MolGrid:
     def _frame_columns(self) -> list[str]:
         """Data column names of the source frame, as strings.
 
+        Field names travel to the front end as strings, so two labels that
+        differ only in type (``0`` and ``"0"``) would silently become one field
+        and one column's values would be lost. Such a frame is rejected instead.
+
         :returns: Column names excluding the molecule column, or an empty list.
+        :raises ValueError: If two column labels render as the same string.
         """
         if self._dataframe is None:
             return []
-        return [str(c) for c in self._dataframe.columns if c != self._mol_col]
+        seen: dict[str, Any] = {}
+        for col in self._dataframe.columns:
+            if col == self._mol_col:
+                continue
+            name = str(col)
+            if name in seen:
+                raise ValueError(
+                    f"DataFrame column labels {seen[name]!r} and {col!r} both become "
+                    f"'{name}' as grid field names; rename one of them"
+                )
+            seen[name] = col
+        return list(seen)
 
     def _auto_detect_search_fields(self, dataframe, mol_col: str | None) -> list[str]:
         """Auto-detect searchable text columns from a DataFrame.
@@ -1150,28 +1197,27 @@ class MolGrid:
 
     # -- rendering ------------------------------------------------------------
 
-    def _create_render_context(self) -> CNotebookContext:
-        """Create a render context from the grid's current render options.
+    def _create_render_context(
+        self, overrides: Mapping[str, Any] | None = None
+    ) -> CNotebookContext:
+        """Create a render context from the grid's render options.
 
+        :param overrides: Proposed render option values to use in place of the
+            grid's own. Names that are not render context arguments are
+            ignored. Passing candidate values lets the caller validate them
+            through the context's setters without mutating the grid.
         :returns: CNotebook context used to render each grid molecule.
         """
+        values: dict[str, Any] = {name: getattr(self, name) for name in self._CONTEXT_ATTRS}
+        if overrides:
+            values.update(
+                (name, value) for name, value in overrides.items() if name in values
+            )
         return CNotebookContext(
-            width=self.width,
-            height=self.height,
-            min_width=self.min_width,
-            min_height=self.min_height,
-            max_width=self.max_width,
-            max_height=self.max_height,
-            structure_scale=self.structure_scale,
-            auto_scale=self.auto_scale,
-            atom_label_font_scale=self.atom_label_font_scale,
-            title_font_scale=self.title_font_scale,
-            image_format=self.image_format,
             bond_width_scaling=False,
-            title=self.render_title,
-            max_heavy_atoms=self.max_heavy_atoms,
-            device_pixel_ratio=self.device_pixel_ratio,
+            title=values.pop("render_title"),
             scope="local",
+            **values,
         )
 
     @staticmethod
@@ -1410,8 +1456,9 @@ class MolGrid:
         matches: list[int] = []
         for idx, mol in enumerate(self._molecules):
             if isinstance(mol, oechem.OEMolBase) and mol.IsValid():
-                oechem.OEPrepareSearch(mol, query)
-                if query.SingleMatch(mol):
+                probe = _search_copy(mol)
+                oechem.OEPrepareSearch(probe, query)
+                if query.SingleMatch(probe):
                     matches.append(idx)
         return matches, None
 
@@ -1488,12 +1535,13 @@ class MolGrid:
         if "title" in options:
             options["render_title"] = options.pop("title")
 
+        # Building a candidate context validates the new values through its
+        # setters before anything is committed, so a rejected value leaves the
+        # grid's attributes, cached images and revision untouched.
+        self._create_render_context(options)
+
         for name, value in options.items():
             setattr(self, name, value)
-
-        # Building a context validates the new values through its setters
-        # before any cached image is thrown away.
-        self._create_render_context()
 
         self._images.clear()
         self.revision += 1
@@ -2570,10 +2618,13 @@ class MolGrid:
         if _is_marimo():
             import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
             return mo.Html(iframe_html)
-        else:
-            if HTML is None:
-                return iframe_html
-            return HTML(iframe_html)
+
+        # Imported here so the grid module stays usable without IPython installed.
+        try:
+            from IPython.display import HTML
+        except ModuleNotFoundError:
+            return iframe_html
+        return HTML(iframe_html)
 
     def get_marimo_selection(self):
         """Get marimo reactive state for selection.
