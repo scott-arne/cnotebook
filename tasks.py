@@ -12,7 +12,17 @@ ROOT = Path(__file__).parent.absolute()
 
 @task
 def test(c):
-    """Run the test suite with pytest"""
+    """Run the Python and JavaScript test suites."""
+    c.run(f"{sys.executable} -m pytest tests/")
+    c.run("npm test")
+
+
+@task
+def check(c):
+    """Lint, type-check, and run every test suite."""
+    c.run("ruff check cnotebook tests")
+    c.run("mypy cnotebook")
+    c.run("npm test")
     c.run(f"{sys.executable} -m pytest tests/")
 
 
