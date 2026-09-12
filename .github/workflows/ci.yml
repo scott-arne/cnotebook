@@ -86,7 +86,12 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Write the OpenEye licence
         if: env.OE_LICENSE_PRESENT == 'true'
-        run: printf '%s' "${{ secrets.OE_LICENSE }}" > "$RUNNER_TEMP/oe_license.txt"
+        # The secret reaches the script through the environment. An expression interpolated into
+        # the run line is substituted into the script text before bash sees it, so a quote,
+        # backtick, dollar or backslash in the licence body would change the command.
+        env:
+          OE_LICENSE_CONTENT: ${{ secrets.OE_LICENSE }}
+        run: printf '%s' "$OE_LICENSE_CONTENT" > "$RUNNER_TEMP/oe_license.txt"
       - name: Install (latest dependencies)
         if: env.OE_LICENSE_PRESENT == 'true' && matrix.deps == 'latest'
         run: pip install --extra-index-url https://pypi.anaconda.org/openeye/simple ".[test,dataframes,notebook]"

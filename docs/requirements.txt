@@ -1,4 +1,5 @@
 # Documentation build requirements
-sphinx>=7.0
+# docs/conf.py patches a private Sphinx mock hook, verified against 9.x; raise this bound only after re-checking it.
+sphinx>=7.0,<10
 sphinx-rtd-theme>=2.0
 sphinx-iframes
