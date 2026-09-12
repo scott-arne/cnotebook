@@ -918,9 +918,9 @@ class MolGrid:
         self._molecules = list(mols)
         self._dataframe = dataframe
         self._mol_col = mol_col
-        # Reject ambiguous column labels here rather than dropping a column
-        # silently the first time items() or to_html() is asked for.
-        self._frame_columns()
+        # One mapping of exposed field name -> original column label, built and
+        # validated once so every field lookup resolves the same way.
+        self._fields = self._build_field_map(dataframe, mol_col)
         self.title = title if title else None
         self.tooltip_fields = list(tooltip_fields or [])
         self.n_items_per_page = _config.resolve("molgrid", "n_items_per_page", n_items_per_page)
@@ -965,15 +965,13 @@ class MolGrid:
 
         if data is not None:
             self.information_fields = [data] if isinstance(data, str) else list(data)
-        elif dataframe is not None:
-            self.information_fields = self._auto_detect_info_fields(dataframe, mol_col)
         else:
-            self.information_fields = []
+            self.information_fields = self._auto_detect_info_fields()
 
-        if search_fields is None and dataframe is not None:
-            self.search_fields: list[str] = self._auto_detect_search_fields(dataframe, mol_col)
+        if search_fields is None:
+            self.search_fields: list[str] = self._auto_detect_search_fields()
         else:
-            self.search_fields = list(search_fields or [])
+            self.search_fields = list(search_fields)
 
         self._images: OrderedDict[int, str] = OrderedDict()
         self.revision = 0
@@ -1032,43 +1030,55 @@ class MolGrid:
             ]
         return [_UNCATEGORIZED if _is_missing(v) else str(v) for v in self.cluster]
 
-    def _frame_columns(self) -> list[str]:
-        """Data column names of the source frame, as strings.
+    @staticmethod
+    def _build_field_map(dataframe, mol_col) -> dict[str, Any]:
+        """Map exposed field names to the source frame's data column labels.
 
-        Field names travel to the front end as strings, so two labels that
-        differ only in type (``0`` and ``"0"``) would silently become one field
-        and one column's values would be lost. Such a frame is rejected instead.
+        Field names travel to the front end as strings, so a frame can hold two
+        labels that collapse to one name (``0`` and ``"0"``). Resolving a name
+        against a freshly stringified view of every column is what lets the
+        molecule column shadow a data column, so the mapping is built once
+        here, excludes the molecule column entirely and rejects any remaining
+        ambiguity.
 
-        :returns: Column names excluding the molecule column, or an empty list.
-        :raises ValueError: If two column labels render as the same string.
+        :param dataframe: Source DataFrame, or None.
+        :param mol_col: Molecule column label, which is never a field.
+        :returns: Ordered mapping of field name to original column label.
+        :raises ValueError: If two data columns share an exposed field name.
         """
-        if self._dataframe is None:
-            return []
-        seen: dict[str, Any] = {}
-        for col in self._dataframe.columns:
-            if col == self._mol_col:
-                continue
-            name = str(col)
-            if name in seen:
-                raise ValueError(
-                    f"DataFrame column labels {seen[name]!r} and {col!r} both become "
-                    f"'{name}' as grid field names; rename one of them"
-                )
-            seen[name] = col
-        return list(seen)
-
-    def _auto_detect_search_fields(self, dataframe, mol_col: str | None) -> list[str]:
-        """Auto-detect searchable text columns from a DataFrame.
-
-        :param dataframe: DataFrame to inspect.
-        :param mol_col: Molecule column name to exclude.
-        :returns: List of searchable column names.
-        """
-        search_fields = []
+        if dataframe is None:
+            return {}
+        fields: dict[str, Any] = {}
         for col in dataframe.columns:
             if col == mol_col:
                 continue
+            name = str(col)
+            if name in fields:
+                raise ValueError(
+                    f"DataFrame column labels {fields[name]!r} and {col!r} both become "
+                    f"'{name}' as grid field names; rename one of them"
+                )
+            fields[name] = col
+        return fields
 
+    def _frame_columns(self) -> list[str]:
+        """Exposed field names of the source frame's data columns.
+
+        :returns: Field names in frame order, excluding the molecule column.
+        """
+        return list(self._fields)
+
+    def _auto_detect_search_fields(self) -> list[str]:
+        """Auto-detect searchable text columns from the source DataFrame.
+
+        :returns: Exposed field names of the searchable columns.
+        """
+        dataframe = self._dataframe
+        if dataframe is None:
+            return []
+
+        search_fields = []
+        for name, col in self._fields.items():
             dtype_str = str(dataframe[col].dtype).lower()
 
             # Skip molecule dtypes (oepandas MoleculeDtype) and numbers.
@@ -1078,7 +1088,7 @@ class MolGrid:
                 continue
 
             if "object" in dtype_str or "str" in dtype_str:
-                search_fields.append(str(col))
+                search_fields.append(name)
                 continue
 
             # Extension dtypes such as ``category`` hide their value type, so
@@ -1087,30 +1097,29 @@ class MolGrid:
                 present = dataframe[col].dropna()
                 first_valid = present.iloc[0] if len(present) > 0 else None
                 if isinstance(first_valid, str):
-                    search_fields.append(str(col))
+                    search_fields.append(name)
             except (IndexError, KeyError):
                 pass
 
         return search_fields
 
-    def _auto_detect_info_fields(self, dataframe, mol_col: str | None) -> list[str]:
-        """Auto-detect data columns from a DataFrame for the information tooltip.
+    def _auto_detect_info_fields(self) -> list[str]:
+        """Auto-detect data columns from the source DataFrame for the tooltip.
 
-        :param dataframe: DataFrame to inspect.
-        :param mol_col: Molecule column name to exclude.
-        :returns: List of column names holding displayable data.
+        :returns: Exposed field names of the columns holding displayable data.
         """
-        info_fields = []
-        for col in dataframe.columns:
-            if col == mol_col:
-                continue
+        dataframe = self._dataframe
+        if dataframe is None:
+            return []
 
+        info_fields = []
+        for name, col in self._fields.items():
             # Skip the chemistry dtypes, whose values have no useful text form.
             dtype_str = str(dataframe[col].dtype).lower()
             if "molecule" in dtype_str or "display" in dtype_str or "design" in dtype_str:
                 continue
 
-            info_fields.append(str(col))
+            info_fields.append(name)
 
         return info_fields
 
@@ -1122,10 +1131,8 @@ class MolGrid:
         :param field: Field name to retrieve.
         :returns: Raw field value, or None when the field is unknown.
         """
-        if self._dataframe is not None:
-            columns = {str(c): c for c in self._dataframe.columns}
-            if field in columns:
-                return self._dataframe.iloc[idx][columns[field]]
+        if self._dataframe is not None and field in self._fields:
+            return self._dataframe.iloc[idx][self._fields[field]]
 
         if not isinstance(mol, oechem.OEMolBase):
             return None

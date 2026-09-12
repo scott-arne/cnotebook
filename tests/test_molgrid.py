@@ -1937,6 +1937,39 @@ def test_colliding_column_labels_rejected():
     ok = MolGrid([_mol(), _mol()], dataframe=pd.DataFrame({0: [1, 2], 1: [3, 4]}))
     assert set(ok.items()[0]["fields"]) == {"0", "1"}
 
+    # So does a frame mixing string and non-string labels alongside a molecule column.
+    mixed = pd.DataFrame({"Name": ["a", "b"], 7: [1, 2], "mol": ["m1", "m2"]})
+    grid = MolGrid([_mol(), _mol()], dataframe=mixed, mol_col="mol")
+    assert grid._fields == {"Name": "Name", "7": 7}
+    assert grid.items()[0]["fields"] == {"Name": "a", "7": "1"}
+
+
+def test_field_names_never_resolve_to_the_molecule_column():
+    """Test a data column keeps its field when the molecule column stringifies the same."""
+    import pandas as pd
+
+    from cnotebook.grid import MolGrid
+
+    # Both frame orders: the data column first, then the molecule column first.
+    for data_label, mol_label in (("0", 0), (0, "0")):
+        frame = pd.DataFrame(
+            {data_label: ["data-a", "data-b"], mol_label: ["mol-a", "mol-b"]}
+        )
+        assert list(frame.columns) == [data_label, mol_label]
+        grid = MolGrid(
+            [_mol(), _mol()], dataframe=frame, mol_col=mol_label, tooltip_fields=["0"]
+        )
+
+        # Resolving "0" against a fresh {str(c): c} view of every column would
+        # pick whichever label came last, which is the molecule column in the
+        # first order and the data column in the second.
+        assert grid._fields == {"0": data_label}
+        assert grid.items()[0]["fields"] == {"0": "data-a"}
+        assert grid._prepare_data()[0]["tooltip"] == {"0": "data-a"}
+        assert grid._prepare_export_data()[0]["0"] == "data-a"
+        assert grid._field_value(1, None, "0") == "data-b"
+        assert grid.search_fields == ["0"] and grid.information_fields == ["0"]
+
 
 def test_render_cache_and_revision_on_set_render_options(monkeypatch):
     """Test the render cache serves repeats, evicts by recency and is cleared by option changes."""
