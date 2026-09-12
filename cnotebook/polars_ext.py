@@ -446,8 +446,10 @@ class PolarsColumnAdapter:
         :param mols: Replacement molecules, one per row.
         """
         dtype = self.frame.schema[self.column]
+        # oepolars' molecule dtypes take the token in their constructor; the base polars
+        # DataType the type stubs describe takes no arguments.
         self.frame = self.frame.with_columns(
-            pl.Series(self.column, mols, dtype=type(dtype)(getattr(dtype, "token", None)))
+            pl.Series(self.column, mols, dtype=type(dtype)(getattr(dtype, "token", None)))  # type: ignore[call-arg]
         )
 
     def get_context(self, *, create: bool) -> CNotebookContext | None:
@@ -487,7 +489,7 @@ class PolarsColumnAdapter:
         and their columns keep rendering with the context they were given.
         """
         if self._token is not None:
-            self.frame = self.frame.chem.with_token(self.column, None)
+            self.frame = self.frame.chem.with_token(self.column, None)  # type: ignore[attr-defined]
 
     def set_alignment_report(self, report: AlignmentReport) -> None:
         """
@@ -509,7 +511,7 @@ class PolarsColumnAdapter:
         """
         token = new_token()
         store_state(token, state)
-        self.frame = self.frame.chem.with_token(self.column, token)
+        self.frame = self.frame.chem.with_token(self.column, token)  # type: ignore[attr-defined]
 
 
 def _copy_report(report: AlignmentReport | None) -> AlignmentReport | None:
@@ -561,7 +563,7 @@ def fork_column(df: pl.DataFrame, column: str, method: str) -> PolarsColumnAdapt
     _require_molecule(df, column, method)
     token = new_token()
     store_state(token, _copied_state(df, column, keep_report=True))
-    return PolarsColumnAdapter(df.chem.with_token(column, token), column)
+    return PolarsColumnAdapter(df.chem.with_token(column, token), column)  # type: ignore[attr-defined]
 
 
 def _columns(df: pl.DataFrame, molecule_columns: str | Iterable[str] | None, method: str) -> list[str]:

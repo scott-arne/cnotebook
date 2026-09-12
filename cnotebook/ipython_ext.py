@@ -26,12 +26,15 @@ _POLARS_DATAFRAME_NAMES = (("polars", "DataFrame"), ("polars.dataframe.frame", "
 def _html_formatter() -> Any:
     """Return the active shell's ``text/html`` formatter.
 
-    :returns: The formatter, or ``None`` when no IPython shell is running.
+    :returns: The formatter, or ``None`` when no IPython shell with a display formatter
+        is running.
     """
     shell = _get_ipython() if _get_ipython is not None else None
-    if shell is None:
+    if shell is None or shell.display_formatter is None:
         return None
-    return shell.display_formatter.formatters["text/html"]  # pyright: ignore[reportOptionalMemberAccess]
+    # pyright reads the traitlets descriptor as ``object``, so the guard above cannot
+    # teach it what the attribute holds.
+    return shell.display_formatter.formatters["text/html"]  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def register_ipython_formatters() -> None:
