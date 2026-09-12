@@ -59,7 +59,7 @@ def test_static_documents_boot_without_console_errors(tmp_path: Path) -> None:
     # document that merely loads without console errors would pass on markers alone.
     assert "CNOTEBOOK_SMOKE c3d ok version=0.4.0" in result.stdout
     assert (
-        "members=execute,getView,setView,getState,getSelection,pngDataUrl,on"
+        "members=execute,getView,setView,getState,getSelection,pngDataUrl,on objects=1"
         in result.stdout
     )
     assert "CNOTEBOOK_SMOKE molgrid ok" in result.stdout

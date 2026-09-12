@@ -11,9 +11,10 @@ A document passes when all of the following hold:
 * the shell exits 0 within the hard timeout,
 * its page logged no console error lines (see :data:`_CONSOLE_TEXT_ERROR_RES` and
   the trap injected by :func:`_with_trap`),
-* the expected markers are in the dumped DOM, and
-* an injected probe reported on the live page: the ``window.c3d`` host API for
-  C3D, the rendered card and image elements for MolGrid.
+* the expected markers are in the dumped DOM, with the counts they carry, and
+* an injected probe reported on the live page: the ``window.c3d`` host API and
+  the molecules the viewer actually loaded for C3D, the rendered card and image
+  elements for MolGrid.
 
 Usage::
 
@@ -74,6 +75,9 @@ _HOST_API_MEMBERS = (
 
 #: Molecules embedded in both documents: phenol, ethanol, aspirin.
 _SMILES = ("c1ccccc1O", "CCO", "CC(=O)Oc1ccccc1C(=O)O")
+#: How many of them the C3D document is built from. Named because the same number is
+#: both what the document is given and what the live viewer is required to report back.
+_C3D_MOLECULES = 1
 
 # Chromium writes page console output to stderr as
 # `[pid/time:SEVERITY:CONSOLE:line] "text", source: <url> (line)`. Everything else on
@@ -91,24 +95,25 @@ _CONSOLE_LINE_RE = re.compile(r":CONSOLE:\d+\]")
 # directory whose name contains "error" cannot condemn every line through the `source:`
 # suffix.
 _CONSOLE_SEVERITY_RE = re.compile(r":(?:ERROR|FATAL):CONSOLE:")
+# The signatures are deliberately narrow, so nothing needs an exemption list: the one
+# piece of console noise these runs produce is SwiftShader's "GL Driver Message (OpenGL,
+# Performance, ...): GPU stall due to ReadPixels", which matches none of them and is
+# pinned as a non-offender by the unit tests.
 _CONSOLE_TEXT_ERROR_RES = (
     re.compile(rf"^{_SMOKE_PREFIX} console error:"),
     re.compile(r"(?i)\b(?:uncaught|unhandled)\b"),
     re.compile(r"(?i)\berrors?\b"),
 )
-# Benign console noise that the text signatures above would otherwise flag. Keep this
-# list short and specific: every entry is a message this check decides to ignore.
-_CONSOLE_IGNORE_RES = (
-    # SwiftShader's software GL pipeline reports its own stalls through the page console.
-    re.compile(r"GL Driver Message \(OpenGL, Performance,"),
-)
 # A marker line as it reaches stderr, quoted inside Chromium's console format.
 _MARKER_RE = re.compile(rf'"({_SMOKE_PREFIX} [^"]*)"')
 
-# The GUI terminal prints this once the init payload is applied. The bundle's own source
-# is part of the dumped DOM, so the digits matter: the template it is printed from reads
-# `Loaded ${n.length} molecule(s) ...` and must not satisfy the marker.
-_C3D_LOADED_RE = re.compile(r"Loaded \d+ molecule\(s\) from initialization")
+# The GUI terminal prints this once the init payload is applied. The count is captured
+# and compared with _C3D_MOLECULES rather than matched as bare digits, because the line
+# is printed from the length of the payload and not from what reached the scene: a
+# molecule whose load threw is reported to the terminal and then counted here anyway.
+# Capturing the digits also keeps the bundle's own source, which the dumped DOM carries,
+# from satisfying the pattern: it reads `Loaded ${n.length} molecule(s) ...`.
+_C3D_LOADED_RE = re.compile(r"Loaded (\d+) molecule\(s\) from initialization")
 # Rendered cards, matched on the attribute rather than the bare class name, which also
 # appears in the stylesheet and in the module source the document inlines.
 _CARD_RE = re.compile(r'class="cn-molgrid-card[ "]')
@@ -173,7 +178,12 @@ async function probe() {
   if (missing.length > 0) {
     return `fail reason=missing-members missing=${missing.join(",")}`;
   }
-  return `ok version=${window.c3d.version} members=${MEMBERS.join(",")}`;
+  // `ready` resolving only means the init payload was applied. The GUI's loader catches
+  // a per-molecule failure, prints it to the page's own terminal and carries on, so the
+  // scene is the only honest witness: getState() lists what is loaded, by name.
+  const state = window.c3d.getState();
+  const objects = state && Array.isArray(state.objects) ? state.objects.length : -1;
+  return `ok version=${window.c3d.version} members=${MEMBERS.join(",")} objects=${objects}`;
 }
 
 probe().then(
@@ -357,9 +367,22 @@ def _write_documents(out: Path, *, ready_timeout_ms: int) -> dict[str, Path]:
     from cnotebook.grid import MolGrid
 
     molecules = _molecules()
+    # Both constructors resolve every option they are not given through the machine's
+    # configuration (CNOTEBOOK_CONFIG or the home config file), so the fixture states
+    # the ones the check asserts on. Left ambient, a configured page size below the
+    # molecule count or PNG images would fail the check on the documents rather than on
+    # the front ends they exist to exercise.
+    viewer = C3D(width=800, height=600, theme="light")
+    for molecule in molecules[:_C3D_MOLECULES]:
+        viewer.add_molecule(molecule)
     documents = {
-        "molgrid": MolGrid(molecules).to_html(),
-        "c3d": C3D().add_molecule(molecules[0]).to_html(),
+        "molgrid": MolGrid(
+            molecules,
+            n_items_per_page=len(molecules),
+            image_format="svg",
+            theme="light",
+        ).to_html(),
+        "c3d": viewer.to_html(),
     }
     paths = {}
     for name, document in documents.items():
@@ -474,8 +497,6 @@ def _console_errors(stderr: str) -> list[str]:
         if _CONSOLE_LINE_RE.search(line) is None:
             continue
         message = _console_message(line)
-        if any(pattern.search(message) for pattern in _CONSOLE_IGNORE_RES):
-            continue
         text_error = any(pattern.search(message) for pattern in _CONSOLE_TEXT_ERROR_RES)
         if text_error or _CONSOLE_SEVERITY_RE.search(line) is not None:
             offenders.append(line)
@@ -493,18 +514,31 @@ def _marker_lines(stderr: str, kind: str) -> list[str]:
     return [m.group(1) for m in _MARKER_RE.finditer(stderr) if m.group(1).startswith(prefix)]
 
 
+def _marker_values(marker: str) -> dict[str, str]:
+    """Parse the ``key=value`` fields of a marker line as text.
+
+    :param marker: A marker payload, e.g. ``"CNOTEBOOK_SMOKE c3d ok version=0.4.0"``.
+    :returns: The value of every ``key=value`` token, keyed by name.
+    """
+    values = {}
+    for token in marker.split():
+        key, separator, value = token.partition("=")
+        if separator:
+            values[key] = value
+    return values
+
+
 def _marker_fields(marker: str) -> dict[str, int]:
     """Parse the integer ``key=value`` fields of a marker line.
 
     :param marker: A marker payload, e.g. ``"CNOTEBOOK_SMOKE molgrid-probe cards=3"``.
     :returns: The fields whose value is an integer, keyed by name.
     """
-    fields = {}
-    for token in marker.split():
-        key, separator, value = token.partition("=")
-        if separator and value.lstrip("-").isdigit():
-            fields[key] = int(value)
-    return fields
+    return {
+        key: int(value)
+        for key, value in _marker_values(marker).items()
+        if value.lstrip("-").isdigit()
+    }
 
 
 def _report(name: str, summary: str, problems: list[str], run: _ShellRun, out: Path) -> bool:
@@ -545,9 +579,7 @@ def _check_c3d(run: _ShellRun, out: Path) -> bool:
     :param out: Artifact directory.
     :returns: Whether the document passed.
     """
-    problems = _shell_problems(run)
-    if _C3D_LOADED_RE.search(run.dom) is None:
-        problems.append("DOM marker missing: no 'Loaded <n> molecule(s) from initialization'")
+    problems = _shell_problems(run) + _c3d_loaded_problems(run.dom)
 
     markers = _marker_lines(run.stderr, "c3d")
     summary = ""
@@ -555,16 +587,60 @@ def _check_c3d(run: _ShellRun, out: Path) -> bool:
         problems.append(f"expected 1 host API probe line, got {len(markers)}: {markers}")
     else:
         # `CNOTEBOOK_SMOKE c3d <status> <fields>`; the fields become this document's
-        # summary, so the caller sees the version and the members the page reported.
+        # summary, so the caller sees the version, the members and the object count the
+        # page reported.
         fields = markers[0].split(" ", 3)
         status, summary = fields[2], fields[3] if len(fields) > 3 else ""
         if status != "ok":
             problems.append(f"host API probe failed: {markers[0]}")
-        elif f"version={_HOST_API_VERSION}" not in summary:
-            problems.append(
-                f"host API version mismatch: expected {_HOST_API_VERSION} in {markers[0]!r}"
-            )
+        else:
+            problems += _c3d_probe_problems(summary, markers[0])
     return _report("c3d", summary, problems, run, out)
+
+
+def _c3d_loaded_problems(dom: str) -> list[str]:
+    """Judge the load line the GUI terminal left in the dumped DOM.
+
+    :param dom: The dumped DOM.
+    :returns: One entry per problem, empty when the line reported the expected count.
+    """
+    counts = [int(count) for count in _C3D_LOADED_RE.findall(dom)]
+    if not counts:
+        return ["DOM marker missing: no 'Loaded <n> molecule(s) from initialization'"]
+    return [
+        f"DOM reported 'Loaded {count} molecule(s)', expected {_C3D_MOLECULES}"
+        for count in counts
+        if count != _C3D_MOLECULES
+    ]
+
+
+def _c3d_probe_problems(summary: str, marker: str) -> list[str]:
+    """Judge what the host API probe reported about the live viewer.
+
+    The version is compared as a whole value rather than searched for as text, so
+    ``0.4.0-beta``, ``10.4.0`` and ``0.4.0.1`` are all mismatches. The object count is
+    the one signal that the molecules reached the scene: the terminal's "Loaded n
+    molecule(s)" line is printed from the init payload even when every entry in it
+    failed to load, and ``ready`` resolves either way.
+
+    :param summary: The marker's trailing fields.
+    :param marker: The whole marker line, quoted in the failure detail.
+    :returns: One entry per problem, empty when the viewer matched the contract.
+    """
+    problems = []
+    version = _marker_values(summary).get("version")
+    if version != _HOST_API_VERSION:
+        problems.append(
+            f"host API version mismatch: expected {_HOST_API_VERSION}, "
+            f"got {version} in {marker!r}"
+        )
+    objects = _marker_fields(summary).get("objects")
+    if objects != _C3D_MOLECULES:
+        problems.append(
+            f"live viewer holds {objects} loaded molecule(s), expected "
+            f"{_C3D_MOLECULES} in {marker!r}"
+        )
+    return problems
 
 
 def _check_molgrid(run: _ShellRun, out: Path, *, items: int) -> bool:
