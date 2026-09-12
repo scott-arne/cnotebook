@@ -144,6 +144,25 @@ class TestRegisterNoopWhenNoIpython:
 
         register_dataframe_formatters_by_name()
 
+    @patch('cnotebook.ipython_ext._get_ipython')
+    def test_registration_noop_when_the_shell_has_no_display_formatter(self, mock_get_ipython):
+        """A shell that has no display formatter is treated as no shell at all.
+
+        ``display_formatter`` is an optional trait, so a shell can answer ``None`` for it;
+        reaching through that for ``formatters`` would raise instead of skipping.
+        """
+        mock_ipython, mock_html_formatter = _make_mock_ipython()
+        mock_ipython.display_formatter = None
+        mock_get_ipython.return_value = mock_ipython
+
+        assert ipython_ext._html_formatter() is None
+
+        register_ipython_formatters()
+        register_dataframe_formatters_by_name()
+
+        mock_html_formatter.for_type.assert_not_called()
+        mock_html_formatter.for_type_by_name.assert_not_called()
+
 
 class TestRegisterDataFrameFormattersByName:
     """Test the DataFrame registration that does not import pandas or polars."""

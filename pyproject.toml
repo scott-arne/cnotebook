@@ -92,9 +92,9 @@ classifiers = [
 # https://packaging.python.org/en/latest/specifications/dependency-specifiers/#extras
 [project.optional-dependencies]
 # ruff's stable rule set changes on every minor release, so "no findings" only means
-# something against a fixed one; the lint tools are pinned to the versions the branch's
-# clean baseline was measured with, which are the versions CI installs.
-dev = ["invoke", "build", "twine", "pytest", "ruff~=0.16.6", "mypy~=2.3"]
+# something against a fixed one; the lint tools are pinned to the release series the
+# branch's clean baseline was measured with, which is what CI installs.
+dev = ["invoke", "build", "twine", "pytest", "ruff~=0.16.6", "mypy~=2.3.1"]
 test = ["pytest", "pytest-cov"]
 pandas = ["pandas>=2.2.0", "oepandas>=3.3.0"]
 polars = ["polars>=1.44.1", "oepolars>=0.4.0"]

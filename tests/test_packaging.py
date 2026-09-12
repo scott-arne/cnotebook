@@ -1,4 +1,4 @@
-"""Tests for the packaging metadata CI and the release read out of ``pyproject.toml``."""
+"""Tests for the packaging metadata that CI and the release read out of ``pyproject.toml``."""
 
 import glob
 import tomllib
