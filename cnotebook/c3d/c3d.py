@@ -1004,16 +1004,36 @@ class C3D:
             raise ValueError(f"{label} must not be blank")
         return value
 
-    def _loaded_entry_names(self, *, frames_only: bool = False) -> list[str]:
-        """Return the names the front end will give the entries added so far.
+    def _resolved_entry_names(self) -> list[tuple[str, str]]:
+        """Pair every entry added so far with the name the front end will register.
 
-        The loader trims an entry name before registering the object under it, so names
-        are compared trimmed here too.
+        Each payload molecule is one loadable entry -- the payload has no group or
+        hierarchy entries, and a design unit is a single PDB entry -- and they are
+        loaded in payload order. The loader trims the requested name, then registers it
+        under the first free name of ``name``, ``name_2``, ``name_3``, ... , so a
+        duplicate is renamed rather than refused. The suffix is always built from the
+        requested name, so a third entry asking for ``"lig"`` when ``"lig"`` and
+        ``"lig_2"`` are taken becomes ``"lig_3"``, while one asking for ``"lig_2"``
+        becomes ``"lig_2_2"``.
 
-        :param frames_only: If True, list only the entries whose models are frames.
-        :returns: Entry names in the order they were added.
+        The pairs are a list rather than a dict because two entries may ask for the
+        same name, which is the case this exists to model.
+
+        :returns: ``(requested, resolved)`` for every entry, in load order.
         """
-        return [m.name.strip() for m in self._molecules if m.frames or not frames_only]
+        resolved: list[tuple[str, str]] = []
+        registered: set[str] = set()
+        for mol in self._molecules:
+            requested = mol.name.strip()
+            unique = requested
+            if unique in registered:
+                counter = 2
+                while f"{requested}_{counter}" in registered:
+                    counter += 1
+                unique = f"{requested}_{counter}"
+            registered.add(unique)
+            resolved.append((requested, unique))
+        return resolved
 
     def label_residues(self, selection: str, template: str = "{resn}{resi}") -> C3D:
         """Label every atom matching *selection* from a template.
@@ -1093,17 +1113,22 @@ class C3D:
         :returns: Self, for method chaining.
         :raises TypeError: If *mol* is not an ``OEMCMolBase``.
         :raises ValueError: If *mol* holds fewer than two conformers; a single model
-            has no frames to step through. Also if an entry of that name was already
-            added, including when the name comes from the molecule title or the
-            ``"conformers"`` default.
+            has no frames to step through. Also if the front end would register the
+            entry under any other name, which happens when the name is one an earlier
+            entry will be given -- including when it comes from the molecule title or
+            the ``"conformers"`` default.
         :raises CNotebookError: If this viewer is displayed as a widget.
         """
         self._assert_mutable()
         mol_data = convert_conformers(mol, name=name, disabled=disabled)
-        # The loader renames a duplicate entry to "<name>_2" rather than refusing it, so
-        # an accepted collision would leave animate(name) playing the entry loaded
-        # first, which may be an ordinary molecule with no frames at all.
-        if mol_data.name.strip() in self._loaded_entry_names():
+        # A duplicate is renamed by the loader rather than refused, so a colliding
+        # conformer entry would be registered under a name nobody passes to animate(),
+        # while animate(name) reached the entry loaded first -- which may be an ordinary
+        # molecule with no frames at all. The comparison is against the names the loader
+        # will settle on, not the ones that were asked for: with two entries called
+        # "lig", registered as "lig" and "lig_2", the name "lig_2" is taken as well.
+        registered = {resolved for _, resolved in self._resolved_entry_names()}
+        if mol_data.name.strip() in registered:
             raise ValueError(
                 f"an entry named '{mol_data.name}' already exists; pass name=..."
             )
@@ -1155,7 +1180,13 @@ class C3D:
         # An entry with a single model has nothing to play, and the front end says so in
         # its terminal long after the cell returned. Which entries have frames is known
         # here, so a name that is not one of them is refused on the call.
-        frame_entries = self._loaded_entry_names(frames_only=True)
+        frame_entries = [
+            resolved
+            for mol, (_, resolved) in zip(
+                self._molecules, self._resolved_entry_names(), strict=True
+            )
+            if mol.frames
+        ]
         if target.strip() not in frame_entries:
             known = ", ".join(f"'{name}'" for name in frame_entries) or "none"
             raise ValueError(

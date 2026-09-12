@@ -2496,3 +2496,61 @@ def test_animate_requires_an_entry_that_has_frames(ethanol_3d):
     assert viewer._operations[-1] == {
         "op": "animate", "entry": " confs ", "interval": 100, "loop": "forward",
     }
+
+
+def test_resolved_entry_names_mirror_the_loaders_suffix_rule(ethanol_3d):
+    """The names the front end settles on, not the ones that were asked for.
+
+    tests/js/gui_entry_names.test.js pins the same sequence against the GUI's own
+    addObject(), so a change to its rule fails a test on both sides.
+    """
+    from cnotebook.c3d import C3D
+
+    viewer = C3D()
+    for _ in range(3):
+        viewer.add_molecule(ethanol_3d, name="lig")
+    assert viewer._resolved_entry_names() == [
+        ("lig", "lig"), ("lig", "lig_2"), ("lig", "lig_3"),
+    ]
+    # The suffix is built from the requested name, never applied again to the result.
+    viewer.add_molecule(ethanol_3d, name="lig_2")
+    assert viewer._resolved_entry_names()[-1] == ("lig_2", "lig_2_2")
+    # The loader trims the name before registering it, so " lig " is another "lig".
+    viewer.add_molecule(ethanol_3d, name=" lig ")
+    assert viewer._resolved_entry_names()[-1] == ("lig", "lig_4")
+
+
+def test_add_conformers_refuses_a_name_the_loader_has_already_assigned(ethanol_3d):
+    """The reported case: nobody asked for "lig_2", but the loader hands it to the
+    second "lig", so a conformer entry claiming it would load as "lig_2_2" and
+    animate("lig_2") would play the ordinary entry, which has no frames."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().add_molecule(ethanol_3d, name="lig").add_molecule(ethanol_3d, name="lig")
+    assert [r for _, r in viewer._resolved_entry_names()] == ["lig", "lig_2"]
+
+    with pytest.raises(ValueError, match="an entry named 'lig_2' already exists"):
+        viewer.add_conformers(_conformers(), name="lig_2")
+    with pytest.raises(ValueError, match="No conformer entry named 'lig_2'"):
+        viewer.animate("lig_2")
+    assert len(viewer._molecules) == 2
+
+    # A name the loader will leave alone is accepted, and animate() can use it.
+    viewer.add_conformers(_conformers(), name="lig_3")
+    assert viewer._resolved_entry_names()[-1] == ("lig_3", "lig_3")
+    viewer.animate("lig_3")
+    assert viewer._operations[-1]["entry"] == "lig_3"
+
+
+def test_an_ordinary_entry_added_after_a_conformer_entry_is_the_one_renamed(ethanol_3d):
+    """The entry loaded first keeps the name, so the conformer entry animate() names is
+    still the conformer entry."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().add_conformers(_conformers(), name="lig").add_molecule(ethanol_3d, name="lig")
+    assert viewer._resolved_entry_names() == [("lig", "lig"), ("lig", "lig_2")]
+
+    molecules = viewer._build_init_payload()["molecules"]
+    assert [m["frames"] for m in molecules] == [True, False]
+    viewer.animate("lig")
+    assert viewer._operations[-1]["entry"] == "lig"
