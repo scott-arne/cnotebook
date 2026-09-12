@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.abc
+import logging
 import os
 import sys
 from collections.abc import Sequence
@@ -20,9 +21,25 @@ from typing import Any
 
 from cnotebook.core.errors import warn
 
+log = logging.getLogger("cnotebook")
+
 # An escape hatch for anyone who cannot have a finder in front of their imports. It is read
 # once, at import: a finder that is already installed cannot be taken back safely.
 _DISABLED = os.environ.get("CNOTEBOOK_NO_IMPORT_HOOKS") == "1"
+
+
+def _initializing(module: ModuleType | None) -> bool:
+    """Report whether *module* is in the middle of executing its own body.
+
+    A module is put in ``sys.modules`` before its body runs, so membership alone does not
+    mean the module is usable. ``__spec__._initializing`` is how the import system itself
+    distinguishes the two; it is read defensively so a loader that does not set it degrades
+    to "finished" rather than raising.
+
+    :param module: Module to inspect, or ``None``.
+    :returns: True while the module's body is still executing.
+    """
+    return bool(getattr(getattr(module, "__spec__", None), "_initializing", False))
 
 
 def _run(dotted: str) -> None:
@@ -36,8 +53,7 @@ def _run(dotted: str) -> None:
     :param dotted: Callback to resolve and call.
     """
     module_name, _, attr = dotted.partition(":")
-    partial = sys.modules.get(module_name)
-    if partial is not None and getattr(getattr(partial, "__spec__", None), "_initializing", False):
+    if _initializing(sys.modules.get(module_name)):
         return
     try:
         getattr(importlib.import_module(module_name), attr)()
@@ -78,6 +94,23 @@ class _WrappedLoader(importlib.abc.Loader):
         for dotted in list(self._callbacks):
             _run(dotted)
 
+    def load_module(self, fullname: str) -> ModuleType:
+        """Hand the deprecated single-call protocol to the real loader.
+
+        Nothing in CPython's current import path calls this, but ``Loader`` still supplies
+        a default implementation, and inheriting it would load the module by a route that
+        never consults the real loader at all. An explicit delegation is what keeps this
+        one name from slipping past ``__getattr__``.
+
+        :param fullname: Module to load.
+        :returns: The loaded module.
+        :raises NotImplementedError: If the real loader does not support this protocol.
+        """
+        inner = getattr(self._inner, "load_module", None)
+        if inner is None:
+            raise NotImplementedError(f"{type(self._inner).__name__} does not support load_module()")
+        return inner(fullname)
+
     def __getattr__(self, name: str) -> Any:
         """Pass everything else to the real loader.
 
@@ -107,11 +140,43 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
         self._callbacks.setdefault(module_name, []).append(dotted)
         if module_name in sys.modules:
             # There is nothing left to wait for, so this buys no finder either.
-            _run(dotted)
+            self._run_now(module_name, dotted)
             return
         if not self._installed and not _DISABLED:
             sys.meta_path.insert(0, self)
             self._installed = True
+
+    @staticmethod
+    def _run_now(module_name: str, dotted: str) -> None:
+        """Run *dotted* for a module that is already in ``sys.modules``.
+
+        Being in ``sys.modules`` does not mean the module has finished executing, and the
+        two ways it can still be running need different answers. If another thread is
+        mid-import, importing it here parks on that module's lock until the other thread is
+        done, so the callback still meets a complete module. If instead this thread is
+        inside that body -- the watched module imported cnotebook during its own
+        initialization -- the import system hands back the partial module rather than
+        deadlocking, and there is nothing complete to attach to.
+
+        Known limitation: in that circular case the callback is dropped, not deferred. The
+        registration stays in ``_callbacks``, but the finder is never consulted for a name
+        that is already in ``sys.modules``, so the callback cannot fire until something
+        imports the watched module afresh.
+
+        :param module_name: Watched module, already present in ``sys.modules``.
+        :param dotted: Callback in ``"package.module:function"`` form.
+        """
+        if _initializing(sys.modules.get(module_name)):
+            try:
+                importlib.import_module(module_name)
+            except Exception as exc:  # noqa: BLE001 - the importer owns this failure, not the hook
+                warn(f"cnotebook integration hook {dotted} skipped: importing {module_name} failed: {exc}")
+                return
+            if _initializing(sys.modules.get(module_name)):
+                log.debug("[cnotebook] %s is importing cnotebook from its own body; hook %s cannot run "
+                          "until %s is imported again", module_name, dotted, module_name)
+                return
+        _run(dotted)
 
     def find_spec(self, fullname: str, path: Sequence[str] | None = None,
                   target: ModuleType | None = None) -> ModuleSpec | None:
@@ -142,12 +207,23 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
                         target: ModuleType | None) -> ModuleSpec | None:
         """Ask the other finders where the module actually is.
 
+        The scan resumes after this finder's own place on the meta path. Everything ahead
+        of it has already been asked by the import machinery and declined, so asking again
+        would only repeat a filesystem walk -- and would run a side-effecting finder twice.
+
         :param fullname: Dotted name being imported.
         :param path: Parent package search path.
         :param target: Module being reloaded, when this is a reload.
         :returns: The first spec another finder offers, or ``None``.
         """
-        for finder in list(sys.meta_path):
+        finders = list(sys.meta_path)
+        try:
+            start = finders.index(self) + 1
+        except ValueError:
+            # Not on the meta path at all: a direct call, or the env-var escape hatch. In
+            # that case nobody has been asked yet, so the whole list is fair game.
+            start = 0
+        for finder in finders[start:]:
             if finder is self or not hasattr(finder, "find_spec"):
                 continue
             spec = finder.find_spec(fullname, path, target)

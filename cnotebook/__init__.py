@@ -339,6 +339,36 @@ _LAZY_EXPORTS = {
 }
 _WARNED_EXPORTS: set[str] = set()
 
+# `from cnotebook import *` resolves every name here through `__getattr__`, so a lazy name
+# in this list is imported by the star-import. Only the lazy names that need nothing beyond
+# cnotebook's own requirements are listed: `render_dataframe` and `render_polars_dataframe`
+# would make a star-import fail outright in an environment without pandas or polars. Both
+# stay reachable as attributes, and `__dir__` still advertises all six.
+__all__ = [
+    "BEST_FIT_ORIENTATION",
+    "C3D",
+    "CNotebookContext",
+    "CNotebookEnvInfo",
+    "LevelSpecificFormatter",
+    "MolGrid",
+    "__version__",
+    "cnotebook_context",
+    "config",
+    "configure",
+    "display",
+    "enable_debugging",
+    "get_config",
+    "get_env",
+    "highlight_smarts",
+    "log",
+    "molgrid",
+    "render_design_unit",
+    "render_display",
+    "render_molecule",
+    "save_image",
+    "warn",
+]
+
 
 def __getattr__(name: str):
     """Resolve an optional top-level export on first access (PEP 562).
@@ -346,6 +376,11 @@ def __getattr__(name: str):
     A submodule that cannot be imported would otherwise surface as an opaque
     ``ImportError: cannot import name '...'``, so the failure is reported once as a
     warning naming both the submodule and the underlying cause.
+
+    Every failure is reported that way, not just ``ImportError``: a submodule is free to
+    raise anything at all from its body -- a ``RuntimeError`` from a version check, say --
+    and an attribute lookup that raises something other than ``AttributeError`` breaks the
+    contract ``hasattr()`` and ``getattr(..., default)`` are built on.
 
     :param name: Attribute being accessed on the ``cnotebook`` module.
     :returns: The resolved export, also bound on the module so the import happens once.
@@ -358,7 +393,7 @@ def __getattr__(name: str):
     module_name, attribute = target
     try:
         value = getattr(importlib.import_module(module_name), attribute)
-    except ImportError as exc:
+    except Exception as exc:
         message = (
             f"cnotebook.{name} is unavailable: importing {module_name} failed ({exc}). "
             f"Install the optional dependency it names, or import {module_name} directly "

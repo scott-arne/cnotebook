@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 import types
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -24,16 +25,53 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
 # Throwaway modules the fixture writes; every test starts and ends with them unimported.
 _FAKE_NAMES = ("hookdummy", "hookcb", "hookbroken", "hookpkg", "hookpkg.sub", "hookns", "hookns.leaf",
-               "hookselfimport")
+               "hookselfimport", "hookslow", "hookcircular")
 
 _CALLBACKS = """
+import sys
+import threading
+import time
+
 CALLS = []
+
+# Set by the cross-thread test to the ident of the thread that will register the hook.
+REGISTRAR_IDENT = None
+STARTED = threading.Event()
+
+
+def wait_until_blocked_on(ident, module_name, timeout=10.0):
+    \"\"\"Block until thread *ident* is parked on *module_name*'s import lock.
+
+    The import system records what each thread is waiting for, which is the only
+    handshake that says "the other thread has reached the import and is stuck on us"
+    without guessing at a duration.
+
+    :param ident: Thread ident to watch.
+    :param module_name: Module whose import lock the thread should be waiting on.
+    :param timeout: Seconds to wait before giving up.
+    :returns: True if the thread was seen blocked before the deadline.
+    \"\"\"
+    from importlib._bootstrap import _blocking_on
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        locks = _blocking_on.get(ident)
+        if locks and any(getattr(lock, "name", None) == module_name for lock in locks):
+            return True
+        time.sleep(0.001)
+    return False
 
 
 def attach():
     import hookdummy
 
     CALLS.append(hookdummy.VALUE)
+
+
+def slow_attach():
+    # Read the module out of sys.modules rather than importing it: importing would wait
+    # on the module lock by itself and hide whether the hook did the waiting.
+    CALLS.append(("attached", getattr(sys.modules["hookslow"], "VALUE", None)))
 
 
 def second():
@@ -234,6 +272,83 @@ def test_callback_is_skipped_while_its_own_module_is_still_importing(fake_packag
     assert [w for w in recwarn if issubclass(w.category, CNotebookWarning)] == []
 
 
+def test_finders_ahead_of_the_hook_are_not_asked_twice(fake_packages):
+    # The import machinery walks sys.meta_path in order, so by the time this finder is
+    # asked, everything in front of it has already declined. Rescanning from the top would
+    # repeat that work -- and would run a side-effecting finder's side effect twice.
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def find_spec(self, fullname, path=None, target=None):
+            self.calls.append(fullname)  # declines by falling off the end
+
+    import hookcb
+
+    _hooks.on_import("hookdummy", "hookcb:attach")
+    assert sys.meta_path[0] is _hooks._FINDER
+    recorder = Recorder()
+    sys.meta_path.insert(0, recorder)
+
+    import hookdummy  # noqa: F401
+
+    assert recorder.calls.count("hookdummy") == 1
+    assert hookcb.CALLS == [1]
+
+
+def test_registration_during_another_threads_import_waits_for_it(fake_packages, tmp_path, recwarn):
+    # A module is in sys.modules from the moment its body starts running, so a
+    # registration that trusted membership alone would hand the callback a half-built
+    # module. Importing it instead parks on the module lock the other thread is holding.
+    (tmp_path / "hookslow.py").write_text(textwrap.dedent("""
+        import hookcb
+
+        hookcb.CALLS.append("body-start")
+        hookcb.STARTED.set()
+        hookcb.wait_until_blocked_on(hookcb.REGISTRAR_IDENT, "hookslow")
+        hookcb.CALLS.append("body-end")
+
+        VALUE = 5
+    """))
+    import hookcb
+
+    hookcb.REGISTRAR_IDENT = threading.get_ident()
+    importer = threading.Thread(target=importlib.import_module, args=("hookslow",))
+    importer.start()
+    try:
+        assert hookcb.STARTED.wait(10), "the importing thread never reached hookslow's body"
+        _hooks.on_import("hookslow", "hookcb:slow_attach")
+    finally:
+        importer.join(timeout=30)
+
+    assert not importer.is_alive()
+    # Exactly once, after the body finished, against the finished module.
+    assert hookcb.CALLS == ["body-start", "body-end", ("attached", 5)]
+    assert [w for w in recwarn if issubclass(w.category, CNotebookWarning)] == []
+
+
+def test_registration_from_inside_the_watched_modules_own_body_is_skipped(fake_packages, tmp_path, recwarn):
+    # A module that imports cnotebook from its own body is already in sys.modules and
+    # still initializing, and the import system hands back the partial module rather than
+    # deadlocking. There is nothing complete to attach to, so the callback is dropped --
+    # quietly, because the import itself is perfectly legitimate.
+    (tmp_path / "hookcircular.py").write_text(textwrap.dedent("""
+        from cnotebook import _hooks
+
+        _hooks.on_import("hookcircular", "hookcb:second")
+
+        VALUE = 6
+    """))
+    import hookcb
+    import hookcircular
+
+    assert hookcircular.VALUE == 6
+    assert hookcb.CALLS == []
+    # The registration survives, so a later fresh import of the module still gets it.
+    assert _hooks._FINDER._callbacks["hookcircular"] == ["hookcb:second"]
+    assert [w for w in recwarn if issubclass(w.category, CNotebookWarning)] == []
+
+
 def test_import_failure_propagates_and_skips_callbacks(fake_packages):
     _hooks.on_import("hookbroken", "hookcb:note_broken")
     import hookcb
@@ -293,6 +408,34 @@ def test_wrapped_loader_delegates_create_module():
 
     assert _hooks._WrappedLoader(Inner(), []).create_module(None) is sentinel
     assert _hooks._WrappedLoader(WithoutCreateModule(), []).create_module(None) is None
+
+
+def test_wrapped_loader_delegates_load_module():
+    # `Loader` supplies a default `load_module`, and inheriting it would load the module
+    # by a route that never consults the real loader at all.
+    sentinel = types.ModuleType("sentinel")
+
+    class Inner:
+        def __init__(self):
+            self.loaded = []
+
+        def exec_module(self, module):
+            pass
+
+        def load_module(self, fullname):
+            self.loaded.append(fullname)
+            return sentinel
+
+    class WithoutLoadModule:
+        def exec_module(self, module):
+            pass
+
+    inner = Inner()
+    assert _hooks._WrappedLoader(inner, []).load_module("hookdummy") is sentinel
+    assert inner.loaded == ["hookdummy"]
+
+    with pytest.raises(NotImplementedError, match="WithoutLoadModule"):
+        _hooks._WrappedLoader(WithoutLoadModule(), []).load_module("hookdummy")
 
 
 def test_env_var_disables_finder():

@@ -1092,8 +1092,8 @@ import cnotebook.marimo_ext as _owned
 _owned._marimo_owns_display = lambda: True
 """
 
-# What every import-order script does once the session is set up: attach, then ask marimo
-# itself - not the registry - which formatter it would use.
+# What the script does once the session is set up: attach, then ask marimo itself - not
+# the registry - which formatter it would use.
 _LOOKUP_TAIL = """
 import cnotebook.marimo_ext as me
 me._attach()
@@ -1106,15 +1106,15 @@ print(get_formatter(pd.DataFrame({"a": [1]}), include_opinionated=True).__name__
 print(get_formatter(pl.DataFrame({"a": [1]}), include_opinionated=True).__name__)
 """
 
-# cnotebook attaches an adapter when the library it adapts is imported, so every order has
-# to import the frame stack somewhere; what varies is where marimo and cnotebook sit in it.
+# cnotebook attaches an adapter when the library it adapts is imported, so the script has
+# to import the frame stack somewhere. The order is fixed rather than varied: _attach()
+# only provokes marimo's lazy pass in a process that claims the display, that claim cannot
+# be staked before cnotebook is imported, and pinning cnotebook to the front of every
+# variation is not a variation. Import order against the hook is covered instead by
+# tests/test_init.py::test_marimo_attach_import_orders, over all six permutations.
 _FRAME_STACK = "import pandas\nimport oepandas\nimport polars\nimport oepolars\n"
 
-_IMPORT_ORDERS = {
-    "marimo-first": "import marimo\n" + _FRAME_STACK + "import cnotebook\n",
-    "cnotebook-first": "import cnotebook\nimport marimo\n" + _FRAME_STACK,
-    "frames-first": _FRAME_STACK + "import cnotebook\nimport marimo\n",
-}
+_LAZY_PASS_SCRIPT = _FRAME_STACK + "import cnotebook\nimport marimo\n" + _OWN_THE_DISPLAY + _LOOKUP_TAIL
 
 _HIGHLIGHT_SCRIPT = _OWN_THE_DISPLAY + """
 import marimo
@@ -1190,14 +1190,13 @@ def _run_in_fresh_process(body: str) -> list[str]:
     return [line for line in finished.stdout.splitlines() if line]
 
 
-@pytest.mark.parametrize("order", list(_IMPORT_ORDERS), ids=list(_IMPORT_ORDERS))
-def test_marimo_lazy_registration_cannot_displace_the_cnotebook_formatters(order):
-    """Marimo's own lookup returns cnotebook's table formatters, whatever the import order.
+def test_marimo_lazy_registration_cannot_displace_the_cnotebook_formatters():
+    """Marimo's own lookup returns cnotebook's table formatters, not the ones it installs itself.
 
     Writing the registry is not enough: marimo's lazy start-up pass runs later and puts its
     own dataframe formatter back, so the adapter has to provoke that pass before it writes.
     """
-    assert _run_in_fresh_process(_IMPORT_ORDERS[order] + _OWN_THE_DISPLAY + _LOOKUP_TAIL) == [
+    assert _run_in_fresh_process(_LAZY_PASS_SCRIPT) == [
         "marimo_pandas_formatter",
         "marimo_polars_formatter",
     ]

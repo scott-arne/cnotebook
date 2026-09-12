@@ -277,9 +277,13 @@ class TestEnvDetection:
 
     def test_detection_imports_nothing(self):
         """A detection pass must not pull in a library the session had not imported."""
+        # An empty sys.modules diff would only prove this under pytest, which has already
+        # imported nearly everything detection could reach for. Naming the libraries makes
+        # the assertion say the same thing in a session that has imported none of them.
+        forbidden = {"pandas", "polars", "oepandas", "oepolars", "marimo", "anywidget", "IPython"}
         before = set(sys.modules)
         get_env()
-        assert set(sys.modules) - before == set()
+        assert (set(sys.modules) & forbidden) <= before
 
 
 class TestLevelSpecificFormatter:
@@ -408,7 +412,20 @@ class TestModuleImports:
             "CNotebookEnvInfo": CNotebookEnvInfo,
         }
         for name, value in expected.items():
-            assert getattr(cnotebook, name) is value or getattr(cnotebook, name) == value
+            assert getattr(cnotebook, name) is value
+        # `render_dataframe` is the one documented export deliberately kept out of
+        # `__all__`, so that a star-import cannot fail where pandas is not installed.
+        assert set(expected) - set(cnotebook.__all__) == {"render_dataframe"}
+
+    def test_all_names_resolve_and_are_listed_once(self):
+        """Every name in ``__all__`` has to resolve, or a star-import raises."""
+        for name in cnotebook.__all__:
+            assert getattr(cnotebook, name) is not None
+        assert len(set(cnotebook.__all__)) == len(cnotebook.__all__)
+        # The optional frame renderers stay reachable as attributes, and `__dir__` still
+        # advertises them; only the star-import list leaves them out.
+        assert {"render_dataframe", "render_polars_dataframe"}.isdisjoint(cnotebook.__all__)
+        assert set(cnotebook._LAZY_EXPORTS) <= set(dir(cnotebook))
 
 
 class TestIntegration:
@@ -731,6 +748,27 @@ class TestLazyExports:
             cnotebook.__dict__.update(removed)
             cnotebook._WARNED_EXPORTS.discard("MolGrid")
 
+    def test_failure_that_is_not_an_importerror_still_reads_as_a_missing_attribute(self):
+        """A submodule may raise anything from its body, and ``hasattr`` must survive it."""
+        removed = self._unbind_exports("C3D")
+        real_import_module = importlib.import_module
+
+        def fake_import_module(name, *args, **kwargs):
+            if name == "cnotebook.c3d":
+                raise RuntimeError("viewer version check failed")
+            return real_import_module(name, *args, **kwargs)
+
+        try:
+            with patch("importlib.import_module", side_effect=fake_import_module):
+                with pytest.warns(CNotebookWarning, match="viewer version check failed") as caught:
+                    assert hasattr(cnotebook, "C3D") is False
+                assert len(caught) == 1
+                # A failed resolution must not be cached as though it had succeeded.
+                assert "C3D" not in cnotebook.__dict__
+        finally:
+            cnotebook.__dict__.update(removed)
+            cnotebook._WARNED_EXPORTS.discard("C3D")
+
     def test_unknown_attribute_raises_without_warning(self):
         """An unknown name is a plain AttributeError, not an optional-dependency report."""
         with warnings.catch_warnings():
@@ -948,6 +986,31 @@ def test_import_does_not_import_optional_libraries():
     out = _run(code)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("[]")
+
+
+def test_star_import_binds_the_public_names_and_nothing_heavy():
+    """`from cnotebook import *` exports what ``__all__`` promises, at no extra import cost.
+
+    Star-importing resolves every lazy name in ``__all__`` through ``__getattr__``, so this
+    is also the check that those names cost only cnotebook's own submodules.
+    """
+    code = textwrap.dedent("""
+        from cnotebook import *
+
+        bound = set(globals())
+        import sys
+
+        import cnotebook
+        missing = sorted(n for n in cnotebook.__all__ if n not in bound)
+        # Module-level helpers of cnotebook's own; `__all__` is what keeps them private.
+        leaked = sorted(n for n in ("sys", "importlib", "logging", "oechem", "oedepict") if n in bound)
+        heavy = sorted(m for m in ("pandas", "polars", "anywidget", "marimo") if m in sys.modules)
+        print(missing, leaked, heavy)
+        print(sorted(m for m in ("cnotebook.grid", "cnotebook.c3d") if m in sys.modules))
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-2:] == ["[] [] []", "['cnotebook.c3d', 'cnotebook.grid']"]
 
 
 def test_bare_formatters_registered_without_oepandas():
