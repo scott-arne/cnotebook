@@ -1400,8 +1400,9 @@ def test_molgrid_prepare_data_cluster_with_dict():
     grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster=cluster_map)
     data = grid._prepare_data()
 
-    # With dict, cluster should be the index (0, 1) since we need to map it
-    assert "cluster" in data[0]
+    # A mapping is {molecule index: label}, so each item carries its label.
+    assert data[0]["cluster"] == "Active"
+    assert data[1]["cluster"] == "Inactive"
 
 
 def test_molgrid_prepare_data_cluster_none_value():
@@ -1987,3 +1988,67 @@ def test_grid_does_not_mutate_source_molecules():
     assert omega(mol)
     MolGrid([mol]).render_item(0)
     assert mol.GetDimension() == 3
+
+
+def test_widget_config_shape_and_branches():
+    """Test widget_config reports the E1 config shape for both populated and bare grids."""
+    import pandas as pd
+
+    from cnotebook.grid import MolGrid
+
+    mols = [_mol("CCO", "Ethanol"), _mol("c1ccccc1", "Benzene")]
+    frame = pd.DataFrame({"Name": ["Ethanol", "Benzene"], "MW": [46.07, 78.11], "Group": ["A", None]})
+    grid = MolGrid(
+        mols,
+        dataframe=frame,
+        cluster="Group",
+        cluster_counts=False,
+        badges=["MW"],
+        sort_by=("MW", True),
+        search_fields=["Name"],
+        theme="dark",
+        select=False,
+        information=False,
+        title=None,
+        width=300,
+        height=200,
+        n_items_per_page=12,
+    )
+
+    config = grid.widget_config(static=False)
+
+    assert set(config) == {
+        "page_size", "sort_by", "badges", "search_fields", "info_fields", "export_columns",
+        "cluster_labels", "cluster_counts", "theme", "static", "select", "information",
+        "title", "image_width", "image_height",
+    }
+    assert config["page_size"] == 12
+    assert config["sort_by"] == {"field": "MW", "descending": True}
+    assert config["badges"] == ["MW"]
+    assert config["search_fields"] == ["Name"]
+    assert config["info_fields"] == ["Name", "MW", "Group"]
+    assert config["export_columns"] == ["Name", "MW", "Group"]
+    # Labels are de-duplicated and sorted; the missing value becomes Uncategorized.
+    assert config["cluster_labels"] == ["A", "Uncategorized"]
+    assert config["cluster_counts"] is False
+    assert config["theme"] == "dark"
+    assert config["static"] is False
+    assert config["select"] is False
+    assert config["information"] is False
+    assert config["title"] is False
+    assert config["image_width"] == 300
+    assert config["image_height"] == 200
+
+    bare = MolGrid([_mol()], theme="light")
+    bare_config = bare.widget_config(static=True)
+
+    assert set(bare_config) == set(config)
+    assert bare_config["sort_by"] is None
+    assert bare_config["cluster_labels"] is None
+    assert bare_config["cluster_counts"] is True
+    assert bare_config["badges"] == []
+    assert bare_config["search_fields"] == []
+    assert bare_config["export_columns"] == []
+    assert bare_config["theme"] == "light"
+    assert bare_config["static"] is True
+    assert bare_config["title"] is True

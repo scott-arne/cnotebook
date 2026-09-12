@@ -40,7 +40,7 @@ def molgrid(
     cluster: str | Sequence[Hashable] | Mapping[int, Hashable] | None = None,
     cluster_counts: bool = True,
     theme: str = UNSET,
-    sort_by: str | tuple | None = None,
+    sort_by: str | tuple[str, bool] | None = None,
     badges: Sequence[str] | None = None,
     static_max_items: int = 2000,
 ) -> MolGrid:

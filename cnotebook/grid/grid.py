@@ -823,7 +823,7 @@ class MolGrid:
         cluster: str | Sequence[Hashable] | Mapping[int, Hashable] | None = None,
         cluster_counts: bool = True,
         theme: str = UNSET,
-        sort_by: str | tuple | None = None,
+        sort_by: str | tuple[str, bool] | None = None,
         badges: Sequence[str] | None = None,
         static_max_items: int = 2000,
     ):
@@ -924,7 +924,7 @@ class MolGrid:
         self.static_max_items = static_max_items
         self.badges = list(badges or [])
         if isinstance(sort_by, str):
-            self.sort_by: tuple | None = (sort_by, False)
+            self.sort_by: tuple[str, bool] | None = (sort_by, False)
         elif sort_by:
             field, descending = sort_by
             self.sort_by = (str(field), bool(descending))
@@ -990,6 +990,8 @@ class MolGrid:
         if self.cluster is None:
             return None
         if isinstance(self.cluster, str):
+            # _validate_cluster rejects a column name without a DataFrame.
+            assert self._dataframe is not None
             values = list(self._dataframe[self.cluster])
             return [_UNCATEGORIZED if _is_missing(v) else str(v) for v in values]
         if isinstance(self.cluster, dict):
@@ -1178,8 +1180,7 @@ class MolGrid:
 
         The copy is made through :func:`prepare_depiction_copy` so multiconformer
         and query molecules become plain 2D depiction molecules and the caller's
-        molecule is never touched. Coordinates are cleared again because the
-        requested orientation only takes effect when the layout is recomputed.
+        molecule is never touched.
 
         :param mol: OpenEye molecule object.
         :param orientation: OEDepictOrientation value.
@@ -1188,7 +1189,6 @@ class MolGrid:
         render_mol = prepare_depiction_copy(mol, clear_coords=True)
         opts = oedepict.OEPrepareDepictionOptions()
         opts.SetDepictOrientation(orientation)
-        opts.SetClearCoords(True)
         oedepict.OEPrepareDepiction(render_mol, opts)
         return render_mol
 
@@ -1396,7 +1396,7 @@ class MolGrid:
             if 0 <= int(i) < len(self._molecules)
         }
 
-    def search_smarts(self, pattern: str) -> tuple:
+    def search_smarts(self, pattern: str) -> tuple[list[int], str | None]:
         """Find molecules matching a SMARTS pattern.
 
         :param pattern: SMARTS pattern.
@@ -1407,7 +1407,7 @@ class MolGrid:
         if not query.Init(pattern):
             return [], f"Invalid SMARTS pattern: {pattern}"
 
-        matches = []
+        matches: list[int] = []
         for idx, mol in enumerate(self._molecules):
             if isinstance(mol, oechem.OEMolBase) and mol.IsValid():
                 oechem.OEPrepareSearch(mol, query)
