@@ -9,6 +9,7 @@ import importlib.metadata
 import importlib.util
 import logging
 import sys
+from typing import TYPE_CHECKING
 
 # Required imports (openeye-toolkits)
 from openeye import oechem, oedepict
@@ -338,6 +339,17 @@ _LAZY_EXPORTS = {
     "render_polars_dataframe": ("cnotebook.polars_ext", "render_polars_dataframe"),
 }
 _WARNED_EXPORTS: set[str] = set()
+
+if TYPE_CHECKING:
+    # A PEP 562 `__getattr__` is invisible to static analysis, which then reads every lazy
+    # name as missing from the module. These imports exist only to say where each one comes
+    # from; `TYPE_CHECKING` is False at runtime, so they cost nothing and import nothing.
+    from .c3d import C3D as C3D
+    from .grid import BEST_FIT_ORIENTATION as BEST_FIT_ORIENTATION
+    from .grid import MolGrid as MolGrid
+    from .grid import molgrid as molgrid
+    from .pandas_ext import render_dataframe as render_dataframe
+    from .polars_ext import render_polars_dataframe as render_polars_dataframe
 
 # `from cnotebook import *` resolves every name here through `__getattr__`, so a lazy name
 # in this list is imported by the star-import. Only the lazy names that need nothing beyond

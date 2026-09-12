@@ -275,16 +275,6 @@ class TestEnvDetection:
             assert get_env().molgrid_available is False
         assert get_env().molgrid_available is (importlib.util.find_spec("anywidget") is not None)
 
-    def test_detection_imports_nothing(self):
-        """A detection pass must not pull in a library the session had not imported."""
-        # An empty sys.modules diff would only prove this under pytest, which has already
-        # imported nearly everything detection could reach for. Naming the libraries makes
-        # the assertion say the same thing in a session that has imported none of them.
-        forbidden = {"pandas", "polars", "oepandas", "oepolars", "marimo", "anywidget", "IPython"}
-        before = set(sys.modules)
-        get_env()
-        assert (set(sys.modules) & forbidden) <= before
-
 
 class TestLevelSpecificFormatter:
     """Test the LevelSpecificFormatter class"""
@@ -988,6 +978,30 @@ def test_import_does_not_import_optional_libraries():
     assert out.stdout.strip().endswith("[]")
 
 
+def test_detection_imports_nothing():
+    """A detection pass must not pull in a library the session had not imported.
+
+    This can only be asserted from a child. Under pytest the libraries detection could
+    reach for are already imported, so an in-process check cannot tell an import that never
+    happened from one that had happened long before.
+    """
+    code = textwrap.dedent(f"""
+        import sys
+
+        import cnotebook
+
+        before = set(sys.modules)
+        cnotebook.get_env()
+        # Twice: the first call could plausibly be the one that memoises something.
+        cnotebook.get_env()
+        forbidden = set({_OPTIONAL_LIBRARIES + ("IPython",)!r})
+        print(sorted(forbidden & (set(sys.modules) - before)))
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "[]"
+
+
 def test_star_import_binds_the_public_names_and_nothing_heavy():
     """`from cnotebook import *` exports what ``__all__`` promises, at no extra import cost.
 
@@ -1070,6 +1084,36 @@ def test_marimo_attach_import_orders(order):
     out = _run(code)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().splitlines()[-1] == "marimo_pandas_formatter marimo_polars_formatter"
+
+
+def test_marimo_alone_still_gets_the_adapter_and_its_openeye_hooks():
+    """A marimo session with no frame library still has the marimo adapter and its hooks.
+
+    The adapter registers a ``_mime_`` method on four OpenEye types from its module body, so
+    rendering a bare molecule in marimo depends on ``cnotebook.marimo_ext`` being imported at
+    all. Nothing here imports it but the marimo post-import hook: the pandas and polars
+    adapters, which would pull it in as a side effect, are never reached.
+    """
+    pytest.importorskip("marimo")
+    code = textwrap.dedent("""
+        import cnotebook
+        import marimo
+
+        import sys
+        from openeye import oechem, oedepict
+
+        types = (oechem.OEMolBase, oechem.OEDesignUnit, oedepict.OE2DMolDisplay, oedepict.OEImage)
+        print("adapter:", "cnotebook.marimo_ext" in sys.modules)
+        print("frames:", sorted(m for m in ("pandas", "polars", "oepandas", "oepolars") if m in sys.modules))
+        print("mime:", [hasattr(t, "_mime_") for t in types])
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-3:] == [
+        "adapter: True",
+        "frames: []",
+        "mime: [True, True, True, True]",
+    ]
 
 
 def test_lazy_exports_and_get_env_is_live():
