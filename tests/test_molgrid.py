@@ -2021,6 +2021,112 @@ def test_widget_protocol_visible_images_selection_and_smarts():
     assert widget.revision == 2 and set(widget.images) == {"2"} and "<svg" in widget.images["2"]
 
 
+def test_widget_traits_match_the_e1_contract():
+    """Test every E1 trait: type, element type, default, sync tag and echo policy."""
+    pytest.importorskip("anywidget")
+    import traitlets
+
+    from cnotebook.grid.widget import MolGridWidget
+
+    # name -> (trait type, element type or None, default, effective echo_update)
+    expected = {
+        "items": (traitlets.List, traitlets.Dict, [], True),
+        "config": (traitlets.Dict, None, {}, True),
+        "revision": (traitlets.Int, None, 0, True),
+        "visible": (traitlets.List, traitlets.Int, [], False),
+        "images": (traitlets.Dict, None, {}, True),
+        "selection": (traitlets.List, traitlets.Int, [], True),
+        "smarts_request": (traitlets.Dict, None, {}, False),
+        "smarts_result": (traitlets.Dict, None, {}, True),
+        "error": (traitlets.Unicode, None, "", True),
+    }
+    traits = MolGridWidget.class_traits()
+    widget = MolGridWidget()
+    for name, (kind, element, default, echo) in expected.items():
+        trait = traits[name]
+        assert isinstance(trait, kind), name
+        assert trait.metadata.get("sync") is True, name
+        # Absent metadata means the echo is on, which is ipywidgets' default.
+        assert trait.metadata.get("echo_update", True) is echo, name
+        if element is not None:
+            assert isinstance(trait._trait, element), name
+        assert getattr(widget, name) == default, name
+    # Only the traits the browser alone writes suppress the echo; echoing those would
+    # return the page a view just scrolled to, and the query it just typed, to the very
+    # view that produced them.
+    suppressed = {n for n, t in traits.items() if t.metadata.get("echo_update") is False}
+    assert suppressed == {"visible", "smarts_request"}
+
+
+def test_browser_written_traits_are_not_echoed_back(monkeypatch):
+    """Test the echo reaches selection, which Python writes too, and nothing else."""
+    pytest.importorskip("anywidget")
+    from ipywidgets.widgets.widget import JUPYTER_WIDGETS_ECHO
+
+    if not JUPYTER_WIDGETS_ECHO:
+        pytest.skip("ipywidgets echo is disabled in this environment")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("c1ccccc1")], n_items_per_page=1)
+    widget = grid.widget
+    sent = []
+    monkeypatch.setattr(widget, "_send", lambda msg, buffers=None: sent.append(msg))
+
+    # set_state is the entry point ipywidgets' comm calls with a message from the browser.
+    widget.set_state({
+        "visible": [2],
+        "selection": [2],
+        "smarts_request": {"seq": 1, "query": "c1ccccc1", "view": "view-a"},
+    })
+
+    echoed = [msg["state"] for msg in sent if msg.get("method") == "echo_update"]
+    assert [set(state) for state in echoed] == [{"selection"}]
+    # The batch still drove every observer: this is the real browser-to-kernel path.
+    assert set(widget.images) == {"0", "1", "2"}
+    assert grid.get_selection_indices() == [2]
+    assert widget.smarts_result == {"seq": 1, "view": "view-a", "matches": [2], "error": None}
+
+
+def test_a_render_failure_is_reported_to_the_front_end_as_text(monkeypatch):
+    """Test a depiction failure sets the error trait instead of leaving blank cards."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    widget = grid.widget
+
+    def boom(indices):
+        raise RuntimeError("depiction failed")
+
+    monkeypatch.setattr(grid, "render_indices", boom)
+    widget.visible = [2]
+
+    assert widget.error == "Could not render molecules: depiction failed"
+    assert "2" not in widget.images
+
+
+def test_a_fully_cached_page_clears_a_stale_error(monkeypatch):
+    """Test the error banner does not outlive the page that failed to render."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    widget = grid.widget
+
+    def boom(indices):
+        raise RuntimeError("depiction failed")
+
+    monkeypatch.setattr(grid, "render_indices", boom)
+    widget.visible = [2]
+    assert widget.error
+    monkeypatch.undo()
+
+    # Page 0 was rendered before the failure, so nothing is missing and nothing is
+    # rendered; the page the user is looking at is nonetheless fine, and says so.
+    widget.visible = [0]
+    assert widget.error == ""
+
+
 def test_widget_answers_each_view_with_its_own_token_and_drops_malformed_requests():
     """Test every SMARTS answer echoes the asking view and malformed requests are ignored."""
     pytest.importorskip("anywidget")
@@ -2065,11 +2171,13 @@ def test_revision_push_clears_images_then_republishes_config_and_the_visible_win
     # The empty dict goes first so the front end drops the images of the previous
     # revision; the window it last asked for is then rendered again on this side,
     # because the widget model suppresses a republished but unchanged ``visible``.
-    assert [name for name, _ in events] == ["images", "revision", "config", "images"]
+    # Config is last: it is what makes the front end redraw, and by then the images
+    # for the new revision have already arrived.
+    assert [name for name, _ in events] == ["images", "revision", "images", "config"]
     assert events[0][1] == {}
     assert events[1][1] == 1
-    assert events[2][1]["image_width"] == 310
-    assert set(events[3][1]) == {"1"} and "data:image/png" in events[3][1]["1"]
+    assert set(events[2][1]) == {"1"} and "data:image/png" in events[2][1]["1"]
+    assert events[3][1]["image_width"] == 310
 
 
 def test_images_arrive_as_a_new_dict_that_keeps_the_earlier_renders():

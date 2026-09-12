@@ -740,6 +740,32 @@ describe("CSV export", () => {
       writeText.mockRestore();
     }
   });
+
+  it("exports the selection intersected with the current filter", () => {
+    // An export is what the user can see and has chosen, not everything they ever ticked:
+    // a selection made before a search must not smuggle filtered-out rows into the file.
+    const { el } = mount({ page_size: 10 });
+    el.querySelector(".cn-molgrid-card[data-index='1'] .cn-molgrid-check").click();
+    el.querySelector(".cn-molgrid-card[data-index='3'] .cn-molgrid-check").click();
+
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    try {
+      typeQuery(el, "name1");
+      el.querySelector(".cn-molgrid-action[data-action='copy-csv']").click();
+      expect(writeText.mock.calls.at(-1)[0].split("\n")).toEqual(["smiles,MW,Name", "CC,40,name1"]);
+
+      // The filtered-out molecule is still selected, and comes back when the filter does.
+      typeQuery(el, "");
+      el.querySelector(".cn-molgrid-action[data-action='copy-csv']").click();
+      expect(writeText.mock.calls.at(-1)[0].split("\n")).toEqual([
+        "smiles,MW,Name",
+        "CC,40,name1",
+        "CCCC,20,name3",
+      ]);
+    } finally {
+      writeText.mockRestore();
+    }
+  });
 });
 
 describe("the static document", () => {

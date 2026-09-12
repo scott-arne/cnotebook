@@ -1851,7 +1851,8 @@ def test_the_front_end_gate_wants_a_kernel_shell_not_merely_a_shell(monkeypatch)
     class ColabShell(ZMQInteractiveShell):
         """Stands in for a front end that subclasses the kernel shell, as Colab does."""
 
-    monkeypatch.setattr("cnotebook.c3d.c3d._is_marimo", lambda: False)
+    # The gate is shared with MolGrid, so its marimo check is patched where it lives.
+    monkeypatch.setattr("cnotebook.core.display_support.is_marimo", lambda: False)
     monkeypatch.setattr("IPython.core.getipython.get_ipython", lambda: None)
     assert _has_display_frontend() is False
     monkeypatch.setattr("IPython.core.getipython.get_ipython", TerminalInteractiveShell)
@@ -1863,7 +1864,7 @@ def test_the_front_end_gate_wants_a_kernel_shell_not_merely_a_shell(monkeypatch)
     # IPython is an optional dependency, and its absence is not an error here.
     monkeypatch.setitem(sys.modules, "IPython.core.getipython", None)
     assert _has_display_frontend() is False
-    monkeypatch.setattr("cnotebook.c3d.c3d._is_marimo", lambda: True)
+    monkeypatch.setattr("cnotebook.core.display_support.is_marimo", lambda: True)
     assert _has_display_frontend() is True
 
 

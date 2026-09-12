@@ -5,9 +5,6 @@ from __future__ import annotations
 import functools
 import logging
 import os
-import stat
-import sys
-import tempfile
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
@@ -20,8 +17,19 @@ from openeye import oechem, oedepict  # type: ignore[import-untyped]
 from cnotebook import config as _config
 from cnotebook.config import UNSET
 from cnotebook.core.context import CNotebookContext
+
+# Imported under the module's own names so a test can patch the gate or the writer on
+# this module, which is where a reader of MolGrid.save or MolGrid.display looks for them.
+from cnotebook.core.display_support import has_display_frontend as _has_display_frontend
+from cnotebook.core.display_support import is_marimo as _is_marimo
+from cnotebook.core.display_support import prepare_target as _prepare_target
+from cnotebook.core.display_support import write_atomically as _write_atomically
 from cnotebook.core.errors import CNotebookError, warn
 from cnotebook.core.render import oedisp_to_html, oemol_to_html, prepare_depiction_copy
+from cnotebook.core.viewer3d import escape_script_json
+
+__all__ = ["BEST_FIT_ORIENTATION", "DEFAULT_ATOM_LABEL_FONT_SCALE", "DEFAULT_STRUCTURE_SCALE",
+           "MolGrid"]
 
 log = logging.getLogger("cnotebook")
 
@@ -75,21 +83,6 @@ def _collect_render_options(**options: Any) -> dict[str, Any]:
         name: value for name, value in options.items()
         if value is not _RENDER_OPTION_UNSET
     }
-
-
-def _is_marimo() -> bool:
-    """Check if running in marimo environment.
-
-    Checks both if marimo is imported AND if we're in a marimo runtime.
-    """
-    if "marimo" not in sys.modules:
-        return False
-    try:
-        import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
-        # Check if we're actually in a marimo runtime
-        return mo.running_in_notebook()
-    except (ImportError, AttributeError):
-        return False
 
 
 def _is_missing(value: Any) -> bool:
@@ -196,6 +189,9 @@ def _search_copy(mol: oechem.OEMolBase) -> oechem.OEMolBase:
     :param mol: Source molecule.
     :returns: A copy safe to perceive into.
     """
+    # Defence in depth: search_smarts skips query molecules before they reach here,
+    # because matching one aborts the interpreter. Should another caller appear, it
+    # gets a copy of the right kind rather than a graph molecule built from a query.
     if isinstance(mol, oechem.OEQMolBase):
         return oechem.OEQMol(mol)
     if isinstance(mol, oechem.OEMCMolBase):
@@ -216,110 +212,6 @@ def _static_asset(name: str) -> str:
     :returns: The file's text.
     """
     return (_STATIC_DIR / name).read_text(encoding="utf-8")
-
-
-def _has_display_frontend() -> bool:
-    """Check whether something in this process could render a widget.
-
-    A widget is a message to a front end, not a value: without one it has nothing to
-    draw into and shows as a bare repr. A terminal IPython session counts as no front
-    end even though it has a shell, because it has no widget manager. The kernel shell
-    is recognized through the MRO so a front end that subclasses it (Colab does) still
-    counts. The check is made per call rather than once at import, because a session
-    can acquire a shell after cnotebook loads.
-
-    :returns: True when a marimo notebook or a Jupyter kernel shell is running.
-    """
-    if _is_marimo():
-        return True
-    try:
-        from IPython.core.getipython import get_ipython
-    except ImportError:
-        return False
-    shell = get_ipython()
-    if shell is None:
-        return False
-    return any(cls.__name__ == "ZMQInteractiveShell" for cls in type(shell).__mro__)
-
-
-def _prepare_target(path: str | os.PathLike[str]) -> Path:
-    """Validate that *path* can be written and return it as a :class:`~pathlib.Path`.
-
-    The directory is checked before any work is done so a mistyped path fails
-    immediately rather than after every molecule in the grid has been rendered.
-
-    :param path: Destination file.
-    :returns: The destination as a path.
-    :raises CNotebookError: If the destination's directory does not exist.
-    """
-    target = Path(path)
-    directory = target.parent
-    if not directory.is_dir():
-        raise CNotebookError(f"Cannot write {target}: the directory {directory} does not exist")
-    return target
-
-
-@functools.cache
-def _default_file_mode() -> int:
-    """Return the permissions a plain ``open(path, "wb")`` would give a new file.
-
-    The umask can only be read by setting it, which is process-global and therefore
-    momentarily wrong for every other thread. The answer is cached so that window is
-    opened once per process instead of once per saved file.
-
-    :returns: The mode bits for a newly created output file.
-    """
-    umask = os.umask(0)
-    os.umask(umask)
-    return 0o666 & ~umask
-
-
-def _apply_output_permissions(temporary: Path, target: Path) -> None:
-    """Give the temporary file the permissions the finished document should have.
-
-    :func:`tempfile.mkstemp` creates its file 0600 because temporary files may hold
-    secrets. A saved document is an ordinary output file, so it takes the mode of the
-    file it replaces, or the mode a plain ``open()`` would have produced.
-
-    :param temporary: The file about to be moved into place.
-    :param target: The destination, which may or may not exist yet.
-    """
-    try:
-        mode = stat.S_IMODE(target.stat().st_mode)
-    except OSError:
-        mode = _default_file_mode()
-    os.chmod(temporary, mode)
-
-
-def _write_atomically(path: str | os.PathLike[str], data: bytes) -> Path:
-    """Write *data* to *path* so a failed write never leaves a truncated file.
-
-    The bytes go to a temporary file in the destination directory and are moved onto
-    the target with :func:`os.replace`, which is atomic within one filesystem. A reader
-    therefore sees either the previous file or the complete new one, and an interrupted
-    write leaves the previous document in place.
-
-    :param path: Destination file.
-    :param data: Bytes to write.
-    :returns: The destination path.
-    :raises CNotebookError: If the destination's directory does not exist.
-    :raises OSError: If the write or the move fails.
-    """
-    target = _prepare_target(path)
-    descriptor, temporary = tempfile.mkstemp(
-        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-        _apply_output_permissions(Path(temporary), target)
-        os.replace(temporary, target)
-    except BaseException:
-        # os.replace consumed the temporary file on success; on any failure it is still
-        # there, and a stray dot-file next to the user's output is its own small bug.
-        Path(temporary).unlink(missing_ok=True)
-        raise
-    return target
 
 
 class MolGrid:
@@ -1211,14 +1103,16 @@ class MolGrid:
         The empty ``images`` goes out first, so no view keeps a depiction drawn with the
         previous options, and the window each view last reported is then rendered from
         here: a view that has not scrolled republishes the same ``visible``, and
-        traitlets delivers no notification for a value that has not changed.
+        traitlets delivers no notification for a value that has not changed. The new
+        ``config`` goes out last, so the message that makes the front end redraw arrives
+        only once the images it should draw are already there.
         """
         widget = self._widget
         widget.images = {}
         widget.revision = self.revision
-        widget.config = self.widget_config(static=False)
         if widget.visible:
             widget.images = self.render_indices(widget.visible)
+        widget.config = self.widget_config(static=False)
 
     @property
     def widget(self) -> Any:
@@ -1251,6 +1145,9 @@ class MolGrid:
             def on_visible(change: dict[str, Any]) -> None:
                 missing = [i for i in change["new"] if str(i) not in widget.images]
                 if not missing:
+                    # A page whose images are all cached still clears a previous
+                    # failure's banner: the grid the user is now looking at rendered.
+                    widget.error = ""
                     return
                 try:
                     rendered = grid.render_indices(missing)
@@ -1310,10 +1207,6 @@ class MolGrid:
                 f"static_max_items={self.static_max_items}; the document will be large. "
                 "Use display() for the live widget or raise static_max_items."
             )
-        # Imported here because the viewer module reads the bundled 3Dmol assets when it
-        # is imported, which a grid export has no use for.
-        from cnotebook.core.viewer3d import escape_script_json
-
         payload = {
             "items": self.items(),
             "config": self.widget_config(static=True),
