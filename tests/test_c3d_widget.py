@@ -612,6 +612,36 @@ def test_close_leaves_a_request_whose_loop_has_gone():
     assert not holder[0].done()
 
 
+def test_close_fails_pending_commands():
+    """The comm goes with the widget, so a queued command can never be answered."""
+    widget = C3DWidget(payload="{}")
+    handle = widget.submit("zoom")
+    seen = []
+    handle.add_done_callback(seen.append)
+    widget.close()
+    assert handle.done and handle.result == CommandResult(False, ["widget closed"])
+    assert seen == [handle] and widget._handles == {}
+    widget.close()  # closing twice settles nothing and must not raise
+
+
+def test_close_leaves_a_command_waiter_whose_loop_has_gone():
+    """Settling a waiter on a closed loop would raise out of close()."""
+    widget = C3DWidget(payload="{}")
+    handle = widget.submit("zoom")
+    holder = []
+
+    async def abandon_a_waiter():
+        # What is left behind when the loop that ran `await handle` closed before the
+        # waiter could be removed, e.g. a cell whose task was still pending.
+        future = asyncio.get_running_loop().create_future()
+        handle._waiters.append(future)
+        holder.append(future)
+
+    asyncio.run(abandon_a_waiter())
+    widget.close()
+    assert handle.done and not holder[0].done()
+
+
 @pytest.mark.parametrize("seq", [True, 1.0, "1", None])
 def test_screenshots_without_a_plain_integer_sequence_are_ignored(seq, caplog):
     widget = C3DWidget(payload="{}")

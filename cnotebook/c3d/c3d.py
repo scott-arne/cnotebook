@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import stat
 import sys
-from collections.abc import Iterable, Sequence
+import tempfile
+from collections.abc import Callable, Iterable, Sequence
 from html import escape
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from cnotebook import config
+from cnotebook.config import UNSET
 from cnotebook.core import viewer3d
 from cnotebook.core.convert import (
     MoleculeData,
@@ -15,6 +21,7 @@ from cnotebook.core.convert import (
     convert_map,
     convert_molecule,
 )
+from cnotebook.core.errors import CNotebookError, warn
 from cnotebook.core.vocabulary import (
     ISOSURFACE_REPRESENTATIONS as _ISOSURFACE_REPRESENTATION_TUPLE,
 )
@@ -31,6 +38,11 @@ from cnotebook.core.vocabulary import (
     VIEW_PRESETS as _VIEW_PRESET_TUPLE,
 )
 
+if TYPE_CHECKING:  # Importing the widget module for real would pull in anywidget.
+    from cnotebook.c3d.widget import C3DWidget, CommandHandle, PickEvent
+
+__all__ = ["C3D"]
+
 # ---------------------------------------------------------------------------
 # Style presets
 # ---------------------------------------------------------------------------
@@ -39,6 +51,82 @@ _VIEW_PRESETS = set(_VIEW_PRESET_TUPLE)
 _SURFACE_TYPES = set(_SURFACE_TYPE_TUPLE)
 _SURFACE_MODES = set(_SURFACE_MODE_TUPLE)
 _ISOSURFACE_REPRESENTATIONS = set(_ISOSURFACE_REPRESENTATION_TUPLE)
+
+# Design section D3: a screenshot request that the front end never answers fails after
+# this long rather than leaving the caller's cell awaiting forever.
+_SCREENSHOT_TIMEOUT = 30.0
+
+# The eight bytes every PNG file starts with (PNG specification, clause 5.2).
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _prepare_target(path: str | os.PathLike[str]) -> Path:
+    """Validate that *path* can be written and return it as a :class:`~pathlib.Path`.
+
+    The directory is checked before any work is done so a mistyped path fails
+    immediately rather than after a render or a 30 s wait for the front end.
+
+    :param path: Destination file.
+    :returns: The destination as a path.
+    :raises CNotebookError: If the destination's directory does not exist.
+    """
+    target = Path(path)
+    directory = target.parent
+    if not directory.is_dir():
+        raise CNotebookError(f"Cannot write {target}: the directory {directory} does not exist")
+    return target
+
+
+def _apply_output_permissions(temporary: Path, target: Path) -> None:
+    """Give the temporary file the permissions the finished document should have.
+
+    :func:`tempfile.mkstemp` creates its file 0600 because temporary files may hold
+    secrets. A saved document is an ordinary output file, so it takes the mode of the
+    file it replaces, or the mode a plain ``open()`` would have produced.
+
+    :param temporary: The file about to be moved into place.
+    :param target: The destination, which may or may not exist yet.
+    """
+    try:
+        mode = stat.S_IMODE(target.stat().st_mode)
+    except OSError:
+        # No previous file to imitate, so fall back to the default an ordinary write
+        # would get. The umask can only be read by setting it, hence the restore.
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    os.chmod(temporary, mode)
+
+
+def _write_atomically(path: str | os.PathLike[str], data: bytes) -> Path:
+    """Write *data* to *path* so a failed write never leaves a truncated file.
+
+    The bytes go to a temporary file in the destination directory and are moved onto the
+    target with :func:`os.replace`, which is atomic within one filesystem. A reader
+    therefore sees either the previous file or the complete new one, and an interrupted
+    write leaves the previous document in place.
+
+    :param path: Destination file.
+    :param data: Bytes to write.
+    :returns: The destination path.
+    :raises CNotebookError: If the destination's directory does not exist.
+    :raises OSError: If the write or the move fails.
+    """
+    target = _prepare_target(path)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+        _apply_output_permissions(Path(temporary), target)
+        os.replace(temporary, target)
+    except BaseException:
+        # os.replace consumed the temporary file on success; on any failure it is still
+        # there, and a stray dot-file next to the user's output is its own small bug.
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return target
 
 
 def _is_marimo() -> bool:
@@ -59,11 +147,35 @@ def _is_marimo() -> bool:
         return False
 
 
+def _has_display_frontend() -> bool:
+    """Check whether something in this process could render a widget.
+
+    A widget is a message to a front end, not a value: outside a notebook it has
+    nothing to draw into and shows as a bare repr. The check is made per call rather
+    than once at import, because a session can acquire a shell after cnotebook loads.
+
+    :returns: True when a marimo notebook or an IPython shell is running.
+    """
+    if _is_marimo():
+        return True
+    try:
+        from IPython.core.getipython import get_ipython
+    except ImportError:
+        return False
+    return get_ipython() is not None
+
+
 class C3D:
     """Interactive 3D molecule viewer for Jupyter and Marimo notebooks.
 
     Provides a builder-style API for constructing a self-contained 3Dmol.js
     viewer that can be displayed inline in notebook cells.
+
+    :meth:`display` shows a live widget when the notebook can render one, and the
+    self-contained HTML document otherwise. A live viewer can then be driven from
+    Python: :meth:`execute` runs GUI terminal commands, :meth:`on_pick` and
+    :attr:`picked` report atom picks, :attr:`view` and :meth:`set_view` move the
+    camera, and :meth:`screenshot` captures the frame.
 
     Example::
 
@@ -87,21 +199,35 @@ class C3D:
     _DEFAULT_HEIGHT_LARGE = 600
     _ATOM_THRESHOLD = 1000
 
-    def __init__(self, width: int = 800, height: int | None = None, theme: str = "auto"):
+    def __init__(self, width: int = UNSET, height: int | None = UNSET, theme: str = UNSET):
         """Create a new C3D viewer instance.
 
-        :param width: Viewer width in pixels.
-        :param height: Viewer height in pixels. When ``None`` (the default),
-            the height is chosen automatically: 300 px for small viewers,
-            500 px when the console is visible, or 600 px when the largest
-            molecule has more than 1 000 atoms.
+        Every parameter left unset resolves through :func:`cnotebook.config.resolve`,
+        so a configuration file or :func:`cnotebook.configure` sets the defaults.
+
+        :param width: Viewer width in pixels (configured default 800).
+        :param height: Viewer height in pixels. When ``None`` (the configured
+            default), the height is chosen automatically: 300 px for small
+            viewers, 500 px when the console is visible, or 600 px when the
+            largest molecule has more than 1 000 atoms.
         :param theme: Color theme. ``"auto"`` detects from the host
             environment, ``"dark"`` or ``"light"`` sets explicitly.
+        :raises ValueError: If *theme* is not ``"auto"``, ``"light"``, or ``"dark"``.
         """
+        width = config.resolve("c3d", "width", width)
+        height = config.resolve("c3d", "height", height)
+        theme = config.resolve("c3d", "theme", theme)
         if theme not in ("auto", "light", "dark"):
             raise ValueError(
                 f"Unknown theme '{theme}'. Choose 'auto', 'light', or 'dark'."
             )
+        # The display mode is snapshotted here rather than read in display(), so a
+        # viewer built in one cell behaves the same however the configuration changes
+        # before it is shown.
+        self._display_mode: str = config.resolve("display", "mode", UNSET)
+        self._widget: C3DWidget | None = None
+        self._views: dict[str, list[float]] = {}
+        self._screenshot_timeout: float = _SCREENSHOT_TIMEOUT
         self._width = width
         self._height = height
         self._molecules: list[MoleculeData] = []
@@ -812,31 +938,236 @@ class C3D:
             return max(height, self._DEFAULT_HEIGHT_CONSOLE)
         return height
 
-    def display(self):
-        """Display the viewer in the current notebook environment.
+    @property
+    def widget(self) -> C3DWidget:
+        """The live :class:`~cnotebook.c3d.widget.C3DWidget`, created on first access.
 
-        Wraps :meth:`to_html` in an ``<iframe>`` with ``srcdoc``.
-        Automatically detects whether the environment is Marimo or Jupyter
-        and returns the appropriate display object.
+        The widget module is imported here rather than at the top of this one, so
+        building and saving a static viewer never needs anywidget.
 
-        :returns: A displayable object (``marimo.Html`` or a Jupyter-compatible
-            display object with ``_repr_html_``).
+        :returns: The widget backing this viewer.
+        :raises ImportError: If anywidget is not installed.
         """
-        html_content = self.to_html()
-        height = self._effective_height
+        if self._widget is None:
+            from cnotebook.c3d.widget import C3DWidget
 
+            self._widget = C3DWidget(
+                payload=viewer3d.escape_script_json(self._build_init_payload()),
+                width=self._width,
+                height=self._effective_height,
+            )
+        return self._widget
+
+    def _static_display(self):
+        """Build the self-contained iframe output for the current environment.
+
+        :returns: ``marimo.Html`` in marimo, otherwise an object with ``_repr_html_``.
+        """
         iframe_html = (
             '<iframe style="width: 100%; border: none; '
-            f'height: {height}px;" '
-            f'srcdoc="{escape(html_content)}"></iframe>'
+            f'height: {self._effective_height}px;" '
+            f'srcdoc="{escape(self.to_html())}"></iframe>'
         )
-
         if _is_marimo():
             import marimo as mo  # pyright: ignore[reportMissingImports]
 
             return mo.Html(iframe_html)
+        return _JupyterIFrame(iframe_html)
+
+    def display(self, static: bool | None = None):
+        """Display the viewer in the current notebook environment.
+
+        :param static: ``True`` for the self-contained HTML output, ``False`` for the
+            live widget, ``None`` (the default) for the display mode snapshotted when
+            this viewer was created. Widget mode falls back to the static output, with
+            one :class:`~cnotebook.core.errors.CNotebookWarning`, when anywidget is not
+            installed.
+        :returns: A displayable object for the current environment: the widget itself in
+            Jupyter, ``marimo.ui.anywidget(widget)`` in marimo, or an iframe wrapper.
+        :raises ValueError: If no molecule has been added.
+        """
+        if not self._molecules:
+            raise ValueError(
+                "No molecules have been added. "
+                "Call add_molecule() or add_design_unit() first."
+            )
+        if static is None:
+            # A widget needs a front end to render into. In a script, a REPL or a test
+            # run there is none, and the widget would show as a bare repr, so the
+            # self-contained document is the only useful output. Asking for the widget
+            # explicitly still returns it, because the caller may want the object.
+            use_static = self._display_mode == "static" or not _has_display_frontend()
         else:
-            return _JupyterIFrame(iframe_html)
+            use_static = static
+        if use_static:
+            return self._static_display()
+        try:
+            widget = self.widget
+        except ImportError:
+            warn(
+                "anywidget is not installed; showing the static C3D output "
+                "instead of the live widget"
+            )
+            return self._static_display()
+        if _is_marimo():
+            import marimo as mo  # pyright: ignore[reportMissingImports]
+
+            return mo.ui.anywidget(widget)
+        return widget
+
+    def save(self, path: str | os.PathLike[str]) -> Path:
+        """Write the self-contained HTML document to *path*.
+
+        The document is moved into place only once it is complete, so an interrupted
+        write leaves any previous file intact.
+
+        :param path: Destination file; its directory must exist.
+        :returns: The path written.
+        :raises ValueError: If no molecule has been added.
+        :raises CNotebookError: If the destination's directory does not exist.
+        """
+        # Checked here as well as in the write, so a mistyped path fails before the
+        # document is rendered rather than after.
+        target = _prepare_target(path)
+        return _write_atomically(target, self.to_html().encode("utf-8"))
+
+    def close(self) -> None:
+        """Close the live widget, if one was ever created.
+
+        Every command still queued on the front end settles as a failure and every
+        pending screenshot is rejected, because the comm that would answer them goes
+        away with the widget. Closing a viewer twice, or one that was only ever
+        rendered statically, does nothing.
+        """
+        if self._widget is not None:
+            self._widget.close()
+
+    # ------------------------------------------------------------------
+    # Live interaction
+    # ------------------------------------------------------------------
+
+    def execute(self, command: str) -> CommandHandle:
+        """Queue a GUI terminal command on the live widget.
+
+        :param command: Terminal command line, e.g. ``"zoom resn LIG"``.
+        :returns: A :class:`~cnotebook.c3d.widget.CommandHandle` that settles, and can
+            be awaited, when the front end reports the result.
+        :raises ImportError: If anywidget is not installed.
+        """
+        return self.widget.submit(command)
+
+    def on_pick(self, callback: Callable[[PickEvent], None]) -> None:
+        """Call *callback* with a :class:`~cnotebook.c3d.widget.PickEvent` on every pick.
+
+        :param callback: Callback taking the event; an exception from it is logged,
+            not raised.
+        :raises ImportError: If anywidget is not installed.
+        """
+        self.widget.on_pick(callback)
+
+    @property
+    def picked(self) -> PickEvent | None:
+        """The last :class:`~cnotebook.c3d.widget.PickEvent`, or ``None``.
+
+        Reading this never creates a widget: without one there can be no pick.
+        """
+        return self._widget.last_pick if self._widget is not None else None
+
+    @property
+    def view(self) -> list[float] | None:
+        """The last view array the viewer reported, as a copy, or ``None``.
+
+        The array is 3Dmol's ``getView()`` vector, ``[x, y, z, zoom, qx, qy, qz, qw]``.
+        """
+        if self._widget is None or not self._widget.view:
+            return None
+        return list(self._widget.view)
+
+    def set_view(self, view: Iterable[float]) -> None:
+        """Point the camera at a 3Dmol view array.
+
+        :param view: Eight finite numbers, as :attr:`view` reports them.
+        :raises ValueError: If the view is not a sequence of eight finite numbers.
+        :raises ImportError: If anywidget is not installed.
+        """
+        self.widget.set_view(view)
+
+    def save_view(self, name: str) -> None:
+        """Remember the current camera under *name*.
+
+        :param name: Key to store the view under; an existing key is overwritten.
+        :raises CNotebookError: If the viewer has not reported a view yet.
+        """
+        current = self.view
+        if current is None:
+            raise CNotebookError(
+                "No view available yet; interact with the viewer or call set_view() first"
+            )
+        self._views[name] = current
+
+    def restore_view(self, name: str) -> None:
+        """Point the camera at a view saved with :meth:`save_view`.
+
+        :param name: Key the view was saved under.
+        :raises CNotebookError: If *name* is not a saved view.
+        :raises ImportError: If anywidget is not installed.
+        """
+        try:
+            view = self._views[name]
+        except KeyError as exc:
+            known = ", ".join(sorted(self._views)) or "none"
+            raise CNotebookError(f"No view saved as '{name}' (saved views: {known})") from exc
+        # Through the widget, so the request counter moves: restoring the camera the
+        # viewer already reports has to reach the front end all the same.
+        self.set_view(list(view))
+
+    @property
+    def views(self) -> dict[str, list[float]]:
+        """The saved views by name, as a copy of the mapping and of every array."""
+        return {name: list(view) for name, view in self._views.items()}
+
+    async def screenshot(self) -> bytes:
+        """Capture the current frame as PNG bytes.
+
+        :returns: The PNG image the front end rendered.
+        :raises CNotebookError: If the capture failed, or the front end did not answer
+            within 30 s.
+        :raises ImportError: If anywidget is not installed.
+        :raises RuntimeError: If there is no running event loop (notebook cells run one).
+        """
+        future = self.widget.request_screenshot()
+        try:
+            return await asyncio.wait_for(future, self._screenshot_timeout)
+        except TimeoutError as exc:
+            # wait_for cancels the future it was given, which is what drops the request
+            # from the widget's registry. Cancelling again costs nothing and keeps that
+            # guarantee here, where the timeout is defined.
+            future.cancel()
+            raise CNotebookError(
+                f"Screenshot did not arrive within {self._screenshot_timeout} s"
+            ) from exc
+
+    async def save_png(self, path: str | os.PathLike[str]) -> Path:
+        """Capture the current frame and write it to *path*.
+
+        The destination is checked before the capture is requested, and the image is
+        moved into place only once it is complete, so a failed capture never replaces
+        an existing screenshot with a truncated one.
+
+        :param path: Destination file; its directory must exist.
+        :returns: The path written.
+        :raises CNotebookError: If the destination's directory does not exist, the
+            capture failed or timed out, or the answer is not a PNG image.
+        :raises ImportError: If anywidget is not installed.
+        """
+        target = _prepare_target(path)
+        png = await self.screenshot()
+        if not png.startswith(_PNG_SIGNATURE):
+            raise CNotebookError(
+                f"The front end returned {len(png)} bytes that are not a PNG image; "
+                f"nothing was written to {target}"
+            )
+        return _write_atomically(target, png)
 
 
 class _JupyterIFrame:

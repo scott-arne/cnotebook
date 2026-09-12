@@ -1,10 +1,16 @@
 """Tests for the C3D 3D molecule viewer class."""
 
+import asyncio
+import base64
 import json
+import stat
 import sys
 
 import pytest
 from openeye import oechem
+
+from cnotebook import config as cn_config
+from cnotebook.core.errors import CNotebookError, CNotebookWarning
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1323,7 +1329,7 @@ class TestC3DDisplay:
         assert isinstance(result, _JupyterIFrame)
 
     def test_display_returns_marimo_html(self, ethanol_3d):
-        """display() should return marimo.Html when running in marimo."""
+        """Static display() should return marimo.Html when running in marimo."""
         from unittest.mock import MagicMock, patch
 
         from cnotebook.c3d import C3D
@@ -1334,10 +1340,28 @@ class TestC3DDisplay:
 
         with patch("cnotebook.c3d.c3d._is_marimo", return_value=True), \
              patch.dict("sys.modules", {"marimo": mock_mo}):
-            result = viewer.display()
+            result = viewer.display(static=True)
 
         mock_mo.Html.assert_called_once()
         assert result is mock_mo.Html.return_value
+
+    def test_widget_display_is_wrapped_for_marimo(self, ethanol_3d):
+        """Widget display() should hand the widget to mo.ui.anywidget in marimo."""
+        pytest.importorskip("anywidget")
+        from unittest.mock import MagicMock, patch
+
+        from cnotebook.c3d import C3D
+
+        mock_mo = MagicMock()
+        viewer = C3D()
+        viewer.add_molecule(ethanol_3d)
+
+        with patch("cnotebook.c3d.c3d._is_marimo", return_value=True), \
+             patch.dict("sys.modules", {"marimo": mock_mo}):
+            result = viewer.display(static=False)
+
+        mock_mo.ui.anywidget.assert_called_once_with(viewer.widget)
+        assert result is mock_mo.ui.anywidget.return_value
 
     def test_jupyter_iframe_repr_html(self):
         """_JupyterIFrame._repr_html_() should return the stored HTML string."""
@@ -1697,6 +1721,278 @@ def test_add_molecules_defaults_generate_3d_true(monkeypatch):
     mol2.SetTitle("mol2")
     
     C3D().add_molecules([mol1, mol2])
-    
+
     assert len(calls) == 2
     assert all(call["generate_3d"] is True for call in calls)
+
+
+# ---------------------------------------------------------------------------
+# Interactive API: display modes, commands, views, picks and durable writers
+# ---------------------------------------------------------------------------
+
+# 3Dmol's getView() returns [x, y, z, zoom, qx, qy, qz, qw]. C3DWidget.set_view rejects a
+# vector of any other shape, so every camera below is a full eight-number view array.
+_VIEW_A = [1.0, 2.0, 3.0, 4.0, 0.0, 0.0, 0.0, 1.0]
+_VIEW_B = [5.0, 6.0, 7.0, 8.0, 0.0, 0.0, 1.0, 0.0]
+
+_PNG_SIGNATURE_BASE64 = "iVBORw0KGgo="  # the eight PNG signature bytes, nothing more
+
+
+def _explode(*args, **kwargs):
+    """Stand in for a filesystem call that fails halfway through a write."""
+    raise OSError("disk full")
+
+
+@pytest.fixture()
+def viewer(ethanol_3d):
+    """A viewer holding one molecule, shared by the interactive API tests."""
+    from cnotebook.c3d import C3D
+
+    return C3D(width=300, height=200).add_molecule(ethanol_3d, name="ethanol")
+
+
+def test_display_mode_snapshotted_at_construction(ethanol_3d, monkeypatch):
+    from cnotebook.c3d import C3D
+
+    monkeypatch.setattr(cn_config, "_CONFIG", None)
+    before = C3D().add_molecule(ethanol_3d)
+    cn_config.configure(display_mode="static")
+    after = C3D().add_molecule(ethanol_3d)
+    try:
+        assert before._display_mode == "widget" and after._display_mode == "static"
+        assert hasattr(after.display(), "_repr_html_")
+    finally:
+        cn_config.configure(display_mode="widget")
+
+
+def test_constructor_defaults_resolve_from_config(monkeypatch):
+    from cnotebook.c3d import C3D
+
+    monkeypatch.setattr(cn_config, "_CONFIG", None)
+    cn_config.configure(c3d={"width": 512, "theme": "dark"})
+    try:
+        v = C3D()
+        assert v._width == 512 and v._theme == "dark"
+        assert C3D(width=64)._width == 64
+    finally:
+        cn_config.configure(c3d={"width": 800, "theme": "auto"})
+
+
+def test_widget_display_and_static_display(viewer):
+    pytest.importorskip("anywidget")
+    from cnotebook.c3d.widget import C3DWidget
+
+    shown = viewer.display(static=False)
+    assert isinstance(shown, C3DWidget)
+    assert json.loads(shown.payload)["molecules"][0]["name"] == "ethanol"
+    assert viewer.widget is shown
+    assert "<iframe" in viewer.display(static=True)._repr_html_()
+
+
+def test_widget_mode_falls_back_without_anywidget(viewer, monkeypatch):
+    monkeypatch.setitem(sys.modules, "anywidget", None)
+    monkeypatch.setitem(sys.modules, "cnotebook.c3d.widget", None)
+    viewer._widget = None
+    with pytest.warns(CNotebookWarning, match="anywidget"):
+        shown = viewer.display(static=False)
+    assert "<iframe" in shown._repr_html_()
+
+
+def test_widget_mode_without_a_front_end_falls_back_quietly(viewer, recwarn):
+    """A script or test run has nowhere to render a widget, and that is not a problem."""
+    shown = viewer.display()
+    assert "<iframe" in shown._repr_html_()
+    assert [w for w in recwarn.list if issubclass(w.category, CNotebookWarning)] == []
+
+
+def test_construction_and_static_output_never_reach_the_widget_module(ethanol_3d, monkeypatch):
+    """Only the live widget needs anywidget; building and rendering must not import it."""
+    from cnotebook.c3d import C3D
+
+    monkeypatch.setitem(sys.modules, "anywidget", None)
+    monkeypatch.setitem(sys.modules, "cnotebook.c3d.widget", None)
+    built = C3D(width=300, height=200).add_molecule(ethanol_3d, name="ethanol")
+    assert built._widget is None
+    assert "<iframe" in built.display(static=True)._repr_html_()
+
+
+def test_execute_views_and_picks(viewer):
+    pytest.importorskip("anywidget")
+    handle = viewer.execute("zoom resn LIG")
+    assert viewer.widget.commands[-1]["command"] == "zoom resn LIG"
+    viewer.widget.command_results = [{"id": handle.id, "ok": True, "output": []}]
+    assert handle.done
+    assert viewer.view is None
+    # A browser-originated camera update: the front end writes both traits itself.
+    viewer.widget.view = _VIEW_A
+    viewer.widget.view_origin = "js"
+    assert viewer.view == _VIEW_A
+    viewer.save_view("start")
+    viewer.set_view(_VIEW_B)
+    assert viewer.widget.view == _VIEW_B and viewer.widget.view_origin == "python"
+    viewer.restore_view("start")
+    assert viewer.widget.view == _VIEW_A and viewer.views == {"start": _VIEW_A}
+    picks = []
+    viewer.on_pick(picks.append)
+    viewer.widget.picked = {"seq": 1, "atom": {"serial": 1}, "modifiers": {}}
+    assert picks and viewer.picked is picks[0]
+    with pytest.raises(CNotebookError, match="missing"):
+        viewer.restore_view("missing")
+
+
+def test_restore_view_reaches_the_frame_when_the_camera_did_not_move(viewer):
+    """traitlets drops an equal-valued assignment, so only the counter carries a restore."""
+    pytest.importorskip("anywidget")
+    viewer.set_view(_VIEW_A)
+    viewer.save_view("start")
+    requests = viewer.widget.view_request
+    viewer.restore_view("start")
+    assert viewer.widget.view == _VIEW_A and viewer.widget.view_request == requests + 1
+
+
+def test_saved_views_are_copies(viewer):
+    pytest.importorskip("anywidget")
+    viewer.set_view(_VIEW_A)
+    viewer.save_view("start")
+    assert viewer._views["start"] is not viewer.widget.view
+    viewer.views["start"][0] = 99.0
+    viewer.set_view(_VIEW_B)
+    assert viewer.views == {"start": _VIEW_A}
+    assert viewer.view == _VIEW_B and viewer.view is not viewer.widget.view
+
+
+def test_save_view_before_the_viewer_reports_one_is_an_error(viewer):
+    with pytest.raises(CNotebookError, match="No view"):
+        viewer.save_view("start")
+    assert viewer._widget is None
+
+
+def test_screenshot_and_save_png(viewer, tmp_path):
+    pytest.importorskip("anywidget")
+
+    async def scenario():
+        task = asyncio.ensure_future(viewer.screenshot())
+        await asyncio.sleep(0)
+        seq = viewer.widget.screenshot_request
+        viewer.widget.screenshot = {"seq": seq, "png_base64": _PNG_SIGNATURE_BASE64}
+        return await task
+
+    assert asyncio.run(scenario()).startswith(b"\x89PNG")
+
+    async def save_scenario():
+        task = asyncio.ensure_future(viewer.save_png(tmp_path / "shot.png"))
+        await asyncio.sleep(0)
+        seq = viewer.widget.screenshot_request
+        viewer.widget.screenshot = {"seq": seq, "png_base64": _PNG_SIGNATURE_BASE64}
+        return await task
+
+    written = asyncio.run(save_scenario())
+    assert written == tmp_path / "shot.png"
+    assert written.read_bytes().startswith(b"\x89PNG")
+    assert list(tmp_path.iterdir()) == [written]
+
+    async def timeout_scenario():
+        viewer._screenshot_timeout = 0.01
+        return await viewer.screenshot()
+
+    with pytest.raises(CNotebookError, match="Screenshot"):
+        asyncio.run(timeout_scenario())
+    # A timed out request is cancelled, so nothing is left waiting for an answer.
+    assert viewer.widget._screenshot_futures == {}
+
+
+def test_screenshot_reports_a_front_end_failure(viewer):
+    pytest.importorskip("anywidget")
+
+    async def scenario():
+        task = asyncio.ensure_future(viewer.screenshot())
+        await asyncio.sleep(0)
+        seq = viewer.widget.screenshot_request
+        viewer.widget.screenshot = {"seq": seq, "error": "canvas is empty"}
+        return await task
+
+    with pytest.raises(CNotebookError, match="canvas is empty"):
+        asyncio.run(scenario())
+
+
+def test_save_png_writes_nothing_when_the_answer_is_not_a_png(viewer, tmp_path):
+    pytest.importorskip("anywidget")
+    target = tmp_path / "shot.png"
+
+    async def scenario():
+        task = asyncio.ensure_future(viewer.save_png(target))
+        await asyncio.sleep(0)
+        seq = viewer.widget.screenshot_request
+        encoded = base64.b64encode(b"not a png at all").decode()
+        viewer.widget.screenshot = {"seq": seq, "png_base64": encoded}
+        return await task
+
+    with pytest.raises(CNotebookError, match="PNG"):
+        asyncio.run(scenario())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_save_png_checks_the_directory_before_waiting_for_the_front_end(viewer, tmp_path):
+    pytest.importorskip("anywidget")
+
+    async def scenario():
+        return await viewer.save_png(tmp_path / "nope" / "shot.png")
+
+    with pytest.raises(CNotebookError, match="does not exist"):
+        asyncio.run(scenario())
+    assert viewer.widget.screenshot_request == 0
+
+
+def test_save_writes_standalone_html(viewer, tmp_path):
+    out = viewer.save(tmp_path / "v.html")
+    assert out == tmp_path / "v.html"
+    assert out.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
+    assert list(tmp_path.iterdir()) == [out]
+
+
+def test_save_rejects_a_directory_that_does_not_exist(viewer, tmp_path):
+    with pytest.raises(CNotebookError, match="does not exist"):
+        viewer.save(tmp_path / "nope" / "v.html")
+
+
+def test_a_failed_write_leaves_neither_a_partial_file_nor_a_temporary(viewer, tmp_path, monkeypatch):
+    """The document is moved into place last, so a failed write keeps the previous one."""
+    target = viewer.save(tmp_path / "v.html")
+    original = target.read_text(encoding="utf-8")
+    monkeypatch.setattr("os.replace", _explode)
+    with pytest.raises(OSError, match="disk full"):
+        viewer.save(target)
+    assert target.read_text(encoding="utf-8") == original
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_saved_files_get_ordinary_permissions(viewer, tmp_path):
+    """The temporary file is created 0600; the saved document must not inherit that."""
+    reference = tmp_path / "reference.html"
+    reference.write_text("written the plain way", encoding="utf-8")
+
+    out = viewer.save(tmp_path / "v.html")
+    assert out.stat().st_mode == reference.stat().st_mode
+
+    out.chmod(0o640)  # rewriting keeps whatever mode the user chose
+    viewer.save(out)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o640
+
+
+def test_close_fails_the_commands_the_front_end_can_no_longer_answer(viewer):
+    pytest.importorskip("anywidget")
+    from cnotebook.c3d import C3D
+
+    handle = viewer.execute("zoom resn LIG")
+    viewer.close()
+    assert handle.done and handle.result.ok is False
+    assert handle.result.output == ["widget closed"]
+    viewer.close()  # closing twice, or without a widget, does nothing
+    C3D(width=300, height=200).close()
+
+
+def test_widget_output_is_small(viewer):
+    pytest.importorskip("anywidget")
+    bundle = viewer.display(static=False)._repr_mimebundle_()
+    data = bundle[0] if isinstance(bundle, tuple) else bundle
+    assert len(json.dumps(data)) < 20_000

@@ -264,8 +264,12 @@ class CommandHandle:
             return
         self._result = result
         for future in self._waiters:
-            if not future.done():
-                future.set_result(result)
+            # A waiter whose loop has closed is left alone: settling it would schedule
+            # its callbacks on a dead loop, and that RuntimeError would escape into
+            # whatever delivered the result - a trait observer, or Widget.__del__.
+            if future.done() or future.get_loop().is_closed():
+                continue
+            future.set_result(result)
         self._waiters.clear()
         callbacks, self._callbacks = self._callbacks, []
         for fn in callbacks:
@@ -454,12 +458,17 @@ class C3DWidget(anywidget.AnyWidget):
         _retrieve_exception(future)
 
     def close(self) -> None:
-        """Close the widget, failing every screenshot request it can no longer answer.
+        """Close the widget, failing every request it can no longer answer.
 
-        The front end goes away with the comm, so an outstanding request would otherwise
-        hang until its timeout. Futures that are already settled, or whose event loop has
-        gone, are left alone.
+        The front end goes away with the comm, so an outstanding command or screenshot
+        would otherwise hang until its timeout: queued commands settle as failures and
+        pending screenshots are rejected. Futures that are already settled, or whose
+        event loop has gone, are left alone.
         """
+        handles = list(self._handles.values())
+        self._handles.clear()
+        for handle in handles:
+            handle._resolve(CommandResult(ok=False, output=["widget closed"]))
         pending = list(self._screenshot_futures.items())
         self._screenshot_futures.clear()
         for seq, future in pending:
@@ -511,13 +520,15 @@ class C3DWidget(anywidget.AnyWidget):
             else:
                 future.set_exception(CNotebookError(reason))
 
-    def set_view(self, view: list[float]) -> None:
+    def set_view(self, view: Iterable[float]) -> None:
         """Push a 3Dmol view array to the front end.
 
         The camera and its origin are assigned first and the request counter last, so a
         front end woken by the counter always reads the view that goes with it.
 
-        :param view: The 3Dmol view array to apply, as :meth:`getView` returns it.
+        :param view: The 3Dmol view array to apply, as :meth:`getView` returns it. Any
+            iterable of eight numbers is accepted; a saved camera is as likely to be a
+            tuple or a numpy row as a list.
         :raises ValueError: If the view is not a sequence of eight finite numbers.
         """
         self.view = _validate_view(view)

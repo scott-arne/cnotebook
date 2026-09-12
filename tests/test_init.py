@@ -753,8 +753,8 @@ class TestDisplayC3DMolGridStatic:
             result = cnotebook.display(c3d, static=None)
         assert result is not None
 
-    def test_display_c3d_static_true_raises(self):
-        """Test display(c3d, static=True) raises when not yet supported."""
+    def test_display_c3d_static_true_forwards(self):
+        """Test display(c3d, static=True) returns the self-contained HTML output."""
         env = get_env()
         if not env.c3d_available:
             pytest.skip("C3D not available")
@@ -763,21 +763,23 @@ class TestDisplayC3DMolGridStatic:
         oechem.OESmilesToMol(mol, "C")
         c3d = C3D()
         c3d.add_molecule(mol, generate_3d=False)
-        with pytest.raises(TypeError, match="C3D.display.*does not support the static option"):
-            cnotebook.display(c3d, static=True)
+        result = cnotebook.display(c3d, static=True)
+        assert "<iframe" in result._repr_html_()
 
-    def test_display_c3d_static_false_raises(self):
-        """Test display(c3d, static=False) raises when not yet supported."""
+    def test_display_c3d_static_false_forwards(self):
+        """Test display(c3d, static=False) returns the live widget."""
         env = get_env()
         if not env.c3d_available:
             pytest.skip("C3D not available")
+        pytest.importorskip("anywidget")
         from cnotebook import C3D
+        from cnotebook.c3d.widget import C3DWidget
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         c3d = C3D()
         c3d.add_molecule(mol, generate_3d=False)
-        with pytest.raises(TypeError, match="C3D.display.*does not support the static option"):
-            cnotebook.display(c3d, static=False)
+        result = cnotebook.display(c3d, static=False)
+        assert isinstance(result, C3DWidget)
 
     def test_display_molgrid_without_static(self):
         """Test display(molgrid) works when MolGrid.display doesn't support static yet."""
