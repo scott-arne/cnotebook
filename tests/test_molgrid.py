@@ -2120,6 +2120,7 @@ def test_widget_config_shape_and_branches():
         badges=["MW"],
         sort_by=("MW", True),
         search_fields=["Name"],
+        tooltip_fields=["MW"],
         theme="dark",
         select=False,
         information=False,
@@ -2132,15 +2133,17 @@ def test_widget_config_shape_and_branches():
     config = grid.widget_config(static=False)
 
     assert set(config) == {
-        "page_size", "sort_by", "badges", "search_fields", "info_fields", "export_columns",
-        "cluster_labels", "cluster_counts", "theme", "static", "select", "information",
-        "title", "image_width", "image_height",
+        "page_size", "sort_by", "badges", "search_fields", "info_fields", "tooltip_fields",
+        "export_columns", "cluster_labels", "cluster_counts", "theme", "static", "select",
+        "information", "title", "image_width", "image_height",
     }
     assert config["page_size"] == 12
     assert config["sort_by"] == {"field": "MW", "descending": True}
     assert config["badges"] == ["MW"]
     assert config["search_fields"] == ["Name"]
     assert config["info_fields"] == ["Name", "MW", "Group"]
+    # The hover surface has its own field list and is not the information list.
+    assert config["tooltip_fields"] == ["MW"]
     assert config["export_columns"] == ["Name", "MW", "Group"]
     # Labels are de-duplicated and sorted; the missing value becomes Uncategorized.
     assert config["cluster_labels"] == ["A", "Uncategorized"]
@@ -2162,6 +2165,8 @@ def test_widget_config_shape_and_branches():
     assert bare_config["cluster_counts"] is True
     assert bare_config["badges"] == []
     assert bare_config["search_fields"] == []
+    # No tooltip fields means the front end falls back to the information fields.
+    assert bare_config["tooltip_fields"] == []
     assert bare_config["export_columns"] == []
     assert bare_config["theme"] == "light"
     assert bare_config["static"] is True

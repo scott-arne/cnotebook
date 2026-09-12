@@ -169,6 +169,31 @@ def test_tooltip_data_extraction():
     assert data[0]["tooltip"]["Formula"] == "C2H6O"
 
 
+def test_tooltip_fields_reach_the_front_end_separately_from_info_fields():
+    """Test the widget payload carries tooltip fields and their values when the lists differ."""
+    from cnotebook import MolGrid
+
+    mol = oechem.OEGraphMol()
+    oechem.OESmilesToMol(mol, "CCO")
+    mol.SetTitle("Ethanol")
+    oechem.OESetSDData(mol, "MW", "46.07")
+    oechem.OESetSDData(mol, "Formula", "C2H6O")
+    oechem.OESetSDData(mol, "Assay", "12.5")
+
+    grid = MolGrid([mol], tooltip_fields=["Formula", "Assay"], data=["MW"])
+    config = grid.widget_config(static=False)
+
+    assert config["tooltip_fields"] == ["Formula", "Assay"]
+    assert config["info_fields"] == ["MW"]
+
+    # The hover surface reads its values out of the item index, so every named field has to be
+    # exposed there whether or not it is also an information field.
+    fields = grid.items()[0]["fields"]
+    assert fields["Formula"] == "C2H6O"
+    assert fields["Assay"] == "12.5"
+    assert fields["MW"] == "46.07"
+
+
 def test_grid_unique_naming():
     """Test that grids get unique names when not specified."""
     from cnotebook import MolGrid

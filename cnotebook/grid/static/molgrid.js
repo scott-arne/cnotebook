@@ -11,6 +11,9 @@
 
 const PROP_MODE = "properties";
 const SMARTS_MODE = "smarts";
+// Shown while the kernel is matching, so a replaced query never leaves the previous answer on
+// screen as if it were the answer to what is in the box now.
+const SEARCHING = "Searching...";
 
 /**
  * Resolve the effective colour scheme for the grid root.
@@ -68,7 +71,24 @@ export function applyFilters(items, { query, mode, clusters, smartsMatches, sear
 }
 
 /**
- * Sort items by a field, numerically when every value parses as a number.
+ * Is a field value absent?
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function blank(value) {
+  return value === null || value === undefined || value === "";
+}
+
+/**
+ * Sort items by a field, comparing numbers as numbers and sinking the gaps.
+ *
+ * The decision is made per pair rather than per column: a measured column almost always has
+ * holes in it, and a single missing value used to demote the whole column to a string
+ * comparison, which orders 10 before 2. Values that are missing, and values that are not
+ * numbers in an otherwise numeric column, sort after everything else in both directions -
+ * a reversal should not fill the first page with empty cards. Columns where nothing parses
+ * are genuinely textual and keep the locale-aware string comparison.
  *
  * @param {Array<object>} items
  * @param {{field: string, descending: boolean}|null} sortBy
@@ -76,15 +96,22 @@ export function applyFilters(items, { query, mode, clusters, smartsMatches, sear
  */
 export function sortItems(items, sortBy) {
   if (!sortBy || !sortBy.field) return items.slice();
-  const values = items.map((item) => (item.fields || {})[sortBy.field]);
-  const allNumeric = values.every((v) => numeric(v) !== null);
-  const sorted = items.slice().sort((a, b) => {
+  const direction = sortBy.descending ? -1 : 1;
+  return items.slice().sort((a, b) => {
     const va = (a.fields || {})[sortBy.field];
     const vb = (b.fields || {})[sortBy.field];
-    const cmp = allNumeric ? numeric(va) - numeric(vb) : String(va ?? "").localeCompare(String(vb ?? ""));
-    return sortBy.descending ? -cmp : cmp;
+    const na = numeric(va);
+    const nb = numeric(vb);
+    if (na !== null && nb !== null) return (na - nb) * direction;
+    // Missing before non-numeric: a blank cell is last whatever the column holds, and a word
+    // in a numeric column is last too, but two words are compared as words.
+    if (blank(va) || blank(vb)) {
+      if (blank(va) && blank(vb)) return 0;
+      return blank(va) ? 1 : -1;
+    }
+    if (na !== null || nb !== null) return na !== null ? -1 : 1;
+    return String(va).localeCompare(String(vb)) * direction;
   });
-  return sorted;
 }
 
 /**
@@ -179,6 +206,33 @@ function download(content, filename, type) {
 }
 
 /**
+ * Mint the token that identifies one view in a SMARTS exchange.
+ *
+ * One widget can be displayed in several cells at once, and every view shares the model, so a
+ * sequence number alone cannot say whose answer an incoming `smarts_result` is: two views that
+ * both started counting at zero would both claim the other's matches. The token is random per
+ * controller, so it separates them, and the kernel only has to echo it back.
+ *
+ * @returns {string}
+ */
+function viewToken() {
+  const source = typeof crypto !== "undefined" ? crypto : null;
+  if (source && typeof source.randomUUID === "function") return source.randomUUID();
+  return `v-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+}
+
+/**
+ * Read a sequence number out of a trait value.
+ *
+ * @param {unknown} carrier - a `smarts_request` or `smarts_result` value, possibly absent
+ * @returns {number} the sequence it carries, or 0
+ */
+function seqOf(carrier) {
+  const seq = Number((carrier || {}).seq);
+  return Number.isFinite(seq) && seq > 0 ? seq : 0;
+}
+
+/**
  * Create the grid controller: build the DOM, wire the events, subscribe to the model.
  *
  * @param {object} model - anywidget model or StaticModel
@@ -192,7 +246,11 @@ export function createGrid(model, el) {
     query: "", mode: PROP_MODE, clusters: new Set(), smartsMatches: null, page: 0,
     sortBy: config.sort_by || null, selection: new Set(model.get("selection") || []),
     images: { ...(model.get("images") || {}) }, revision: model.get("revision") || 0,
-    smartsSeq: 0, awaitingSmarts: false, message: "",
+    // A rebuilt view inherits the exchange already recorded on the model: restarting the count
+    // would let a repeated query land on a value the trait already holds, which traitlets drops
+    // as a non-change, so the kernel would never hear the question.
+    smartsSeq: Math.max(seqOf(model.get("smarts_request")), seqOf(model.get("smarts_result"))),
+    awaitingSmarts: false, message: "", view: viewToken(), pinned: new Set(),
   };
   let pageSize = Math.max(1, config.page_size || 24);
   const observers = [];
@@ -355,6 +413,20 @@ export function createGrid(model, el) {
   function currentPage(list) { return list.slice(state.page * pageSize, (state.page + 1) * pageSize); }
 
   /**
+   * The fields the hover surface lists.
+   *
+   * `tooltip_fields` is the grid's own argument for this and wins whenever it names anything.
+   * The information fields are the fallback, which is both what a grid that was never given
+   * tooltip fields has always shown and what an older payload with no such key carries.
+   *
+   * @returns {string[]}
+   */
+  function tooltipFields() {
+    const chosen = config.tooltip_fields;
+    return chosen && chosen.length ? chosen : (config.info_fields || []);
+  }
+
+  /**
    * Build one card.
    *
    * @param {object} item - one entry of the item index
@@ -374,13 +446,23 @@ export function createGrid(model, el) {
       const infoButton = element("button", "cn-molgrid-infobtn", "i");
       infoButton.type = "button";
       const tooltip = element("div", "cn-molgrid-tooltip");
+      // A pin is the user's, not the card's: the card is rebuilt by every image that arrives,
+      // and reading the pinned set here is what keeps an open tooltip open through that.
+      if (state.pinned.has(item.i)) tooltip.classList.add("cn-molgrid-pinned");
       tooltip.appendChild(element("div", "cn-molgrid-tooltip-row", `Index: ${item.i}`));
       if (item.title) tooltip.appendChild(element("div", "cn-molgrid-tooltip-row", `Title: ${item.title}`));
-      for (const field of config.info_fields || []) {
+      for (const field of tooltipFields()) {
         const value = (item.fields || {})[field];
         if (value) tooltip.appendChild(element("div", "cn-molgrid-tooltip-row", `${field}: ${value}`));
       }
-      infoButton.addEventListener("click", (event) => { event.stopPropagation(); tooltip.classList.toggle("cn-molgrid-pinned"); });
+      infoButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (state.pinned.has(item.i)) state.pinned.delete(item.i); else state.pinned.add(item.i);
+        tooltip.classList.toggle("cn-molgrid-pinned", state.pinned.has(item.i));
+      });
+      // Reading a pinned tooltip means clicking on it, and the card underneath treats a click
+      // as a selection, so the two gestures have to be kept apart.
+      tooltip.addEventListener("click", (event) => event.stopPropagation());
       card.append(infoButton, tooltip);
     }
     const slot = element("div", "cn-molgrid-image");
@@ -444,10 +526,14 @@ export function createGrid(model, el) {
       if (state.query.trim()) {
         // The sequence, not the query text, is what makes the request new: re-running the same
         // pattern has to reach the kernel, and an answer to an abandoned query has to be
-        // recognisable as stale when it arrives.
+        // recognisable as stale when it arrives. The view token says which grid asked.
         state.smartsSeq += 1;
         state.awaitingSmarts = true;
-        publish("smarts_request", { seq: state.smartsSeq, query: state.query.trim() });
+        // The previous answer belongs to the previous query. Leaving its matches and its error
+        // on screen would present them as the answer to the pattern now in the box.
+        state.smartsMatches = null;
+        state.message = SEARCHING;
+        publish("smarts_request", { seq: state.smartsSeq, query: state.query.trim(), view: state.view });
       } else {
         abandonSmarts();
       }
@@ -504,8 +590,10 @@ export function createGrid(model, el) {
   observe("config", () => { config = model.get("config") || {}; applyConfig(); render(); });
   observe("smarts_result", () => {
     const result = model.get("smarts_result") || {};
-    // An answer to a query the user has already replaced or abandoned would show the wrong
-    // molecules, or an error about a pattern that is no longer in the box.
+    // Two guards, because the trait is shared by every view of the widget: the token says the
+    // answer was meant for this grid, and the sequence says it answers the query still in its
+    // box rather than one the user has replaced or abandoned.
+    if (result.view !== state.view) return;
     if (result.seq !== state.smartsSeq) return;
     state.awaitingSmarts = false;
     state.smartsMatches = result.error ? new Set() : new Set(result.matches || []);

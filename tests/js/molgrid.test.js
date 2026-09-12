@@ -11,13 +11,36 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MODULE_PATH = join(HERE, "..", "..", "cnotebook", "grid", "static", "molgrid.js");
 const STYLE_PATH = join(HERE, "..", "..", "cnotebook", "grid", "static", "molgrid.css");
 
+/**
+ * Structural equality, as traitlets and Backbone compare a proposed value with the one held.
+ *
+ * @param {unknown} a @param {unknown} b @returns {boolean}
+ */
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => deepEqual(a[key], b[key]));
+}
+
 class FakeModel {
   constructor(state) {
     this.state = { revision: 0, visible: [], images: {}, selection: [], smarts_request: {}, smarts_result: {}, error: "", ...state };
     this.handlers = {};
+    // Every write the model actually took, in order, so a test can tell a publication that
+    // reached the kernel from one that was dropped as a non-change.
+    this.writes = [];
   }
   get(name) { return this.state[name]; }
-  set(name, value) { this.state[name] = value; }
+  // A real model drops an assignment equal to the value it already holds: no change event and
+  // nothing sent to the kernel. A fake that recorded it anyway would let the front end appear
+  // to republish something the kernel never hears.
+  set(name, value) {
+    if (deepEqual(this.state[name], value)) return;
+    this.state[name] = value;
+    this.writes.push([name, value]);
+  }
   save_changes() {}
   on(event, handler) { (this.handlers[event] ||= []).push(handler); }
   // Backbone's off, which is what anywidget's model exposes and what teardown has to call.
@@ -26,12 +49,31 @@ class FakeModel {
     const at = list.indexOf(handler);
     if (at >= 0) list.splice(at, 1);
   }
+  /** Kernel-side push: the value arrives from Python and every view hears about it. */
   emit(name, value) { this.state[name] = value; [...(this.handlers[`change:${name}`] || [])].forEach((h) => h()); }
 }
 
 /** @returns {number} how many handlers the model is holding, over every event */
 function handlerCount(model) {
   return Object.values(model.handlers).reduce((total, list) => total + list.length, 0);
+}
+
+/** @returns {Array<unknown>} the values the front end has written to one trait */
+function writesFor(model, name) {
+  return model.writes.filter(([trait]) => trait === name).map(([, value]) => value);
+}
+
+/** Type into a grid's search box and let the input handler run. @returns {HTMLInputElement} */
+function typeQuery(el, text) {
+  const box = el.querySelector(".cn-molgrid-search");
+  box.value = text;
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  return box;
+}
+
+/** Answer the SMARTS question one particular view asked. */
+function answerSmarts(model, grid, payload) {
+  model.emit("smarts_result", { view: grid.state.view, matches: [], error: null, ...payload });
 }
 
 const items = Array.from({ length: 5 }, (_, i) => ({
@@ -59,6 +101,37 @@ describe("pure helpers", () => {
     expect(sortItems(items, { field: "MW", descending: false }).map((i) => i.i)).toEqual([4, 3, 2, 1, 0]);
     expect(sortItems(items, { field: "Name", descending: true })[0].i).toBe(4);
   });
+  it("sorts a numeric column with gaps in it as numbers, missing values last", () => {
+    // A measured column almost always has holes, and an unset cell serialises to "". Deciding
+    // the comparison per column meant one hole turned the whole column into strings, which
+    // puts 10 before 2.
+    const gappy = [
+      { i: 0, fields: { IC50: "2" } },
+      { i: 1, fields: { IC50: "" } },
+      { i: 2, fields: { IC50: "10" } },
+      { i: 3, fields: { IC50: "1.5" } },
+    ];
+    expect(sortItems(gappy, { field: "IC50", descending: false }).map((i) => i.i)).toEqual([3, 0, 2, 1]);
+    // Reversing the order must not drag the empty cells onto the first page.
+    expect(sortItems(gappy, { field: "IC50", descending: true }).map((i) => i.i)).toEqual([2, 0, 3, 1]);
+
+    // A value that is not a number at all sorts with the gaps, after every number.
+    const mixed = [...gappy, { i: 4, fields: { IC50: "not measured" } }];
+    expect(sortItems(mixed, { field: "IC50", descending: false }).map((i) => i.i)).toEqual([3, 0, 2, 4, 1]);
+    expect(sortItems(mixed, { field: "IC50", descending: true }).map((i) => i.i)).toEqual([2, 0, 3, 4, 1]);
+  });
+
+  it("keeps the string comparison for a column that holds text", () => {
+    const words = [
+      { i: 0, fields: { Series: "beta" } },
+      { i: 1, fields: { Series: "alpha" } },
+      { i: 2, fields: { Series: "" } },
+      { i: 3, fields: { Series: "gamma" } },
+    ];
+    expect(sortItems(words, { field: "Series", descending: false }).map((i) => i.i)).toEqual([1, 0, 3, 2]);
+    expect(sortItems(words, { field: "Series", descending: true }).map((i) => i.i)).toEqual([3, 0, 1, 2]);
+  });
+
   it("resolves theme", () => {
     const el = document.createElement("div");
     expect(resolveTheme("dark", el)).toBe("dark");
@@ -133,26 +206,39 @@ describe("grid controller", () => {
   });
 
   it("repeated SMARTS query re-requests", () => {
-    const { model, el } = mount();
+    const { model, el, grid } = mount();
     el.querySelector(".cn-molgrid-mode").click();
-    const search = el.querySelector(".cn-molgrid-search");
-    search.value = "c1ccccc1"; search.dispatchEvent(new Event("input", { bubbles: true }));
+    const search = typeQuery(el, "c1ccccc1");
     expect(model.get("smarts_request").seq).toBe(1);
-    model.emit("smarts_result", { seq: 1, matches: [2], error: null });
+    answerSmarts(model, grid, { seq: 1, matches: [2] });
     expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["2"]);
     search.value = ""; search.dispatchEvent(new Event("input", { bubbles: true }));
-    search.value = "c1ccccc1"; search.dispatchEvent(new Event("input", { bubbles: true }));
+    typeQuery(el, "c1ccccc1");
     expect(model.get("smarts_request").seq).toBe(2);
-    model.emit("smarts_result", { seq: 2, matches: [], error: "Invalid SMARTS pattern: c1ccccc1" });
+    answerSmarts(model, grid, { seq: 2, error: "Invalid SMARTS pattern: c1ccccc1" });
     expect(el.querySelector(".cn-molgrid-message").textContent).toContain("Invalid SMARTS");
   });
 
-  it("drops images and republishes visible on revision change", () => {
+  it("drops its images on a revision change and asks for the window it is showing", () => {
+    // Python bumps the revision when the render options change, which makes every depiction
+    // this view holds out of date. Republishing the same window is a non-change the model
+    // drops, so Python re-renders the last window it knows about rather than waiting to be
+    // asked again; what the front end owes is the empty slots and a fresh request whenever
+    // the window itself is different.
     const { model, el } = mount();
-    model.emit("images", {});
+    model.emit("images", { 0: "<svg id='r0'></svg>", 1: "<svg id='r1'></svg>" });
+    expect(el.querySelector("#r0")).not.toBeNull();
+    const before = writesFor(model, "visible").length;
+
     model.emit("revision", 1);
+    expect(el.querySelector("#r0")).toBeNull();
     expect(el.querySelectorAll(".cn-molgrid-spinner")).toHaveLength(2);
     expect(model.get("visible")).toEqual([0, 1, 2, 3]);
+    expect(writesFor(model, "visible")).toHaveLength(before);
+
+    el.querySelector(".cn-molgrid-next").click();
+    model.emit("revision", 2);
+    expect(writesFor(model, "visible").at(-1)).toEqual([2, 3, 4]);
   });
 
   it("static mode disables SMARTS and boots without errors for non-clustered grids", () => {
@@ -252,7 +338,7 @@ describe("hostile data", () => {
 describe("trait writes", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
-  it("publishes a new visible array on a page change and after a revision bump", () => {
+  it("publishes a new visible array whenever the window moves", () => {
     // traitlets and Backbone both drop an assignment equal to the current value, so every
     // publication has to be a container the model has not seen before.
     const { model, el } = mount();
@@ -263,14 +349,10 @@ describe("trait writes", () => {
     expect(second).toEqual([2, 3, 4]);
     expect(second).not.toBe(first);
 
-    model.emit("images", { 2: "<svg id='img2'></svg>" });
-    expect(el.querySelector("#img2")).not.toBeNull();
-    model.emit("revision", 1);
-    expect(el.querySelector("#img2")).toBeNull();
-    expect(el.querySelectorAll(".cn-molgrid-spinner")).toHaveLength(2);
-    const third = model.get("visible");
-    expect(third).toEqual([2, 3, 4]);
-    expect(third).not.toBe(second);
+    // Filtering moves the window again, and the model takes that write as well.
+    typeQuery(el, "name1");
+    expect(model.get("visible")).toEqual([1]);
+    expect(writesFor(model, "visible").map((v) => v.length)).toEqual([4, 3, 1]);
   });
 
   it("publishes a new selection array on every change and follows the kernel's selection", () => {
@@ -297,25 +379,25 @@ describe("trait writes", () => {
   });
 
   it("gives every SMARTS request a fresh object with a strictly increasing sequence", () => {
-    const { model, el } = mount();
+    const { model, el, grid } = mount();
     el.querySelector(".cn-molgrid-mode").click();
-    const search = el.querySelector(".cn-molgrid-search");
     const requests = [];
     for (let n = 0; n < 3; n += 1) {
       // The identical query three times over: only the sequence distinguishes the requests,
       // and without it the second one would never reach the kernel.
-      search.value = "c1ccccc1";
-      search.dispatchEvent(new Event("input", { bubbles: true }));
+      typeQuery(el, "c1ccccc1");
       requests.push(model.get("smarts_request"));
     }
     expect(requests.map((r) => r.seq)).toEqual([1, 2, 3]);
     expect(requests.map((r) => r.query)).toEqual(["c1ccccc1", "c1ccccc1", "c1ccccc1"]);
+    expect(requests.map((r) => r.view)).toEqual([grid.state.view, grid.state.view, grid.state.view]);
     expect(new Set(requests).size).toBe(3);
+    expect(writesFor(model, "smarts_request")).toHaveLength(3);
 
     // An answer to an abandoned sequence is ignored rather than shown.
-    model.emit("smarts_result", { seq: 1, matches: [0], error: null });
+    answerSmarts(model, grid, { seq: 1, matches: [0] });
     expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
-    model.emit("smarts_result", { seq: 3, matches: [0], error: null });
+    answerSmarts(model, grid, { seq: 3, matches: [0] });
     expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["0"]);
   });
 
@@ -398,54 +480,195 @@ describe("abandoned SMARTS queries", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
   function askSmarts(el) {
-    const search = el.querySelector(".cn-molgrid-search");
-    search.value = "c1ccccc1";
-    search.dispatchEvent(new Event("input", { bubbles: true }));
-    return search;
+    return typeQuery(el, "c1ccccc1");
   }
 
   it("ignores the answer to a query the user cleared", () => {
-    const { model, el } = mount();
+    const { model, el, grid } = mount();
     el.querySelector(".cn-molgrid-mode").click();
     const search = askSmarts(el);
     expect(model.get("smarts_request").seq).toBe(1);
     search.value = ""; search.dispatchEvent(new Event("input", { bubbles: true }));
-    model.emit("smarts_result", { seq: 1, matches: [2], error: null });
+    answerSmarts(model, grid, { seq: 1, matches: [2] });
     // An empty box shows everything; it must not sit on the matches of a deleted query.
     expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["0", "1"]);
     // The next request still carries a sequence the kernel has never seen.
-    search.value = "c1ccccc1"; search.dispatchEvent(new Event("input", { bubbles: true }));
+    askSmarts(el);
     expect(model.get("smarts_request").seq).toBeGreaterThan(1);
-    model.emit("smarts_result", { seq: model.get("smarts_request").seq, matches: [2], error: null });
+    answerSmarts(model, grid, { seq: model.get("smarts_request").seq, matches: [2] });
     expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["2"]);
   });
 
   it("ignores the answer to a query abandoned by leaving SMARTS mode", () => {
-    const { model, el } = mount();
+    const { model, el, grid } = mount();
     const mode = el.querySelector(".cn-molgrid-mode");
     mode.click();
     askSmarts(el);
     mode.click();
     expect(mode.textContent).toBe("Properties");
-    model.emit("smarts_result", { seq: 1, matches: [], error: "Invalid SMARTS pattern: c1ccccc1" });
+    answerSmarts(model, grid, { seq: 1, error: "Invalid SMARTS pattern: c1ccccc1" });
     // The error belongs to a question the Properties view is no longer asking.
     expect(el.querySelector(".cn-molgrid-message").textContent).toBe("");
   });
 
   it("redraws at once when a query already in the box enters SMARTS mode", () => {
-    const { model, el } = mount();
-    const search = el.querySelector(".cn-molgrid-search");
-    search.value = "name1"; search.dispatchEvent(new Event("input", { bubbles: true }));
+    const { model, el, grid } = mount();
+    typeQuery(el, "name1");
     expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(1);
     model.emit("error", "Depiction failed for 1 molecule");
     expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Depiction failed for 1 molecule");
 
     el.querySelector(".cn-molgrid-mode").click();
     // The request went out, and the view already shows the SMARTS state rather than waiting
-    // for the answer to arrive before clearing the old message.
-    expect(model.get("smarts_request")).toEqual({ seq: 1, query: "name1" });
-    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("");
+    // for the answer to arrive before clearing the stale depiction error.
+    expect(model.get("smarts_request")).toEqual({ seq: 1, query: "name1", view: grid.state.view });
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Searching...");
     expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+  });
+});
+
+describe("SMARTS request identity", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  /** Mount another view of an existing widget, as a second cell displaying it would. */
+  function mountOn(model) {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const grid = createGrid(model, el);
+    el.querySelector(".cn-molgrid-mode").click();
+    return { el, grid };
+  }
+
+  it("keeps two views of one widget from reading each other's matches", () => {
+    // One model, two cells. Both views count their requests from zero, so the sequence alone
+    // cannot say whose answer arrived; the view token is what separates them.
+    const model = new FakeModel({ items, config, images: {} });
+    const a = mountOn(model);
+    const b = mountOn(model);
+    typeQuery(a.el, "C");
+    typeQuery(b.el, "N");
+    expect(model.get("smarts_request").seq).toBe(1);
+    expect(a.grid.state.view).not.toBe(b.grid.state.view);
+
+    // The answers come back interleaved, each addressed to the view that asked.
+    answerSmarts(model, b.grid, { seq: 1, matches: [1] });
+    expect([...b.el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["1"]);
+    expect(a.el.querySelector(".cn-molgrid-message").textContent).toBe("Searching...");
+    expect(a.el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+
+    answerSmarts(model, a.grid, { seq: 1, matches: [3] });
+    expect([...a.el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["3"]);
+    expect([...b.el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["1"]);
+  });
+
+  it("ignores a result addressed to another view", () => {
+    const { model, el, grid } = mount();
+    el.querySelector(".cn-molgrid-mode").click();
+    typeQuery(el, "c1ccccc1");
+    model.emit("smarts_result", { seq: 1, view: "somebody-else", matches: [4], error: null });
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Searching...");
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+    // Its own answer, with the same sequence, still lands.
+    answerSmarts(model, grid, { seq: 1, matches: [4] });
+    expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["4"]);
+  });
+
+  it("never repeats a sequence the model has already carried", () => {
+    // Re-running the cell builds a new view over the same model. Starting from zero would make
+    // the next request equal to the value the trait already holds, and traitlets drops that,
+    // so the kernel would never see the question.
+    const model = new FakeModel({
+      items,
+      config,
+      images: {},
+      smarts_request: { seq: 3, query: "c1ccccc1", view: "the-view-that-went-away" },
+      smarts_result: { seq: 5, view: "the-view-that-went-away", matches: [1], error: null },
+    });
+    const { el, grid } = mountOn(model);
+    typeQuery(el, "c1ccccc1");
+    expect(model.get("smarts_request").seq).toBe(6);
+    expect(model.get("smarts_request").view).toBe(grid.state.view);
+    expect(writesFor(model, "smarts_request")).toHaveLength(1);
+  });
+});
+
+describe("pending SMARTS state", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  it("drops the previous answer the moment a replacement query goes out", () => {
+    const { model, el, grid } = mount();
+    el.querySelector(".cn-molgrid-mode").click();
+
+    // Replacing a query that succeeded: the old matches are not the answer to the new pattern.
+    typeQuery(el, "c1ccccc1");
+    answerSmarts(model, grid, { seq: 1, matches: [2] });
+    expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["2"]);
+    typeQuery(el, "CCO");
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Searching...");
+    expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["0", "1"]);
+
+    // Replacing a query that failed: the old error is not about the new pattern either.
+    answerSmarts(model, grid, { seq: 2, error: "Invalid SMARTS pattern: CCO" });
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Invalid SMARTS pattern: CCO");
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(0);
+    typeQuery(el, "N");
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Searching...");
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+    answerSmarts(model, grid, { seq: 3, matches: [4] });
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("");
+    expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["4"]);
+  });
+});
+
+describe("tooltips", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  /** @returns {string[]} the rows of the first card's hover surface */
+  function rows(el) {
+    return [...el.querySelectorAll(".cn-molgrid-card[data-index='0'] .cn-molgrid-tooltip-row")].map((r) => r.textContent);
+  }
+
+  it("shows the tooltip fields when they differ from the information fields", () => {
+    const { el } = mount({ tooltip_fields: ["Name"], info_fields: ["MW"] });
+    expect(rows(el)).toEqual(["Index: 0", "Title: <img src=x onerror=alert(1)>", "Name: name0"]);
+  });
+
+  it("falls back to the information fields when the config carries no tooltip list", () => {
+    // An older payload has no such key, and a grid that was never given tooltip fields sends
+    // an empty list; both mean "show what the information fields show".
+    expect(rows(mount().el)).toEqual(["Index: 0", "Title: <img src=x onerror=alert(1)>", "MW: 50", "Name: name0"]);
+    expect(rows(mount({ tooltip_fields: [] }).el)).toEqual(["Index: 0", "Title: <img src=x onerror=alert(1)>", "MW: 50", "Name: name0"]);
+  });
+
+  it("keeps a pinned tooltip open when the card is rebuilt", () => {
+    // Cards are rebuilt by every image that arrives, every selection sync and every page
+    // change, so a pin that lives only as a class on the node lasts until the next render.
+    const { model, el } = mount();
+    el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-infobtn").click();
+    expect(el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-tooltip").classList.contains("cn-molgrid-pinned")).toBe(true);
+
+    model.emit("images", { 0: "<svg id='pin0'></svg>", 1: "<svg id='pin1'></svg>" });
+    expect(el.querySelector("#pin0")).not.toBeNull();
+    expect(el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-tooltip").classList.contains("cn-molgrid-pinned")).toBe(true);
+    // The card next to it was never pinned.
+    expect(el.querySelector(".cn-molgrid-card[data-index='1'] .cn-molgrid-tooltip").classList.contains("cn-molgrid-pinned")).toBe(false);
+
+    el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-infobtn").click();
+    model.emit("images", { 0: "<svg id='pin0b'></svg>" });
+    expect(el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-tooltip").classList.contains("cn-molgrid-pinned")).toBe(false);
+  });
+
+  it("does not select a molecule when the user clicks inside its tooltip", () => {
+    const { model, el } = mount();
+    el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-infobtn").click();
+    expect(model.get("selection")).toEqual([]);
+    el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-tooltip-row").click();
+    el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-tooltip").click();
+    // Reading a tooltip is not selecting the card underneath it.
+    expect(model.get("selection")).toEqual([]);
+    expect(writesFor(model, "selection")).toHaveLength(0);
+    el.querySelector(".cn-molgrid-card[data-index='0'] .cn-molgrid-title").click();
+    expect(model.get("selection")).toEqual([0]);
   });
 });
 

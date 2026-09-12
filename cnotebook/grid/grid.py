@@ -1190,6 +1190,9 @@ class MolGrid:
             "badges": list(self.badges),
             "search_fields": list(self.search_fields),
             "info_fields": list(self.information_fields),
+            # The hover surface shows these when the grid was given them, and falls back to
+            # the information fields when it was not.
+            "tooltip_fields": list(self.tooltip_fields),
             "export_columns": list(dict.fromkeys([*self._frame_columns(), *self.information_fields])),
             "cluster_labels": sorted(set(labels)) if labels else None,
             "cluster_counts": bool(self.cluster_counts),
