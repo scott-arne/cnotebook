@@ -4,8 +4,6 @@ import shlex
 import shutil
 import sys
 # noinspection PyPackageRequirements
-from invoke.exceptions import Exit
-# noinspection PyPackageRequirements
 from invoke.tasks import task
 from pathlib import Path
 
@@ -24,13 +22,15 @@ def test(c):
     }
 )
 def smoke(c, shell=None, out=None):
-    """Load the static MolGrid and C3D documents in the Playwright headless shell.
+    """Load the static MolGrid and C3D documents in the Playwright headless shell (skips if absent).
+
+    A document that fails the check fails the task: the script exits non-zero and
+    ``c.run`` raises.
 
     :param shell: Headless shell executable; discovered under the Playwright cache
         when omitted.
     :param out: Directory for the generated documents, DOM dumps, stderr logs and
         screenshots; a temporary directory when omitted.
-    :raises Exit: If no headless shell is installed, or if a document fails the check.
     """
     # The discovery rule lives next to the check, so the task and the script look in
     # the same place; importing it here keeps the OpenEye toolkits out of every other
@@ -40,16 +40,18 @@ def smoke(c, shell=None, out=None):
 
     shell = shell or discover_shell()
     if shell is None:
-        # A check that loaded no document has nothing to say, so report the missing
-        # shell as a failure rather than let `invoke smoke` claim success.
-        raise Exit(
+        # The shell is a developer-machine prerequisite, not part of the repository, so
+        # its absence is reported and skipped rather than failed.
+        print(
             f"No headless shell found under {SHELL_GLOB}.\n"
-            "Install one with `npx playwright install chromium-headless-shell`, "
-            "or point CNOTEBOOK_HEADLESS_SHELL at an executable.",
-            code=1,
+            "Skipping the smoke check. Install one with "
+            "`npx playwright install chromium-headless-shell`, "
+            "or point CNOTEBOOK_HEADLESS_SHELL at an executable."
         )
+        return
     command = (
-        f"{sys.executable} {shlex.quote(str(ROOT / 'scripts' / 'headless_check.py'))} "
+        f"{shlex.quote(sys.executable)} "
+        f"{shlex.quote(str(ROOT / 'scripts' / 'headless_check.py'))} "
         f"--shell {shlex.quote(str(shell))}"
     )
     if out:

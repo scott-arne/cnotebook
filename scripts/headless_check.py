@@ -9,10 +9,11 @@ exits 0 only when every document passed every check, so ``invoke smoke`` and
 A document passes when all of the following hold:
 
 * the shell exits 0 within the hard timeout,
-* its page logged no console error lines (see :data:`_CONSOLE_ERROR_RES` and the
-  trap injected by :func:`_with_trap`),
+* its page logged no console error lines (see :data:`_CONSOLE_TEXT_ERROR_RES` and
+  the trap injected by :func:`_with_trap`),
 * the expected markers are in the dumped DOM, and
-* for C3D, an injected probe reported the ``window.c3d`` host API as working.
+* an injected probe reported on the live page: the ``window.c3d`` host API for
+  C3D, the rendered card and image elements for MolGrid.
 
 Usage::
 
@@ -20,7 +21,8 @@ Usage::
 
 With no ``--shell`` the newest shell under the Playwright cache is used. With
 ``--out`` the generated documents, dumped DOMs, stderr logs and screenshots are
-kept in that directory for inspection; otherwise they land in a temporary one.
+kept in that directory for inspection; otherwise they land in a temporary one
+that is removed when every document passed and kept when one did not.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -137,7 +140,7 @@ _TRAP_JS = """
 # The probe reports on the host API after the page settles. It is injected into a copy
 # of the C3D document because the API is the contract the static viewer exists to offer,
 # and a page that merely loads without console errors proves nothing about it.
-_PROBE_JS = """
+_C3D_PROBE_JS = """
 const MEMBERS = __MEMBERS__;
 const PREFIX = "__PREFIX__";
 const TIMEOUT_MS = __TIMEOUT_MS__;
@@ -179,6 +182,46 @@ probe().then(
 );
 """
 
+# The MolGrid equivalent. The dumped DOM is text, so counting `class="cn-molgrid-card"`
+# in it would also count the same literal sitting unrendered inside a script; this probe
+# counts elements in the live document, which only a real render can produce.
+_MOLGRID_PROBE_JS = """
+const PREFIX = "__PREFIX__";
+const TIMEOUT_MS = __TIMEOUT_MS__;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const cards = () => document.querySelectorAll(".cn-molgrid-card");
+
+async function probe() {
+  // The grid renders from its embedded payload after the module boots, so wait for the
+  // first card rather than reporting on an empty document.
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (cards().length === 0 && Date.now() < deadline) {
+    await sleep(25);
+  }
+  const images = document.querySelectorAll(".cn-molgrid-card svg, .cn-molgrid-card img");
+  return `cards=${cards().length} images=${images.length}`;
+}
+
+probe().then(
+  (result) => console.log(`${PREFIX} molgrid-probe ${result}`),
+  (error) => console.log(`${PREFIX} molgrid-probe cards=-1 images=-1 reason=${(error && error.message) || error}`),
+);
+"""
+
+#: The probe injected into each document's instrumented copy.
+_PROBES = {"c3d": _C3D_PROBE_JS, "molgrid": _MOLGRID_PROBE_JS}
+
+
+def _build_number(path: str) -> int:
+    """Extract the Playwright build number from a cached shell path.
+
+    :param path: A path matching :data:`SHELL_GLOB`.
+    :returns: The build number, or ``-1`` when the path carries none.
+    """
+    match = re.search(r"chromium_headless_shell-(\d+)", path)
+    return int(match.group(1)) if match else -1
+
 
 def discover_shell() -> str | None:
     """Locate the newest Playwright headless shell on this machine.
@@ -191,8 +234,13 @@ def discover_shell() -> str | None:
     override = os.environ.get("CNOTEBOOK_HEADLESS_SHELL")
     if override:
         return override
-    # Build numbers are equal-length integers, so a reverse lexical sort is the newest.
-    found = sorted(glob.glob(os.path.expanduser(SHELL_GLOB)), reverse=True)
+    # Sorted on the build number as an integer, so build 10000 beats build 1234; the
+    # path is the tiebreak for anything the pattern matched without a build number.
+    found = sorted(
+        glob.glob(os.path.expanduser(SHELL_GLOB)),
+        key=lambda path: (_build_number(path), path),
+        reverse=True,
+    )
     return found[0] if found else None
 
 
@@ -228,18 +276,35 @@ def _molecules() -> list[oechem.OEGraphMol]:
     return molecules
 
 
-def _probe_script(timeout_ms: int) -> str:
-    """Render the host API probe as an injectable module script.
+def _probe_script(kind: str, timeout_ms: int) -> str:
+    """Render one document's probe as an injectable module script.
 
-    :param timeout_ms: How long the page waits for ``window.c3d.ready``.
+    :param kind: Document kind, a key of :data:`_PROBES`.
+    :param timeout_ms: How long the page waits for the thing it probes.
     :returns: A ``<script type="module">`` element.
     """
     body = (
-        _PROBE_JS.replace("__MEMBERS__", json.dumps(list(_HOST_API_MEMBERS)))
+        _PROBES[kind]
+        .replace("__MEMBERS__", json.dumps(list(_HOST_API_MEMBERS)))
         .replace("__PREFIX__", _SMOKE_PREFIX)
         .replace("__TIMEOUT_MS__", str(int(timeout_ms)))
     )
     return f'<script type="module">{body}</script>\n'
+
+
+def _ready_timeout(budget_ms: int) -> int:
+    """Choose how long a probe waits before reporting what it found.
+
+    A probe has to report before the page's virtual time budget runs out, or the shell
+    dumps the DOM and exits while the probe is still waiting, and the run then fails on
+    a missing probe line instead of the real reason. The wait is 60% of the budget but
+    never more than 80% of it, so even a small ``--virtual-time-budget`` still produces
+    an honest ``reason=ready-timeout``.
+
+    :param budget_ms: The page's virtual time budget, in milliseconds.
+    :returns: The probe timeout in milliseconds, always below the budget.
+    """
+    return min(max(1000, int(budget_ms * 0.6)), max(1, int(budget_ms * 0.8)))
 
 
 def _with_trap(document: str) -> str:
@@ -261,19 +326,20 @@ def _with_trap(document: str) -> str:
     return f"{head}{anchor}\n<script>{trap}</script>\n{tail}"
 
 
-def _with_probe(document: str, timeout_ms: int) -> str:
-    """Return *document* with the host API probe appended to its body.
+def _with_probe(document: str, kind: str, timeout_ms: int) -> str:
+    """Return *document* with its probe appended to the body.
 
-    :param document: A complete C3D document.
+    :param document: A complete document.
+    :param kind: Document kind, a key of :data:`_PROBES`.
     :param timeout_ms: Probe timeout passed to :func:`_probe_script`.
     :returns: The instrumented copy.
     :raises ValueError: If the document has no ``</body>`` to inject before.
     """
     if "</body>" not in document:
-        raise ValueError("C3D document has no </body>; cannot inject the probe")
+        raise ValueError(f"{kind} document has no </body>; cannot inject the probe")
     # Split on the last occurrence: the inlined bundle may well contain the text.
     head, tail = document.rsplit("</body>", 1)
-    return f"{head}{_probe_script(timeout_ms)}</body>{tail}"
+    return f"{head}{_probe_script(kind, timeout_ms)}</body>{tail}"
 
 
 def _write_documents(out: Path, *, ready_timeout_ms: int) -> dict[str, Path]:
@@ -283,7 +349,7 @@ def _write_documents(out: Path, *, ready_timeout_ms: int) -> dict[str, Path]:
     loads, so a failure can be reproduced by hand without the instrumentation.
 
     :param out: Directory to write into.
-    :param ready_timeout_ms: Probe timeout for the instrumented C3D copy.
+    :param ready_timeout_ms: Probe timeout for the instrumented copies.
     :returns: Mapping of artifact name to path; the ``*_load`` entries are the
         documents the shell is pointed at.
     """
@@ -299,8 +365,8 @@ def _write_documents(out: Path, *, ready_timeout_ms: int) -> dict[str, Path]:
     for name, document in documents.items():
         source = out / f"{name}.html"
         source.write_text(document, encoding="utf-8")
-        # Every copy carries the console trap; only the C3D copy carries the API probe.
-        instrumented = document if name != "c3d" else _with_probe(document, ready_timeout_ms)
+        # Every copy carries the console trap and the probe its kind is judged by.
+        instrumented = _with_probe(document, name, ready_timeout_ms)
         loaded = out / f"{name}.probe.html"
         loaded.write_text(_with_trap(instrumented), encoding="utf-8")
         paths[name] = source
@@ -427,6 +493,20 @@ def _marker_lines(stderr: str, kind: str) -> list[str]:
     return [m.group(1) for m in _MARKER_RE.finditer(stderr) if m.group(1).startswith(prefix)]
 
 
+def _marker_fields(marker: str) -> dict[str, int]:
+    """Parse the integer ``key=value`` fields of a marker line.
+
+    :param marker: A marker payload, e.g. ``"CNOTEBOOK_SMOKE molgrid-probe cards=3"``.
+    :returns: The fields whose value is an integer, keyed by name.
+    """
+    fields = {}
+    for token in marker.split():
+        key, separator, value = token.partition("=")
+        if separator and value.lstrip("-").isdigit():
+            fields[key] = int(value)
+    return fields
+
+
 def _report(name: str, summary: str, problems: list[str], run: _ShellRun, out: Path) -> bool:
     """Print one document's verdict.
 
@@ -502,8 +582,32 @@ def _check_molgrid(run: _ShellRun, out: Path, *, items: int) -> bool:
         problems.append(f"expected {items} rendered cards, found {cards}")
     if images != items:
         problems.append(f"expected {items} embedded images, found {images}")
+    problems += _molgrid_probe_problems(run, items=items)
     summary = f"items={items} cards={cards} images={images}"
     return _report("molgrid", summary, problems, run, out)
+
+
+def _molgrid_probe_problems(run: _ShellRun, *, items: int) -> list[str]:
+    """Judge what the MolGrid probe counted in the live document.
+
+    The dumped DOM is text, so the counts taken from it would also be satisfied by a
+    page that renders nothing and merely holds the card markup as a string inside a
+    script. The probe counts elements through ``querySelectorAll`` instead, which only
+    a real render can satisfy.
+
+    :param run: The shell run to judge.
+    :param items: Number of molecules embedded in the document.
+    :returns: One entry per problem, empty when the live DOM matched.
+    """
+    markers = _marker_lines(run.stderr, "molgrid-probe")
+    if len(markers) != 1:
+        return [f"expected 1 MolGrid probe line, got {len(markers)}: {markers}"]
+    counts = _marker_fields(markers[0])
+    return [
+        f"live DOM reported {field}={counts.get(field)}, expected {items}"
+        for field in ("cards", "images")
+        if counts.get(field) != items
+    ]
 
 
 def _exit_problem(run: _ShellRun) -> str:
@@ -527,7 +631,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--shell", default=None, help="headless shell executable (default: newest cached)")
     parser.add_argument("--out", default=None, help="directory for the documents, DOMs, logs and screenshots")
     parser.add_argument("--timeout", type=float, default=180.0, help="hard timeout per document, in seconds")
-    parser.add_argument("--virtual-time-budget", type=int, default=10000, help="page time budget, in milliseconds")
+    parser.add_argument(
+        "--virtual-time-budget",
+        type=int,
+        default=10000,
+        help="page time budget, in milliseconds; the injected probes wait at most 80%% of it",
+    )
     parser.add_argument("--verbose", action="store_true", help="print the environment and the command lines")
     return parser.parse_args(argv)
 
@@ -552,6 +661,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Headless shell is not executable: {shell}", file=sys.stderr)
         return 2
 
+    temporary = args.out is None
     out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="cnotebook-smoke-"))
     out.mkdir(parents=True, exist_ok=True)
     if args.verbose:
@@ -563,10 +673,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"shell: {shell}")
     print(f"artifacts: {out}")
 
-    # The probe must report before the page's time budget runs out, or the shell would
-    # dump the DOM and exit while the probe is still waiting for `ready`.
-    ready_timeout_ms = max(1000, int(args.virtual_time_budget * 0.6))
-    documents = _write_documents(out, ready_timeout_ms=ready_timeout_ms)
+    documents = _write_documents(out, ready_timeout_ms=_ready_timeout(args.virtual_time_budget))
 
     runs = {
         name: _run_shell(
@@ -586,7 +693,15 @@ def main(argv: list[str] | None = None) -> int:
         _check_c3d(runs["c3d"], out),
         _check_molgrid(runs["molgrid"], out, items=len(_SMILES)),
     ]
-    return 0 if all(passed) else 1
+    if not all(passed):
+        print(f"artifacts kept at {out}")
+        return 1
+    if temporary:
+        # A run leaves about 11 MB behind, most of it the two Chromium profiles. A
+        # passing run has nothing left to inspect, so only failures keep their evidence.
+        shutil.rmtree(out, ignore_errors=True)
+        print(f"removed temporary artifacts: {out}")
+    return 0
 
 
 if __name__ == "__main__":

@@ -6,8 +6,7 @@ itself lives in ``scripts/headless_check.py`` so the task and this test judge
 the documents by exactly the same rules.
 """
 
-import glob
-import os
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -19,15 +18,27 @@ pytestmark = pytest.mark.browser
 _ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "scripts" / "headless_check.py"
 
-# Playwright installs the shell under a build-numbered directory; sorting in reverse
-# picks the newest build when several are cached.
-_SHELL_GLOB = os.path.expanduser(
-    "~/Library/Caches/ms-playwright/chromium_headless_shell-*"
-    "/chrome-headless-shell-mac-arm64/chrome-headless-shell"
-)
-_SHELL = os.environ.get("CNOTEBOOK_HEADLESS_SHELL") or next(
-    iter(sorted(glob.glob(_SHELL_GLOB), reverse=True)), None
-)
+
+def _load_check():
+    """Load the check as a module so discovery is defined in exactly one place.
+
+    The script is not importable as ``scripts.headless_check``; loading it by path
+    keeps this test and ``invoke smoke`` looking for the shell by the same rule, so
+    the two cannot drift into silently skipping.
+
+    :returns: The ``headless_check`` module.
+    """
+    spec = importlib.util.spec_from_file_location("headless_check", _SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before execution, as importlib documents: @dataclass resolves the
+    # defining module through sys.modules while the class body is being processed.
+    sys.modules["headless_check"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_SHELL = _load_check().discover_shell()
 
 
 @pytest.mark.skipif(_SHELL is None, reason="Playwright headless shell not installed")
