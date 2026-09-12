@@ -687,17 +687,6 @@ def test_molgrid_html_export_data_embedded(simple_mol):
     assert '"smiles":"CCO"' in html
 
 
-def test_molgrid_html_contains_listjs(simple_mol):
-    """Test HTML contains List.js library."""
-    from cnotebook import MolGrid
-
-    grid = MolGrid([simple_mol])
-    html = grid.to_html()
-
-    # List.js should be included
-    assert "List" in html
-
-
 # ============================================================================
 # SMARTS Search Tests
 # ============================================================================
@@ -2659,3 +2648,14 @@ def test_static_path_runs_with_anywidget_blocked():
 
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("OK")
+
+
+def test_static_document_has_no_legacy_assets(simple_mol):
+    """Test neither the document nor the module keeps anything of the List.js front end."""
+    from cnotebook import MolGrid
+
+    html_doc = MolGrid([simple_mol]).to_html()
+    assert "List(" not in html_doc and "molgrid-container" not in html_doc
+    import cnotebook.grid.grid as grid_module
+
+    assert not hasattr(grid_module, "_CSS") and not hasattr(grid_module, "_LIST_JS")

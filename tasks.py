@@ -1,7 +1,10 @@
 import json
 import re
+import shlex
 import shutil
 import sys
+# noinspection PyPackageRequirements
+from invoke.exceptions import Exit
 # noinspection PyPackageRequirements
 from invoke.tasks import task
 from pathlib import Path
@@ -12,6 +15,46 @@ ROOT = Path(__file__).parent.absolute()
 def test(c):
     """Run the test suite with pytest"""
     c.run(f"{sys.executable} -m pytest tests/")
+
+
+@task(
+    help={
+        "shell": "Headless shell executable (default: the newest Playwright cache entry).",
+        "out": "Directory to keep the documents, DOM dumps, stderr logs and screenshots in.",
+    }
+)
+def smoke(c, shell=None, out=None):
+    """Load the static MolGrid and C3D documents in the Playwright headless shell.
+
+    :param shell: Headless shell executable; discovered under the Playwright cache
+        when omitted.
+    :param out: Directory for the generated documents, DOM dumps, stderr logs and
+        screenshots; a temporary directory when omitted.
+    :raises Exit: If no headless shell is installed, or if a document fails the check.
+    """
+    # The discovery rule lives next to the check, so the task and the script look in
+    # the same place; importing it here keeps the OpenEye toolkits out of every other
+    # task, since headless_check loads them only when it renders the documents.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from headless_check import SHELL_GLOB, discover_shell
+
+    shell = shell or discover_shell()
+    if shell is None:
+        # A check that loaded no document has nothing to say, so report the missing
+        # shell as a failure rather than let `invoke smoke` claim success.
+        raise Exit(
+            f"No headless shell found under {SHELL_GLOB}.\n"
+            "Install one with `npx playwright install chromium-headless-shell`, "
+            "or point CNOTEBOOK_HEADLESS_SHELL at an executable.",
+            code=1,
+        )
+    command = (
+        f"{sys.executable} {shlex.quote(str(ROOT / 'scripts' / 'headless_check.py'))} "
+        f"--shell {shlex.quote(str(shell))}"
+    )
+    if out:
+        command += f" --out {shlex.quote(str(out))}"
+    c.run(command)
 
 
 @task

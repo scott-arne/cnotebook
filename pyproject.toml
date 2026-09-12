@@ -142,9 +142,13 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
+    # The browser tests need a headless shell and take seconds per document, so they
+    # are opt-in: run them with `-m browser` or through `invoke smoke`.
+    "-m", "not browser",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "browser: loads documents in a headless browser (deselected by default)",
 ]
 filterwarnings = [
     "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
