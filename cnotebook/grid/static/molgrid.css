@@ -1,0 +1,29 @@
+/* MolGrid stylesheet. Every rule is scoped under .cn-molgrid, and every colour is a custom
+   property on that root, so loading this sheet into a notebook page cannot restyle anything
+   outside the grid and a theme switch is one attribute on the root. */
+.cn-molgrid { --cn-bg: #ffffff; --cn-fg: #212529; --cn-muted: #6c757d; --cn-border: #e9ecef; --cn-accent: #007bff; --cn-card: #ffffff; --cn-chip: #e7f1ff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 14px; color: var(--cn-fg); background: var(--cn-bg); padding: 10px; box-sizing: border-box; }
+.cn-molgrid[data-theme="dark"] { --cn-bg: #1e1e1e; --cn-fg: #e6e6e6; --cn-muted: #9aa0a6; --cn-border: #3a3a3a; --cn-accent: #4ea1ff; --cn-card: #262626; --cn-chip: #2d3b4f; }
+.cn-molgrid-toolbar, .cn-molgrid-cluster, .cn-molgrid-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; margin-bottom: 10px; border: 1px solid var(--cn-border); border-radius: 6px; }
+.cn-molgrid-search { flex: 1; min-width: 160px; padding: 6px 10px; border: 1px solid var(--cn-border); border-radius: 4px; background: var(--cn-card); color: var(--cn-fg); }
+.cn-molgrid button, .cn-molgrid select { padding: 6px 10px; border: 1px solid var(--cn-border); border-radius: 4px; background: var(--cn-card); color: var(--cn-fg); cursor: pointer; }
+.cn-molgrid button:disabled { opacity: 0.5; cursor: not-allowed; }
+.cn-molgrid-info, .cn-molgrid-page { color: var(--cn-muted); font-size: 13px; }
+.cn-molgrid-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.cn-molgrid-cluster-item.cn-molgrid-cluster-active { background: var(--cn-chip); border-color: var(--cn-accent); }
+.cn-molgrid-message { color: #c0392b; min-height: 1.2em; margin: 4px 0; }
+.cn-molgrid-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--cn-molgrid-image-width, 260px) + 24px), 1fr)); gap: 12px; }
+.cn-molgrid-card { position: relative; display: flex; flex-direction: column; align-items: center; padding: 10px; background: var(--cn-card); border: 1px solid var(--cn-border); border-radius: 6px; cursor: pointer; }
+.cn-molgrid-card:hover { border-color: var(--cn-accent); }
+.cn-molgrid-selected { border-color: var(--cn-accent); box-shadow: 0 0 0 2px var(--cn-chip) inset; }
+.cn-molgrid-check { position: absolute; top: 8px; left: 8px; }
+.cn-molgrid-infobtn { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; padding: 0; border-radius: 50%; font-style: italic; font-family: Georgia, serif; }
+.cn-molgrid-tooltip { display: none; position: absolute; top: 30px; right: 8px; min-width: 120px; max-width: 240px; background: #212529; color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 12px; z-index: 10; }
+.cn-molgrid-infobtn:hover + .cn-molgrid-tooltip, .cn-molgrid-tooltip.cn-molgrid-pinned { display: block; }
+.cn-molgrid-image { display: flex; align-items: center; justify-content: center; width: 100%; height: var(--cn-molgrid-image-height, 240px); overflow: hidden; }
+.cn-molgrid-image img, .cn-molgrid-image svg { max-width: 100%; max-height: 100%; width: auto !important; height: auto !important; }
+.cn-molgrid-spinner { width: 24px; height: 24px; border: 3px solid var(--cn-border); border-top-color: var(--cn-accent); border-radius: 50%; animation: cn-molgrid-spin 0.8s linear infinite; }
+@keyframes cn-molgrid-spin { to { transform: rotate(360deg); } }
+.cn-molgrid-title { margin-top: 6px; font-size: 13px; font-weight: 500; text-align: center; word-break: break-word; }
+.cn-molgrid-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; justify-content: center; }
+.cn-molgrid-badge { padding: 2px 8px; border-radius: 12px; background: var(--cn-chip); font-size: 12px; }
