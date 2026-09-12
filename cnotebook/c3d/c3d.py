@@ -163,11 +163,15 @@ def _is_marimo() -> bool:
 def _has_display_frontend() -> bool:
     """Check whether something in this process could render a widget.
 
-    A widget is a message to a front end, not a value: outside a notebook it has
-    nothing to draw into and shows as a bare repr. The check is made per call rather
-    than once at import, because a session can acquire a shell after cnotebook loads.
+    A widget is a message to a front end, not a value: without one it has nothing to
+    draw into and shows as a bare repr. A terminal IPython session counts as no front
+    end even though it has a shell, because it has no widget manager. The kernel shell
+    is recognized the same way :func:`cnotebook.get_env` recognizes it, by class name,
+    but through the MRO so a front end that subclasses it (Colab does) still counts.
+    The check is made per call rather than once at import, because a session can
+    acquire a shell after cnotebook loads.
 
-    :returns: True when a marimo notebook or an IPython shell is running.
+    :returns: True when a marimo notebook or a Jupyter kernel shell is running.
     """
     if _is_marimo():
         return True
@@ -175,7 +179,10 @@ def _has_display_frontend() -> bool:
         from IPython.core.getipython import get_ipython
     except ImportError:
         return False
-    return get_ipython() is not None
+    shell = get_ipython()
+    if shell is None:
+        return False
+    return any(cls.__name__ == "ZMQInteractiveShell" for cls in type(shell).__mro__)
 
 
 class C3D:
@@ -189,6 +196,11 @@ class C3D:
     Python: :meth:`execute` runs GUI terminal commands, :meth:`on_pick` and
     :attr:`picked` report atom picks, :attr:`view` and :meth:`set_view` move the
     camera, and :meth:`screenshot` captures the frame.
+
+    A viewer is built, then shown. Once :attr:`widget` exists the builder methods
+    refuse to change the scene, because the widget was initialized from the payload as
+    it stood and would not see the change; drive the live viewer with :meth:`execute`,
+    or build a second ``C3D``. :meth:`close` ends the live session for good.
 
     Example::
 
@@ -239,6 +251,7 @@ class C3D:
         # before it is shown.
         self._display_mode: str = config.resolve("display", "mode", UNSET)
         self._widget: C3DWidget | None = None
+        self._closed = False
         self._views: dict[str, list[float]] = {}
         self._screenshot_timeout: float = _SCREENSHOT_TIMEOUT
         self._width = width
@@ -259,7 +272,30 @@ class C3D:
         self._orient: bool | str | dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def _assert_mutable(self) -> None:
+        """Refuse a builder call once the viewer is on screen as a widget.
+
+        The widget is initialized from the payload built when it was created, and it
+        keeps no link back to the builder. Accepting a later ``add_molecule`` would
+        change what :meth:`to_html` and :meth:`save` produce while the widget on screen
+        went on showing the old scene, so the three outputs would quietly disagree.
+
+        :raises CNotebookError: If a widget has been created for this viewer.
+        """
+        if self._widget is not None:
+            raise CNotebookError(
+                "this viewer is displayed as a widget; live changes go through "
+                "execute(), or build a new C3D"
+            )
+
+    # ------------------------------------------------------------------
     # Builder methods
+    #
+    # Every method below changes what the viewer will show, so each one starts with
+    # _assert_mutable() and raises CNotebookError once a widget exists.
     # ------------------------------------------------------------------
 
     def add_molecule(
@@ -279,6 +315,7 @@ class C3D:
         :returns: Self, for method chaining.
         :raises TypeError: If *mol* is not an ``OEMolBase``.
         """
+        self._assert_mutable()
         mol_data = convert_molecule(mol, name=name, disabled=disabled, generate_3d=generate_3d)
         self._molecules.append(mol_data)
         return self
@@ -298,6 +335,7 @@ class C3D:
         :returns: Self, for method chaining.
         :raises TypeError: If *du* is not an ``OEDesignUnit``.
         """
+        self._assert_mutable()
         mol_data = convert_design_unit(du, name=name, disabled=disabled)
         self._molecules.append(mol_data)
         return self
@@ -382,6 +420,7 @@ class C3D:
         :raises ValueError: If *enable* is an unrecognized string.
         :raises TypeError: If *enable* is not a string or ``Sequence``.
         """
+        self._assert_mutable()
         self._validate_enable(enable)
         items = list(mols)
         for i, mol in enumerate(items):
@@ -410,6 +449,7 @@ class C3D:
         :raises ValueError: If *enable* is an unrecognized string.
         :raises TypeError: If *enable* is not a string or ``Sequence``.
         """
+        self._assert_mutable()
         self._validate_enable(enable)
         items = list(dus)
         for i, du in enumerate(items):
@@ -458,6 +498,7 @@ class C3D:
             # Style with a 3Dmol.js dict
             viewer.add_style("stick", {"chain": "A"}, color="green")
         """
+        self._assert_mutable()
         style_dict = self._normalize_style(style, color=color)
         self._operations.append(
             {"op": "style", "selection": selection, "style": style_dict}
@@ -491,6 +532,7 @@ class C3D:
             # Hide the ligand sticks while leaving cartoon visible
             viewer.remove_style("stick", "resn LIG")
         """
+        self._assert_mutable()
         style_dict = self._normalize_style(style, allow_everything=True)
         self._operations.append(
             {"op": "remove_style", "selection": selection, "style": style_dict}
@@ -570,6 +612,7 @@ class C3D:
         :returns: Self, for method chaining.
         :raises ValueError: If *type* or *mode* is not recognized.
         """
+        self._assert_mutable()
         surface_type = type.lower()
         if surface_type not in _SURFACE_TYPES:
             raise ValueError(
@@ -603,6 +646,7 @@ class C3D:
         :param name: Surface name to remove.
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         self._operations.append({"op": "remove_surface", "name": name})
         return self
 
@@ -627,6 +671,7 @@ class C3D:
         :returns: Self, for method chaining.
         :raises ValueError: If a map with the resolved name is already active.
         """
+        self._assert_mutable()
         map_data = convert_map(path_or_grid, name=name, format=format)
         if map_data.name in self._active_maps:
             raise ValueError(f'Map "{map_data.name}" has already been added')
@@ -652,6 +697,7 @@ class C3D:
         :param name: Map name to remove.
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         self._active_maps.discard(name)
         self._operations.append({"op": "remove_map", "name": name})
         return self
@@ -684,6 +730,7 @@ class C3D:
         :raises ValueError: If *map_name* is not active or *representation* is
             not recognized.
         """
+        self._assert_mutable()
         if map_name not in self._active_maps:
             raise ValueError(f'Map "{map_name}" has not been added')
 
@@ -716,6 +763,7 @@ class C3D:
         :param name: Isosurface name to remove.
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         self._operations.append({"op": "remove_isosurface", "name": name})
         return self
 
@@ -779,6 +827,7 @@ class C3D:
             viewer.set_color("chain A", "blue")
             viewer.set_color("resn V4M", "magenta", hets=False)
         """
+        self._assert_mutable()
         self._operations.append({"op": "color", "selection": selection, "color": color, "hets": hets})
         return self
 
@@ -797,6 +846,7 @@ class C3D:
         :param terminal: Deprecated alias for ``console``.
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         if terminal is not None:
             console = terminal
         self._ui = {
@@ -813,6 +863,7 @@ class C3D:
         :param color: CSS color string (e.g. ``"#ffffff"`` or ``"white"``).
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         self._background = color
         self._background_explicit = True
         return self
@@ -828,6 +879,7 @@ class C3D:
         :returns: Self, for method chaining.
         :raises ValueError: If *theme* is not ``"auto"``, ``"light"``, or ``"dark"``.
         """
+        self._assert_mutable()
         if theme not in ("auto", "light", "dark"):
             raise ValueError(
                 f"Unknown theme '{theme}'. Choose 'auto', 'light', or 'dark'."
@@ -844,6 +896,7 @@ class C3D:
             or ``None`` to fit all molecules in view.
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         self._zoom_to = selection
         return self
 
@@ -863,6 +916,7 @@ class C3D:
             restricts orientation to the matching atoms.
         :returns: Self, for method chaining.
         """
+        self._assert_mutable()
         self._orient = selection
         return self
 
@@ -885,6 +939,7 @@ class C3D:
         :returns: Self, for method chaining.
         :raises ValueError: If *name* is not a recognized preset.
         """
+        self._assert_mutable()
         key = name.lower()
         if key not in _VIEW_PRESETS:
             raise ValueError(
@@ -956,11 +1011,18 @@ class C3D:
         """The live :class:`~cnotebook.c3d.widget.C3DWidget`, created on first access.
 
         The widget module is imported here rather than at the top of this one, so
-        building and saving a static viewer never needs anywidget.
+        building and saving a static viewer never needs anywidget. Creating the widget
+        freezes the viewer: the builder methods refuse further changes from then on.
 
         :returns: The widget backing this viewer.
         :raises ImportError: If anywidget is not installed.
+        :raises CNotebookError: If :meth:`close` has been called; the widget it cached
+            is bound to a comm that no longer exists.
         """
+        if self._closed:
+            raise CNotebookError(
+                "viewer closed; build a new C3D to display another widget"
+            )
         if self._widget is None:
             from cnotebook.c3d.widget import C3DWidget
 
@@ -998,6 +1060,8 @@ class C3D:
         :returns: A displayable object for the current environment: the widget itself in
             Jupyter, ``marimo.ui.anywidget(widget)`` in marimo, or an iframe wrapper.
         :raises ValueError: If no molecule has been added.
+        :raises CNotebookError: If widget mode is asked of a closed viewer. The static
+            output still works after :meth:`close`.
         """
         if not self._molecules:
             raise ValueError(
@@ -1052,7 +1116,16 @@ class C3D:
         pending screenshot is rejected, because the comm that would answer them goes
         away with the widget. Closing a viewer twice, or one that was only ever
         rendered statically, does nothing.
+
+        Closing is final. Anything that needs the live widget - :attr:`widget`,
+        :meth:`display` in widget mode, :meth:`execute`, :meth:`set_view`,
+        :meth:`restore_view`, :meth:`screenshot` and :meth:`save_png` - raises
+        afterwards, because reusing the cached widget would send to a dead comm and
+        wait for an answer that cannot come. What needs no front end goes on working:
+        :meth:`to_html`, :meth:`save`, ``display(static=True)``, and the last
+        :attr:`view`, :attr:`views` and :attr:`picked` the viewer reported.
         """
+        self._closed = True
         if self._widget is not None:
             self._widget.close()
 
@@ -1067,6 +1140,7 @@ class C3D:
         :returns: A :class:`~cnotebook.c3d.widget.CommandHandle` that settles, and can
             be awaited, when the front end reports the result.
         :raises ImportError: If anywidget is not installed.
+        :raises CNotebookError: If the viewer has been closed.
         """
         return self.widget.submit(command)
 
@@ -1103,6 +1177,7 @@ class C3D:
         :param view: Eight finite numbers, as :attr:`view` reports them.
         :raises ValueError: If the view is not a sequence of eight finite numbers.
         :raises ImportError: If anywidget is not installed.
+        :raises CNotebookError: If the viewer has been closed.
         """
         from cnotebook.c3d.widget import _validate_view
 
@@ -1130,7 +1205,7 @@ class C3D:
         """Point the camera at a view saved with :meth:`save_view`.
 
         :param name: Key the view was saved under.
-        :raises CNotebookError: If *name* is not a saved view.
+        :raises CNotebookError: If *name* is not a saved view, or the viewer is closed.
         :raises ImportError: If anywidget is not installed.
         """
         try:
@@ -1151,8 +1226,8 @@ class C3D:
         """Capture the current frame as PNG bytes.
 
         :returns: The PNG image the front end rendered.
-        :raises CNotebookError: If the capture failed, or the front end did not answer
-            within 30 s.
+        :raises CNotebookError: If the viewer is closed, the capture failed, or the
+            front end did not answer within 30 s.
         :raises ImportError: If anywidget is not installed.
         """
         future = self.widget.request_screenshot()
@@ -1179,7 +1254,8 @@ class C3D:
         :param path: Destination file; its directory must exist.
         :returns: The path written.
         :raises CNotebookError: If the destination's directory does not exist, the
-            capture failed or timed out, or the answer is not a PNG image.
+            viewer is closed, the capture failed or timed out, or the answer is not a
+            PNG image.
         :raises ImportError: If anywidget is not installed.
         """
         target = _prepare_target(path)

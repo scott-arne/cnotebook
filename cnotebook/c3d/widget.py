@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import math
+import numbers
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -120,8 +121,10 @@ def _validate_view(view: Any) -> list[float]:
         )
     coordinates: list[float] = []
     for value in values:
-        # bool is an int in Python, but a JSON true is not a coordinate.
-        if isinstance(value, bool) or not isinstance(value, int | float):
+        # numbers.Real rather than int | float so a numpy row - as likely a source of a
+        # saved camera as a list - is accepted; numpy registers its scalar types with the
+        # numeric ABCs. bool is an int in Python, but a JSON true is not a coordinate.
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             raise ValueError(f"view coordinates must be numbers, got {value!r}")  # noqa: TRY004
         number = float(value)
         if not math.isfinite(number):
@@ -345,6 +348,7 @@ class C3DWidget(anywidget.AnyWidget):
         """
         super().__init__(**kwargs)
         self._next_id = 1
+        self._closed = False
         self._handles: dict[int, CommandHandle] = {}
         self._pick_callbacks: list[Callable[[PickEvent], None]] = []
         self._screenshot_futures: dict[int, asyncio.Future[bytes]] = {}
@@ -356,11 +360,20 @@ class C3DWidget(anywidget.AnyWidget):
     def submit(self, command: str) -> CommandHandle:
         """Queue a GUI terminal command.
 
+        A command submitted after :meth:`close` comes back already failed rather than
+        queued: there is no front end left to answer it.
+
         :param command: Terminal command line, e.g. ``"zoom resn LIG"``.
         :returns: Handle resolved when the front end reports the result.
         """
         handle = CommandHandle(self._next_id, command)
         self._next_id += 1
+        if self._closed:
+            # Settled rather than raised, because a done callback fired by close() may
+            # submit from inside the close itself, and an exception there would abandon
+            # the handles the close has not settled yet.
+            handle._resolve(CommandResult(ok=False, output=["widget closed"]))
+            return handle
         self._handles[handle.id] = handle
         self.commands = [*self.commands, {"id": handle.id, "command": command}]
         return handle
@@ -420,7 +433,8 @@ class C3DWidget(anywidget.AnyWidget):
         """Ask the front end for a PNG; the future resolves to the bytes.
 
         Requests coalesce: the front end answers the highest outstanding sequence with
-        the current frame, and that answer resolves every request at or below it.
+        the current frame, and that answer resolves every request at or below it. A
+        request made after :meth:`close` comes back already rejected.
 
         :returns: Future resolved with the PNG bytes, or rejected with
             :class:`~cnotebook.core.errors.CNotebookError` when the capture fails.
@@ -433,6 +447,13 @@ class C3DWidget(anywidget.AnyWidget):
                 "C3DWidget.request_screenshot() needs a running event loop; await it from "
                 "async code (a Jupyter or marimo notebook cell already runs one)."
             ) from exc
+        if self._closed:
+            # Rejected rather than raised, so a caller that awaits every request the same
+            # way sees the same CNotebookError whether the widget closed before or during.
+            closed: asyncio.Future[bytes] = loop.create_future()
+            closed.set_exception(CNotebookError("Screenshot failed: widget closed"))
+            _retrieve_exception(closed)
+            return closed
         future: asyncio.Future[bytes] = loop.create_future()
         seq = self.screenshot_request + 1
         future.add_done_callback(partial(self._forget_screenshot, seq))
@@ -463,8 +484,12 @@ class C3DWidget(anywidget.AnyWidget):
         The front end goes away with the comm, so an outstanding command or screenshot
         would otherwise hang until its timeout: queued commands settle as failures and
         pending screenshots are rejected. Futures that are already settled, or whose
-        event loop has gone, are left alone.
+        event loop has gone, are left alone. Closing twice does nothing.
         """
+        # Flagged before anything settles. Settling a handle runs its done callbacks, and
+        # a callback that submits or asks for a screenshot must be refused here rather
+        # than left waiting on a comm that this call is taking away.
+        self._closed = True
         handles = list(self._handles.values())
         self._handles.clear()
         for handle in handles:
@@ -479,6 +504,9 @@ class C3DWidget(anywidget.AnyWidget):
             # never turn again after a close; read it now so asyncio logs no traceback.
             _retrieve_exception(future)
             log.debug("cnotebook: failed C3D screenshot request %d, the widget closed", seq)
+        # The queue is settled, so nothing is left to answer it; clearing it keeps a
+        # second view of the same model from replaying commands that already failed.
+        self.commands = []
         super().close()
 
     def _on_screenshot(self, change: dict[str, Any]) -> None:
@@ -530,7 +558,10 @@ class C3DWidget(anywidget.AnyWidget):
             iterable of eight numbers is accepted; a saved camera is as likely to be a
             tuple or a numpy row as a list.
         :raises ValueError: If the view is not a sequence of eight finite numbers.
+        :raises CNotebookError: If the widget has been closed.
         """
+        if self._closed:
+            raise CNotebookError("Cannot move the camera: widget closed")
         self.view = _validate_view(view)
         self.view_origin = "python"
         self.view_request += 1

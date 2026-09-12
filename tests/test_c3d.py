@@ -1752,15 +1752,29 @@ def viewer(ethanol_3d):
 
 
 def test_display_mode_snapshotted_at_construction(ethanol_3d, monkeypatch):
-    from cnotebook.c3d import C3D
+    """A viewer shows the way it did when it was built, whatever the config does later.
 
+    The gate is forced open throughout, so the only thing that can decide between the
+    widget and the document is the mode each viewer captured for itself.
+    """
+    pytest.importorskip("anywidget")
+    from cnotebook.c3d import C3D
+    from cnotebook.c3d.widget import C3DWidget
+
+    monkeypatch.setattr("cnotebook.c3d.c3d._has_display_frontend", lambda: True)
     monkeypatch.setattr(cn_config, "_CONFIG", None)
-    before = C3D().add_molecule(ethanol_3d)
-    cn_config.configure(display_mode="static")
-    after = C3D().add_molecule(ethanol_3d)
     try:
-        assert before._display_mode == "widget" and after._display_mode == "static"
-        assert hasattr(after.display(), "_repr_html_")
+        built_as_widget = C3D().add_molecule(ethanol_3d)
+        cn_config.configure(display_mode="static")
+        built_as_static = C3D().add_molecule(ethanol_3d)
+        assert isinstance(built_as_widget.display(), C3DWidget)
+        assert "<iframe" in built_as_static.display()._repr_html_()
+
+        # ... and the same the other way round.
+        cn_config.configure(display_mode="widget")
+        built_as_widget_again = C3D().add_molecule(ethanol_3d)
+        assert "<iframe" in built_as_static.display()._repr_html_()
+        assert isinstance(built_as_widget_again.display(), C3DWidget)
     finally:
         cn_config.configure(display_mode="widget")
 
@@ -1824,14 +1838,28 @@ def test_display_follows_the_front_end_gate(viewer, monkeypatch):
     assert isinstance(viewer.display(static=False), C3DWidget)
 
 
-def test_the_front_end_gate_looks_for_a_running_shell(monkeypatch):
+def test_the_front_end_gate_wants_a_kernel_shell_not_merely_a_shell(monkeypatch):
+    """Terminal IPython has a shell but no widget manager, so a widget cannot render."""
     from cnotebook.c3d.c3d import _has_display_frontend
 
+    class TerminalInteractiveShell:
+        """Stands in for `ipython` at a terminal prompt."""
+
+    class ZMQInteractiveShell:
+        """Stands in for the ipykernel shell a notebook front end talks to."""
+
+    class ColabShell(ZMQInteractiveShell):
+        """Stands in for a front end that subclasses the kernel shell, as Colab does."""
+
     monkeypatch.setattr("cnotebook.c3d.c3d._is_marimo", lambda: False)
-    monkeypatch.setattr("IPython.core.getipython.get_ipython", lambda: object())
-    assert _has_display_frontend() is True
     monkeypatch.setattr("IPython.core.getipython.get_ipython", lambda: None)
     assert _has_display_frontend() is False
+    monkeypatch.setattr("IPython.core.getipython.get_ipython", TerminalInteractiveShell)
+    assert _has_display_frontend() is False
+    monkeypatch.setattr("IPython.core.getipython.get_ipython", ZMQInteractiveShell)
+    assert _has_display_frontend() is True
+    monkeypatch.setattr("IPython.core.getipython.get_ipython", ColabShell)
+    assert _has_display_frontend() is True
     # IPython is an optional dependency, and its absence is not an error here.
     monkeypatch.setitem(sys.modules, "IPython.core.getipython", None)
     assert _has_display_frontend() is False
@@ -2056,6 +2084,146 @@ def test_saved_files_get_ordinary_permissions(viewer, tmp_path):
     out.chmod(0o640)  # rewriting keeps whatever mode the user chose
     viewer.save(out)
     assert stat.S_IMODE(out.stat().st_mode) == 0o640
+
+
+def _mutations(viewer, mol):
+    """Every builder call that would change what the viewer shows, by category.
+
+    The arguments are deliberately worthless: the lifecycle check runs before any of
+    them is looked at, so a frozen viewer must reject the call whatever it was given.
+    """
+    return {
+        "add_molecule": lambda: viewer.add_molecule(mol),
+        "add_molecules": lambda: viewer.add_molecules([]),
+        "add_design_unit": lambda: viewer.add_design_unit(None),
+        "add_design_units": lambda: viewer.add_design_units([]),
+        "add_style": lambda: viewer.add_style("stick"),
+        "remove_style": lambda: viewer.remove_style("stick"),
+        "show_style": lambda: viewer.show_style("stick"),
+        "hide_style": lambda: viewer.hide_style("stick"),
+        "show_polar_hydrogens": lambda: viewer.show_polar_hydrogens("stick"),
+        "hide_nonpolar_hydrogens": lambda: viewer.hide_nonpolar_hydrogens(),
+        "add_surface": lambda: viewer.add_surface("all"),
+        "remove_surface": lambda: viewer.remove_surface("s"),
+        "add_map": lambda: viewer.add_map("nowhere.dx"),
+        "remove_map": lambda: viewer.remove_map("m"),
+        "add_isosurface": lambda: viewer.add_isosurface("m"),
+        "remove_isosurface": lambda: viewer.remove_isosurface("i"),
+        "set_color": lambda: viewer.set_color("all", "red"),
+        "set_ui": lambda: viewer.set_ui(sidebar=False),
+        "set_background": lambda: viewer.set_background("#000000"),
+        "set_theme": lambda: viewer.set_theme("dark"),
+        "zoom_to": lambda: viewer.zoom_to("all"),
+        "orient": lambda: viewer.orient(),
+        "set_preset": lambda: viewer.set_preset("simple"),
+    }
+
+
+def test_the_builder_freezes_once_a_widget_exists(viewer, ethanol_3d):
+    """The widget is initialized from the payload as it stood, and never re-reads it.
+
+    Accepting a later builder call would leave the widget on screen showing one scene
+    while to_html() and save() produced another, with nothing to say they had parted.
+    """
+    pytest.importorskip("anywidget")
+    payload = viewer.widget.payload
+
+    for name, mutate in _mutations(viewer, ethanol_3d).items():
+        with pytest.raises(CNotebookError, match="displayed as a widget"):
+            mutate()
+        assert viewer.widget.payload == payload, name
+
+    # Nothing slipped through: the builder still describes exactly what is on screen.
+    assert json.loads(viewer.widget.payload) == viewer._build_init_payload()
+
+
+def test_static_display_leaves_the_builder_open(viewer, ethanol_3d, tmp_path):
+    """Only a widget freezes the viewer; a document is rendered from scratch each time."""
+    viewer.display(static=True)
+    viewer.to_html()
+    viewer.save(tmp_path / "v.html")
+
+    viewer.add_molecule(ethanol_3d, name="second")
+    viewer.add_style("stick")
+    viewer.set_background("#000000")
+    viewer.set_theme("dark")
+    viewer.zoom_to("all")
+
+    assert len(viewer._molecules) == 2
+    assert viewer._theme == "dark"
+    assert viewer._background == "#000000"
+    assert "second" in viewer.to_html()
+
+
+def test_a_closed_viewer_refuses_what_needs_the_front_end(viewer, tmp_path, monkeypatch):
+    """Closing is final: the cached widget's comm is gone, so nothing may reuse it."""
+    pytest.importorskip("anywidget")
+    # display() with no argument has to choose the widget for its check to mean anything.
+    monkeypatch.setattr("cnotebook.c3d.c3d._has_display_frontend", lambda: True)
+    monkeypatch.setattr(viewer, "_display_mode", "widget")
+
+    viewer.widget.view = _VIEW_A
+    viewer.widget.view_origin = "js"
+    viewer.save_view("start")
+    viewer.widget.picked = {"seq": 1, "atom": {"serial": 1}, "modifiers": {}}
+    pick = viewer.picked
+
+    viewer.close()
+
+    refused = [
+        lambda: viewer.widget,
+        lambda: viewer.display(),
+        lambda: viewer.display(static=False),
+        lambda: viewer.execute("zoom resn LIG"),
+        lambda: viewer.set_view(_VIEW_B),
+        lambda: viewer.restore_view("start"),
+    ]
+    for call in refused:
+        with pytest.raises(CNotebookError, match="viewer closed"):
+            call()
+
+    async def capture():
+        return await viewer.screenshot()
+
+    async def write():
+        return await viewer.save_png(tmp_path / "shot.png")
+
+    with pytest.raises(CNotebookError, match="viewer closed"):
+        asyncio.run(capture())
+    with pytest.raises(CNotebookError, match="viewer closed"):
+        asyncio.run(write())
+    assert list(tmp_path.iterdir()) == []
+
+    # What needs no front end is untouched, including the state the session produced.
+    assert viewer.to_html().startswith("<!DOCTYPE html>")
+    assert viewer.save(tmp_path / "v.html").read_text(encoding="utf-8")
+    assert "<iframe" in viewer.display(static=True)._repr_html_()
+    monkeypatch.setattr("cnotebook.c3d.c3d._has_display_frontend", lambda: False)
+    assert "<iframe" in viewer.display()._repr_html_()
+    assert viewer.view == _VIEW_A and viewer.views == {"start": _VIEW_A}
+    assert viewer.picked is pick
+    viewer.close()  # closing twice does nothing
+
+
+def test_closing_a_viewer_that_was_never_displayed_still_closes_it(ethanol_3d):
+    from cnotebook.c3d import C3D
+
+    viewer = C3D(width=300, height=200).add_molecule(ethanol_3d)
+    viewer.close()
+    assert viewer._widget is None
+    assert viewer.to_html().startswith("<!DOCTYPE html>")
+    with pytest.raises(CNotebookError, match="viewer closed"):
+        viewer.execute("zoom")
+
+
+def test_set_view_accepts_a_numpy_camera(viewer):
+    """The camera a caller saved from numpy must come back through the Python API."""
+    pytest.importorskip("anywidget")
+    numpy = pytest.importorskip("numpy")
+    viewer.set_view(numpy.array(_VIEW_A, dtype=numpy.float32))
+    assert viewer.view == _VIEW_A
+    viewer.set_view(numpy.array([1, 2, 3, 4, 0, 0, 0, 1], dtype=numpy.int64))
+    assert viewer.view == [1.0, 2.0, 3.0, 4.0, 0.0, 0.0, 0.0, 1.0]
 
 
 def test_close_fails_the_commands_the_front_end_can_no_longer_answer(viewer):

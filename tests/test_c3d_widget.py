@@ -624,6 +624,46 @@ def test_close_fails_pending_commands():
     widget.close()  # closing twice settles nothing and must not raise
 
 
+def test_close_settles_a_command_submitted_from_a_done_callback():
+    """Closing runs done callbacks, and one of them may submit; that must not hang."""
+    widget = C3DWidget(payload="{}")
+    first = widget.submit("zoom")
+    late = []
+    first.add_done_callback(lambda _handle: late.append(widget.submit("center")))
+    widget.close()
+    assert first.result == CommandResult(False, ["widget closed"])
+    assert late[0].done and late[0].result == CommandResult(False, ["widget closed"])
+    assert widget._handles == {}
+
+
+def test_close_clears_the_command_queue():
+    """Nothing can answer the queue now, and a second view must not replay it."""
+    widget = C3DWidget(payload="{}")
+    widget.submit("zoom")
+    assert [c["command"] for c in widget.commands] == ["zoom"]
+    widget.close()
+    assert widget.commands == []
+
+
+def test_work_offered_after_close_is_refused_rather_than_left_pending():
+    widget = C3DWidget(payload="{}")
+    widget.close()
+
+    handle = widget.submit("zoom")
+    assert handle.done and handle.result == CommandResult(False, ["widget closed"])
+    assert widget.commands == [] and widget._handles == {}
+
+    async def request_a_screenshot():
+        with pytest.raises(CNotebookError, match="widget closed"):
+            await widget.request_screenshot()
+
+    asyncio.run(request_a_screenshot())
+    assert widget._screenshot_futures == {}
+
+    with pytest.raises(CNotebookError, match="widget closed"):
+        widget.set_view(_VIEW)
+
+
 def test_close_leaves_a_command_waiter_whose_loop_has_gone():
     """Settling a waiter on a closed loop would raise out of close()."""
     widget = C3DWidget(payload="{}")
@@ -745,3 +785,21 @@ def test_set_view_accepts_any_sequence_of_eight_numbers():
         widget = C3DWidget(payload="{}")
         widget.set_view(view)
         assert widget.view == _VIEW and widget.view_request == 1
+
+
+def test_set_view_accepts_numpy_rows_of_any_numeric_dtype():
+    """Only float64 is a Python float; a float32 or int64 row is a camera all the same."""
+    numpy = pytest.importorskip("numpy")
+    for dtype in (numpy.float32, numpy.float64, numpy.int64, numpy.int32):
+        widget = C3DWidget(payload="{}")
+        widget.set_view(numpy.array(_VIEW, dtype=dtype))
+        assert widget.view == _VIEW and widget.view_request == 1
+
+    # The wider type check must not cost the finiteness one.
+    widget = C3DWidget(payload="{}")
+    with pytest.raises(ValueError, match="finite"):
+        widget.set_view(numpy.array([*_VIEW[:7], numpy.float32("nan")]))
+    # A numpy bool row is eight values, but none of them is a coordinate.
+    with pytest.raises(ValueError, match="numbers"):
+        widget.set_view(numpy.ones(8, dtype=bool))
+    assert widget.view == [] and widget.view_request == 0
