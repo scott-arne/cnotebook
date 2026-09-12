@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from cnotebook import config
+
+# Imported under this module's own names so a test can patch the gate or the writer on
+# this module, which is where a reader of C3D.save or C3D.display looks for them.
+from cnotebook._display_support import has_display_frontend as _has_display_frontend
+from cnotebook._display_support import is_marimo as _is_marimo
+from cnotebook._display_support import prepare_target as _prepare_target
+from cnotebook._display_support import write_atomically as _write_atomically
 from cnotebook.config import UNSET
 from cnotebook.core import viewer3d
 from cnotebook.core.convert import (
@@ -20,13 +27,6 @@ from cnotebook.core.convert import (
     convert_map,
     convert_molecule,
 )
-
-# Imported under this module's own names so a test can patch the gate or the writer on
-# this module, which is where a reader of C3D.save or C3D.display looks for them.
-from cnotebook.core.display_support import has_display_frontend as _has_display_frontend
-from cnotebook.core.display_support import is_marimo as _is_marimo
-from cnotebook.core.display_support import prepare_target as _prepare_target
-from cnotebook.core.display_support import write_atomically as _write_atomically
 from cnotebook.core.errors import CNotebookError, warn
 from cnotebook.core.vocabulary import (
     ISOSURFACE_REPRESENTATIONS as _ISOSURFACE_REPRESENTATION_TUPLE,

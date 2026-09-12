@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import anywidget
 import traitlets
@@ -48,3 +50,37 @@ class MolGridWidget(anywidget.AnyWidget):
     smarts_request = traitlets.Dict().tag(sync=True, echo_update=False)
     smarts_result = traitlets.Dict().tag(sync=True)
     error = traitlets.Unicode("").tag(sync=True)
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Create the widget.
+
+        :param kwargs: Initial trait values.
+        """
+        super().__init__(**kwargs)
+        # The grid's observers, as (trait, handler) pairs. They close over the grid,
+        # which is deliberate -- a nameless grid has to outlive the expression that
+        # created it -- so they are also the reference close() has to let go of.
+        self._grid_observers: list[tuple[str, Callable[[dict[str, Any]], None]]] = []
+
+    def attach_observer(self, name: str, handler: Callable[[dict[str, Any]], None]) -> None:
+        """Observe *name* with *handler* and remember the pair for :meth:`close`.
+
+        :param name: Trait to observe.
+        :param handler: Observer to register.
+        """
+        self.observe(handler, names=[name])
+        self._grid_observers.append((name, handler))
+
+    def close(self) -> None:
+        """Release the front end, and the grid behind it.
+
+        A closed widget is one nothing can display any more, so it stops answering for
+        its grid as well: the observers are removed, which drops the widget's only
+        reference to the grid and lets a grid the user no longer names be collected
+        along with every molecule and depiction it holds. A later trait write from a
+        view that has not noticed the close therefore renders nothing.
+        """
+        for name, handler in self._grid_observers:
+            self.unobserve(handler, names=[name])
+        self._grid_observers.clear()
+        super().close()

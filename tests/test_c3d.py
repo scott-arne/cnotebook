@@ -1323,7 +1323,9 @@ class TestC3DDisplay:
         viewer = C3D()
         viewer.add_molecule(ethanol_3d)
 
-        with patch("cnotebook.c3d.c3d._is_marimo", return_value=False):
+        # display() with no argument asks the shared front-end gate, which reads the
+        # shared marimo check rather than this module's alias of it.
+        with patch("cnotebook._display_support.is_marimo", return_value=False):
             result = viewer.display()
 
         assert isinstance(result, _JupyterIFrame)
@@ -1852,7 +1854,7 @@ def test_the_front_end_gate_wants_a_kernel_shell_not_merely_a_shell(monkeypatch)
         """Stands in for a front end that subclasses the kernel shell, as Colab does."""
 
     # The gate is shared with MolGrid, so its marimo check is patched where it lives.
-    monkeypatch.setattr("cnotebook.core.display_support.is_marimo", lambda: False)
+    monkeypatch.setattr("cnotebook._display_support.is_marimo", lambda: False)
     monkeypatch.setattr("IPython.core.getipython.get_ipython", lambda: None)
     assert _has_display_frontend() is False
     monkeypatch.setattr("IPython.core.getipython.get_ipython", TerminalInteractiveShell)
@@ -1864,7 +1866,7 @@ def test_the_front_end_gate_wants_a_kernel_shell_not_merely_a_shell(monkeypatch)
     # IPython is an optional dependency, and its absence is not an error here.
     monkeypatch.setitem(sys.modules, "IPython.core.getipython", None)
     assert _has_display_frontend() is False
-    monkeypatch.setattr("cnotebook.core.display_support.is_marimo", lambda: True)
+    monkeypatch.setattr("cnotebook._display_support.is_marimo", lambda: True)
     assert _has_display_frontend() is True
 
 

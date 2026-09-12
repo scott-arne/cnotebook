@@ -4,6 +4,11 @@ The C3D viewer and the molecule grid both have to answer the same two questions 
 there a front end that could draw a widget, and how is a document written so a failed
 write cannot destroy the previous one -- and both used to answer them with their own
 copy of these helpers.
+
+This is a top-level private module rather than part of :mod:`cnotebook.core` because
+half of it is about notebook runtimes: ``cnotebook.core`` is the layer that knows only
+the OpenEye Toolkits and the standard library, and nothing in it may look for marimo or
+IPython.
 """
 
 from __future__ import annotations

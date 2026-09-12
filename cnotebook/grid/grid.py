@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import numbers
 import os
 import uuid
 from collections import OrderedDict
@@ -15,15 +16,15 @@ from typing import Any
 from openeye import oechem, oedepict  # type: ignore[import-untyped]
 
 from cnotebook import config as _config
-from cnotebook.config import UNSET
-from cnotebook.core.context import CNotebookContext
 
 # Imported under the module's own names so a test can patch the gate or the writer on
 # this module, which is where a reader of MolGrid.save or MolGrid.display looks for them.
-from cnotebook.core.display_support import has_display_frontend as _has_display_frontend
-from cnotebook.core.display_support import is_marimo as _is_marimo
-from cnotebook.core.display_support import prepare_target as _prepare_target
-from cnotebook.core.display_support import write_atomically as _write_atomically
+from cnotebook._display_support import has_display_frontend as _has_display_frontend
+from cnotebook._display_support import is_marimo as _is_marimo
+from cnotebook._display_support import prepare_target as _prepare_target
+from cnotebook._display_support import write_atomically as _write_atomically
+from cnotebook.config import UNSET
+from cnotebook.core.context import CNotebookContext
 from cnotebook.core.errors import CNotebookError, warn
 from cnotebook.core.render import oedisp_to_html, oemol_to_html, prepare_depiction_copy
 from cnotebook.core.viewer3d import escape_script_json
@@ -391,7 +392,12 @@ class MolGrid:
 
         self._images: OrderedDict[int, str] = OrderedDict()
         self.revision = 0
-        self.selection: list[int] = []
+        self._selection: list[int] = []
+        # Indices whose depiction raised, with the reason the most recent one gave. The
+        # error banner is a function of this set, so one view scrolling to a page that
+        # happens to be cached cannot clear a failure another view is still looking at.
+        self._failed_indices: set[int] = set()
+        self._failure_reason = ""
         self._widget: Any = None
         self.closed = False
 
@@ -1097,6 +1103,52 @@ class MolGrid:
         """
         return list(range(min(len(self._molecules), 2 * int(self.n_items_per_page))))
 
+    def _render_window(self, indices: Iterable[int]) -> None:
+        """Render *indices* into the live widget, reporting what could not be drawn.
+
+        Every molecule is rendered on its own, so one depiction that raises costs its
+        own card and not the page around it, and the failure is recorded rather than
+        raised: the caller is a trait observer answering the front end, or the creation
+        of the widget itself, and neither has anywhere to put an exception.
+
+        :param indices: Molecule indices; out-of-range entries are ignored.
+        """
+        widget = self._widget
+        rendered: dict[str, str] = {}
+        for value in indices:
+            index = int(value)
+            if not 0 <= index < len(self._molecules):
+                continue
+            try:
+                rendered[str(index)] = self.render_item(index)
+            except Exception as exc:
+                log.exception("cnotebook: MolGrid could not render molecule %d", index)
+                self._failed_indices.add(index)
+                self._failure_reason = str(exc)
+            else:
+                self._failed_indices.discard(index)
+        if rendered:
+            # A new mapping: traitlets compares containers, and images appended to the
+            # one the widget already holds would never reach the browser.
+            widget.images = {**widget.images, **rendered}
+        self._publish_error()
+
+    def _publish_error(self) -> None:
+        """Set the widget's error banner from the molecules that failed to render.
+
+        The banner is a function of :attr:`_failed_indices` alone, so a view reporting a
+        page that happens to be cached cannot clear a diagnostic another view is still
+        looking at, and a molecule that renders on a retry takes its own banner away.
+        """
+        widget = self._widget
+        if widget is None:
+            return
+        if not self._failed_indices:
+            widget.error = ""
+            return
+        listed = ", ".join(str(index) for index in sorted(self._failed_indices))
+        widget.error = f"Could not render molecules {listed}: {self._failure_reason}"
+
     def _push_revision(self) -> None:
         """Publish a new render revision to the live widget.
 
@@ -1108,10 +1160,16 @@ class MolGrid:
         only once the images it should draw are already there.
         """
         widget = self._widget
+        # New render options mean every depiction is attempted again, so the failures of
+        # the previous revision say nothing about this one.
+        self._failed_indices.clear()
+        self._failure_reason = ""
         widget.images = {}
         widget.revision = self.revision
         if widget.visible:
-            widget.images = self.render_indices(widget.visible)
+            self._render_window(widget.visible)
+        else:
+            self._publish_error()
         widget.config = self.widget_config(static=False)
 
     @property
@@ -1127,40 +1185,31 @@ class MolGrid:
         if self._widget is None:
             from cnotebook.grid.widget import MolGridWidget
 
+            # No images yet: the first window is rendered below, through the same
+            # guarded path as a window the front end asks for, so a molecule that
+            # cannot be depicted reports itself instead of raising out of an attribute
+            # access and leaving the grid with no widget.
             widget = MolGridWidget(
                 items=self.items(),
                 config=self.widget_config(static=False),
                 revision=self.revision,
-                images=self.render_indices(self._initial_indices()),
-                selection=list(self.selection),
+                selection=list(self._selection),
             )
             # These observers hold the grid, deliberately. Images, searches and the
             # selection are all answered on this side, so a widget whose grid had been
             # collected would render nothing and answer nothing; and the grid is
             # frequently nameless, as in ``display(df.chem.molgrid())``. The pair is
-            # released by :meth:`close`, which closes the widget and drops it from
-            # ipywidgets' registry of open widgets.
+            # released by :meth:`MolGridWidget.close`, which unobserves them.
             grid = self
 
             def on_visible(change: dict[str, Any]) -> None:
                 missing = [i for i in change["new"] if str(i) not in widget.images]
                 if not missing:
-                    # A page whose images are all cached still clears a previous
-                    # failure's banner: the grid the user is now looking at rendered.
-                    widget.error = ""
+                    # Nothing to draw, but the banner still has to match the failures
+                    # that are outstanding, which this view's page may not be among.
+                    grid._publish_error()
                     return
-                try:
-                    rendered = grid.render_indices(missing)
-                except Exception as exc:
-                    # A depiction failure is the user's to see: without this the front
-                    # end would sit on a page of permanently blank cards.
-                    log.exception("cnotebook: MolGrid could not render %s", missing)
-                    widget.error = f"Could not render molecules: {exc}"
-                    return
-                widget.error = ""
-                # A new mapping: traitlets compares containers, and images appended to
-                # the one the widget already holds would never reach the browser.
-                widget.images = {**widget.images, **rendered}
+                grid._render_window(missing)
 
             def on_smarts(change: dict[str, Any]) -> None:
                 request = _smarts_request(change["new"])
@@ -1182,12 +1231,15 @@ class MolGrid:
                 }
 
             def on_selection(change: dict[str, Any]) -> None:
-                grid.selection = sorted(int(i) for i in change["new"])
+                # Straight into the private state: going through the property would
+                # write the value back to the widget that just reported it.
+                grid._selection = grid._validate_selection(change["new"])
 
-            widget.observe(_safe_observer(on_visible), names=["visible"])
-            widget.observe(_safe_observer(on_smarts), names=["smarts_request"])
-            widget.observe(_safe_observer(on_selection), names=["selection"])
+            widget.attach_observer("visible", _safe_observer(on_visible))
+            widget.attach_observer("smarts_request", _safe_observer(on_smarts))
+            widget.attach_observer("selection", _safe_observer(on_selection))
             self._widget = widget
+            self._render_window(self._initial_indices())
         return self._widget
 
     # -- display --------------------------------------------------------------
@@ -1301,6 +1353,58 @@ class MolGrid:
         return widget
 
     # -- selection ------------------------------------------------------------
+
+    @property
+    def selection(self) -> list[int]:
+        """The selected molecule indices, in ascending order.
+
+        Assigning to this selects those molecules on both sides: the grid answers
+        :meth:`get_selection` and :meth:`selection_frame` from the new value, and a live
+        widget redraws its checkboxes, so a selection made from Python is the selection
+        the user sees and the next click extends rather than discards.
+
+        :returns: A copy of the selected indices; mutating it selects nothing.
+        """
+        return list(self._selection)
+
+    @selection.setter
+    def selection(self, value: Iterable[int]) -> None:
+        """Select exactly the molecules in *value*.
+
+        :param value: Molecule indices, in any order.
+        :raises TypeError: If *value* is not an iterable of integers.
+        :raises ValueError: If an index is not a molecule of this grid.
+        """
+        self._selection = self._validate_selection(value)
+        if self._widget is not None:
+            # The widget's observer writes _selection directly, so this cannot come back
+            # round; and traitlets drops an assignment equal to what the widget holds.
+            self._widget.selection = list(self._selection)
+
+    def _validate_selection(self, value: Iterable[int]) -> list[int]:
+        """Read a selection the way both Python and the front end may express one.
+
+        :param value: Molecule indices, in any order.
+        :returns: The indices, sorted and de-duplicated.
+        :raises TypeError: If *value* is not an iterable of integers.
+        :raises ValueError: If an index is not a molecule of this grid.
+        """
+        if isinstance(value, str) or not isinstance(value, Iterable):
+            raise TypeError(f"selection must be a sequence of molecule indices, not {value!r}")
+        indices: set[int] = set()
+        for item in value:
+            # A bool is an int to Python but never a molecule index, and accepting True
+            # as molecule 1 would hide the mistake rather than report it.
+            if isinstance(item, bool) or not isinstance(item, numbers.Integral):
+                raise TypeError(f"selection must hold molecule indices, not {item!r}")
+            index = int(item)
+            if not 0 <= index < len(self._molecules):
+                raise ValueError(
+                    f"selection index {index} is out of range for a grid of "
+                    f"{len(self._molecules)} molecules"
+                )
+            indices.add(index)
+        return sorted(indices)
 
     def get_selection_indices(self) -> list[int]:
         """Indices of the selected molecules.

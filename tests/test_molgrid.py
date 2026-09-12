@@ -2087,6 +2087,18 @@ def test_browser_written_traits_are_not_echoed_back(monkeypatch):
     assert widget.smarts_result == {"seq": 1, "view": "view-a", "matches": [2], "error": None}
 
 
+def _failing_render(grid, monkeypatch, *bad):
+    """Make render_item raise for the given indices and render the rest normally."""
+    original = grid.render_item
+
+    def render_item(index, *args, **kwargs):
+        if index in bad:
+            raise RuntimeError("depiction failed")
+        return original(index, *args, **kwargs)
+
+    monkeypatch.setattr(grid, "render_item", render_item)
+
+
 def test_a_render_failure_is_reported_to_the_front_end_as_text(monkeypatch):
     """Test a depiction failure sets the error trait instead of leaving blank cards."""
     pytest.importorskip("anywidget")
@@ -2094,37 +2106,109 @@ def test_a_render_failure_is_reported_to_the_front_end_as_text(monkeypatch):
 
     grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
     widget = grid.widget
+    _failing_render(grid, monkeypatch, 2)
 
-    def boom(indices):
-        raise RuntimeError("depiction failed")
-
-    monkeypatch.setattr(grid, "render_indices", boom)
     widget.visible = [2]
 
-    assert widget.error == "Could not render molecules: depiction failed"
+    assert widget.error == "Could not render molecules 2: depiction failed"
     assert "2" not in widget.images
 
 
-def test_a_fully_cached_page_clears_a_stale_error(monkeypatch):
-    """Test the error banner does not outlive the page that failed to render."""
+def test_one_unrenderable_molecule_does_not_cost_the_page_around_it(monkeypatch):
+    """Test the molecules that can be drawn are published even when one cannot."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC"), _mol("CCCCC")], n_items_per_page=1)
+    widget = grid.widget
+    _failing_render(grid, monkeypatch, 2)
+
+    widget.visible = [2, 3]
+
+    assert "3" in widget.images and "2" not in widget.images
+    assert widget.error == "Could not render molecules 2: depiction failed"
+
+
+def test_a_failure_in_the_initial_window_still_produces_a_widget(monkeypatch):
+    """Test the first render is guarded too, so a bad molecule is reported, not raised."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    original = grid.render_item
+
+    def render_item(index, *args, **kwargs):
+        if index == 0:
+            raise RuntimeError("depiction failed")
+        return original(index, *args, **kwargs)
+
+    monkeypatch.setattr(grid, "render_item", render_item)
+
+    # The initial two pages are rendered while the widget is being created: before this
+    # was guarded, molecule 0 raised out of attribute access and left _widget unset.
+    widget = grid.widget
+
+    assert grid._widget is widget
+    assert widget.error == "Could not render molecules 0: depiction failed"
+    assert set(widget.images) == {"1"}
+
+
+def test_one_view_cannot_clear_another_views_render_failure(monkeypatch):
+    """Test the banner follows the outstanding failures, not the last window reported."""
     pytest.importorskip("anywidget")
     from cnotebook.grid import MolGrid
 
     grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
     widget = grid.widget
+    _failing_render(grid, monkeypatch, 2)
 
-    def boom(indices):
-        raise RuntimeError("depiction failed")
+    # One view scrolls to the molecule that cannot be drawn.
+    widget.visible = [2]
+    assert widget.error == "Could not render molecules 2: depiction failed"
 
-    monkeypatch.setattr(grid, "render_indices", boom)
+    # A second view of the same widget reports a page that is already rendered. It has
+    # nothing to say about molecule 2, so it must not take the diagnostic away.
+    widget.visible = [0]
+    assert widget.error == "Could not render molecules 2: depiction failed"
+
+
+def test_a_failure_that_renders_on_a_retry_takes_its_banner_away(monkeypatch):
+    """Test a resolved failure clears the banner and a cached page keeps it clear."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    widget = grid.widget
+    _failing_render(grid, monkeypatch, 2)
     widget.visible = [2]
     assert widget.error
-    monkeypatch.undo()
 
-    # Page 0 was rendered before the failure, so nothing is missing and nothing is
-    # rendered; the page the user is looking at is nonetheless fine, and says so.
+    monkeypatch.undo()
+    widget.visible = [1]
+    widget.visible = [2]
+
+    assert widget.error == "" and "2" in widget.images
+    # And a page whose images are all cached leaves it clear rather than reviving it.
     widget.visible = [0]
     assert widget.error == ""
+
+
+def test_a_revision_push_forgets_the_previous_revisions_failures(monkeypatch):
+    """Test new render options retry every molecule, so old failures stop being reported."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    widget = grid.widget
+    _failing_render(grid, monkeypatch, 2)
+    widget.visible = [2]
+    assert grid._failed_indices == {2}
+
+    monkeypatch.undo()
+    grid.set_render_options(width=280)
+
+    assert grid._failed_indices == set()
+    assert widget.error == "" and set(widget.images) == {"2"}
 
 
 def test_widget_answers_each_view_with_its_own_token_and_drops_malformed_requests():
@@ -2234,6 +2318,99 @@ def test_closing_a_grid_releases_it_and_its_widget():
     gc.collect()
 
     assert grid_ref() is None and widget_ref() is None
+
+
+def test_a_closed_widget_releases_its_grid_and_stops_operating_it():
+    """Test a widget kept after close() neither holds nor answers for its grid."""
+    pytest.importorskip("anywidget")
+    import gc
+    import weakref
+
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    widget = grid.widget
+    grid_ref = weakref.ref(grid)
+    assert set(widget.images) == {"0", "1"}
+
+    # A caller who keeps the widget -- a marimo cell, a variable in a notebook -- must
+    # not keep the whole molecule graph with it once the widget has been closed.
+    widget.close()
+    del grid
+    gc.collect()
+    assert grid_ref() is None
+
+    # And a view that has not noticed the close cannot make the closed widget work.
+    widget.visible = [2]
+    assert "2" not in widget.images
+    widget.selection = [2]
+    assert widget.selection == [2]
+
+
+def test_closing_a_widget_twice_is_harmless():
+    """Test close() is idempotent, as a grid closing its own widget already assumes."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol()])
+    widget = grid.widget
+
+    widget.close()
+    widget.close()
+    grid.close()
+
+    assert widget._grid_observers == []
+
+
+def test_selection_assigned_from_python_reaches_the_front_end():
+    """Test grid.selection is the displayed selection, not a value only Python reads."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=2)
+
+    # Before the widget exists the assignment is simply remembered, and the widget is
+    # created holding it.
+    grid.selection = [2]
+    widget = grid.widget
+    assert widget.selection == [2]
+
+    # After it exists the cards have to change too: without this the grid would report
+    # a selection the user cannot see and the next click would overwrite it.
+    grid.selection = [0, 1]
+    assert widget.selection == [0, 1]
+    assert grid.get_selection_indices() == [0, 1]
+
+    # A browser write still lands, and does not come back round to the front end.
+    widget.selection = [1]
+    assert grid.selection == [1] and grid.get_selection_indices() == [1]
+    assert widget.selection == [1]
+
+
+def test_selection_rejects_values_that_are_not_molecule_indices():
+    """Test a mistyped selection is refused rather than silently selecting nothing."""
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC")])
+
+    with pytest.raises(ValueError):
+        grid.selection = [2]
+    with pytest.raises(ValueError):
+        grid.selection = [-1]
+    with pytest.raises(TypeError):
+        grid.selection = [True]
+    with pytest.raises(TypeError):
+        grid.selection = ["0"]
+    with pytest.raises(TypeError):
+        grid.selection = 0
+
+    # Nothing was half-applied, and the accepted forms are still accepted.
+    assert grid.selection == []
+    grid.selection = (1, 0, 1)
+    assert grid.selection == [0, 1]
+    # The list the property hands out is a copy: mutating it selects nothing.
+    grid.selection.append(1)
+    assert grid.selection == [0, 1]
 
 
 def test_initial_state_carries_only_two_pages_of_images():
