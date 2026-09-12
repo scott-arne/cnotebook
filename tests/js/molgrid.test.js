@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { StaticModel, applyFilters, createGrid, resolveTheme, sortItems } from "../../cnotebook/grid/static/molgrid.js";
+import widgetModule, { StaticModel, applyFilters, createGrid, resolveTheme, sortItems } from "../../cnotebook/grid/static/molgrid.js";
 
 // Paths are resolved from this file rather than with new URL(..., import.meta.url): Vite
 // rewrites that static pattern into an asset URL against the happy-dom window location,
@@ -20,7 +20,18 @@ class FakeModel {
   set(name, value) { this.state[name] = value; }
   save_changes() {}
   on(event, handler) { (this.handlers[event] ||= []).push(handler); }
-  emit(name, value) { this.state[name] = value; (this.handlers[`change:${name}`] || []).forEach((h) => h()); }
+  // Backbone's off, which is what anywidget's model exposes and what teardown has to call.
+  off(event, handler) {
+    const list = this.handlers[event] || [];
+    const at = list.indexOf(handler);
+    if (at >= 0) list.splice(at, 1);
+  }
+  emit(name, value) { this.state[name] = value; [...(this.handlers[`change:${name}`] || [])].forEach((h) => h()); }
+}
+
+/** @returns {number} how many handlers the model is holding, over every event */
+function handlerCount(model) {
+  return Object.values(model.handlers).reduce((total, list) => total + list.length, 0);
 }
 
 const items = Array.from({ length: 5 }, (_, i) => ({
@@ -313,6 +324,198 @@ describe("trait writes", () => {
     expect(model.get("visible")).toEqual([]);
     model.emit("error", "Depiction failed for 2 molecules");
     expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Depiction failed for 2 molecules");
+  });
+});
+
+describe("teardown", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  function mountView(model) {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    return { el, cleanup: widgetModule.render({ model, el }) };
+  }
+
+  it("detaches every subscription and removes the grid", () => {
+    const { model, el, grid } = mount();
+    expect(handlerCount(model)).toBeGreaterThan(0);
+    grid.destroy();
+    expect(handlerCount(model)).toBe(0);
+    expect(el.querySelector(".cn-molgrid")).toBeNull();
+    grid.destroy();
+    expect(handlerCount(model)).toBe(0);
+  });
+
+  it("stops publishing visible once the view is gone", () => {
+    const { model, grid } = mount();
+    const lastVisible = model.get("visible");
+    grid.destroy();
+    model.emit("images", { 0: "<svg id='late'></svg>" });
+    model.emit("revision", 7);
+    // The kernel hears nothing more from a dead view, so it renders no images for it.
+    expect(model.get("visible")).toBe(lastVisible);
+    expect(document.querySelector("#late")).toBeNull();
+  });
+
+  it("goes inert even when the host model has no off", () => {
+    // StaticModel and any hand-built host model lack Backbone's off; the handlers survive, so
+    // the destroyed flag is what has to stop them.
+    const model = new FakeModel({ items, config, images: {} });
+    model.off = undefined;
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const grid = createGrid(model, el);
+    const before = handlerCount(model);
+    grid.destroy();
+    expect(handlerCount(model)).toBe(before);
+    const lastVisible = model.get("visible");
+    model.emit("images", { 0: "<svg id='late'></svg>" });
+    expect(model.get("visible")).toBe(lastVisible);
+    expect(document.querySelector("#late")).toBeNull();
+  });
+
+  it("leaves one live subscriber set after four renders with cleanup", () => {
+    // The model outlives the view: without the cleanup each re-run of the cell stacked another
+    // permanent set of handlers on it.
+    const model = new FakeModel({ items, config, images: {} });
+    const first = mountView(model);
+    const perView = handlerCount(model);
+    expect(perView).toBeGreaterThan(0);
+    let live = first;
+    for (let n = 0; n < 3; n += 1) {
+      live.cleanup();
+      live = mountView(model);
+      expect(handlerCount(model)).toBe(perView);
+      expect(document.querySelectorAll(".cn-molgrid")).toHaveLength(1);
+    }
+    live.cleanup();
+    expect(handlerCount(model)).toBe(0);
+    expect(document.querySelectorAll(".cn-molgrid")).toHaveLength(0);
+  });
+});
+
+describe("abandoned SMARTS queries", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  function askSmarts(el) {
+    const search = el.querySelector(".cn-molgrid-search");
+    search.value = "c1ccccc1";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    return search;
+  }
+
+  it("ignores the answer to a query the user cleared", () => {
+    const { model, el } = mount();
+    el.querySelector(".cn-molgrid-mode").click();
+    const search = askSmarts(el);
+    expect(model.get("smarts_request").seq).toBe(1);
+    search.value = ""; search.dispatchEvent(new Event("input", { bubbles: true }));
+    model.emit("smarts_result", { seq: 1, matches: [2], error: null });
+    // An empty box shows everything; it must not sit on the matches of a deleted query.
+    expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["0", "1"]);
+    // The next request still carries a sequence the kernel has never seen.
+    search.value = "c1ccccc1"; search.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(model.get("smarts_request").seq).toBeGreaterThan(1);
+    model.emit("smarts_result", { seq: model.get("smarts_request").seq, matches: [2], error: null });
+    expect([...el.querySelectorAll(".cn-molgrid-card")].map((c) => c.dataset.index)).toEqual(["2"]);
+  });
+
+  it("ignores the answer to a query abandoned by leaving SMARTS mode", () => {
+    const { model, el } = mount();
+    const mode = el.querySelector(".cn-molgrid-mode");
+    mode.click();
+    askSmarts(el);
+    mode.click();
+    expect(mode.textContent).toBe("Properties");
+    model.emit("smarts_result", { seq: 1, matches: [], error: "Invalid SMARTS pattern: c1ccccc1" });
+    // The error belongs to a question the Properties view is no longer asking.
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("");
+  });
+
+  it("redraws at once when a query already in the box enters SMARTS mode", () => {
+    const { model, el } = mount();
+    const search = el.querySelector(".cn-molgrid-search");
+    search.value = "name1"; search.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(1);
+    model.emit("error", "Depiction failed for 1 molecule");
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("Depiction failed for 1 molecule");
+
+    el.querySelector(".cn-molgrid-mode").click();
+    // The request went out, and the view already shows the SMARTS state rather than waiting
+    // for the answer to arrive before clearing the old message.
+    expect(model.get("smarts_request")).toEqual({ seq: 1, query: "name1" });
+    expect(el.querySelector(".cn-molgrid-message").textContent).toBe("");
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+  });
+});
+
+describe("config updates", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  it("re-applies image size, page size, theme and cluster chips", () => {
+    const { model, el } = mount();
+    const root = el.querySelector(".cn-molgrid");
+    expect(root.style.getPropertyValue("--cn-molgrid-image-width")).toBe("100px");
+    expect(root.style.getPropertyValue("--cn-molgrid-image-height")).toBe("80px");
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+
+    // set_render_options in Python republishes the whole config.
+    model.emit("config", { ...config, image_width: 300, image_height: 240, page_size: 4, theme: "dark" });
+    expect(root.style.getPropertyValue("--cn-molgrid-image-width")).toBe("300px");
+    expect(root.style.getPropertyValue("--cn-molgrid-image-height")).toBe("240px");
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(4);
+    expect(root.dataset.theme).toBe("dark");
+    expect(model.get("visible")).toEqual([0, 1, 2, 3, 4]);
+    expect([...el.querySelectorAll(".cn-molgrid-sort option")].map((o) => o.value)).toEqual(["", "MW", "Name"]);
+
+    model.emit("config", { ...config, cluster_labels: null });
+    expect(el.querySelector(".cn-molgrid-cluster")).toBeNull();
+    model.emit("config", { ...config, cluster_labels: ["even", "odd"] });
+    expect([...el.querySelectorAll(".cn-molgrid-cluster-item")].map((c) => c.dataset.cluster)).toEqual(["even", "odd"]);
+    expect(el.querySelectorAll(".cn-molgrid-card")).toHaveLength(2);
+  });
+
+  it("keeps the user's sort and selection across a config update", () => {
+    const { model, el } = mount();
+    const sort = el.querySelector(".cn-molgrid-sort");
+    sort.value = "MW"; sort.dispatchEvent(new Event("change", { bubbles: true }));
+    el.querySelector(".cn-molgrid-card[data-index='4'] .cn-molgrid-check").click();
+    model.emit("config", { ...config, image_width: 120 });
+    expect(el.querySelector(".cn-molgrid-sort").value).toBe("MW");
+    expect(el.querySelector(".cn-molgrid-card").dataset.index).toBe("4");
+    expect(model.get("selection")).toEqual([4]);
+  });
+});
+
+describe("CSV export", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  it("neutralises formula-leading cells and quotes separators and carriage returns", () => {
+    // A title or SD field is the molecule author's text, and a spreadsheet runs a cell that
+    // opens with =, +, -, @, a tab or a carriage return when the export is opened.
+    const risky = [
+      { i: 0, title: "t0", smiles: "=cmd|'/c calc'!A1", fields: { MW: "-1+2", Name: "@SUM(A1)" }, badges: [], cluster: "even" },
+      { i: 1, title: "t1", smiles: "C", fields: { MW: "a\rb", Name: "+1" }, badges: [], cluster: "odd" },
+      { i: 2, title: "t2", smiles: "C", fields: { MW: "\tlead", Name: 'plain, "quoted"' }, badges: [], cluster: "even" },
+    ];
+    const model = new FakeModel({ items: risky, config: { ...config, page_size: 10 }, images: {} });
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    createGrid(model, el);
+
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    try {
+      el.querySelector(".cn-molgrid-action[data-action='copy-csv']").click();
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(writeText.mock.calls[0][0].split("\n")).toEqual([
+        "smiles,MW,Name",
+        "'=cmd|'/c calc'!A1,'-1+2,'@SUM(A1)",
+        'C,"a\rb",\'+1',
+        "C,'\tlead,\"plain, \"\"quoted\"\"\"",
+      ]);
+    } finally {
+      writeText.mockRestore();
+    }
   });
 });
 

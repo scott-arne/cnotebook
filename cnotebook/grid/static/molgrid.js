@@ -141,15 +141,27 @@ function sortOption(label, value) {
   return option;
 }
 
+// Excel, LibreOffice and Google Sheets evaluate a cell that opens with one of these as a
+// formula, and a leading tab or carriage return is stripped before that test is applied. A
+// molecule title or SD field is the attacker's text, so an export opened on someone else's
+// machine would run it.
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
 /**
- * Quote a CSV field when it carries a separator, a quote or a newline.
+ * Render a value as a CSV field: defused if a spreadsheet would run it, quoted if it would
+ * otherwise break the row.
+ *
+ * The leading single quote is the conventional neutraliser: spreadsheets keep the cell as text
+ * and do not show the quote. A bare carriage return has to force quoting too, because a
+ * consumer that splits on CR or CRLF would otherwise read one field as two rows.
  *
  * @param {unknown} value
  * @returns {string}
  */
 function csvEscape(value) {
   const text = value === null || value === undefined ? "" : String(value);
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  const safe = FORMULA_LEAD.test(text) ? `'${text}` : text;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 /**
@@ -171,22 +183,22 @@ function download(content, filename, type) {
  *
  * @param {object} model - anywidget model or StaticModel
  * @param {HTMLElement} el - mount point
- * @returns {{render: () => void, state: object, root: HTMLElement}}
+ * @returns {{render: () => void, destroy: () => void, state: object, root: HTMLElement}}
  */
 export function createGrid(model, el) {
-  const config = model.get("config") || {};
+  let config = model.get("config") || {};
   const items = model.get("items") || [];
   const state = {
     query: "", mode: PROP_MODE, clusters: new Set(), smartsMatches: null, page: 0,
     sortBy: config.sort_by || null, selection: new Set(model.get("selection") || []),
-    images: { ...(model.get("images") || {}) }, revision: model.get("revision") || 0, smartsSeq: 0, message: "",
+    images: { ...(model.get("images") || {}) }, revision: model.get("revision") || 0,
+    smartsSeq: 0, awaitingSmarts: false, message: "",
   };
-  const pageSize = Math.max(1, config.page_size || 24);
+  let pageSize = Math.max(1, config.page_size || 24);
+  const observers = [];
+  let destroyed = false;
 
   const root = element("div", "cn-molgrid");
-  root.dataset.theme = resolveTheme(config.theme, el);
-  root.style.setProperty("--cn-molgrid-image-width", `${config.image_width || 260}px`);
-  root.style.setProperty("--cn-molgrid-image-height", `${config.image_height || 240}px`);
   el.appendChild(root);
 
   // toolbar --------------------------------------------------------------
@@ -195,12 +207,7 @@ export function createGrid(model, el) {
   search.type = "search"; search.placeholder = "Search...";
   const modeButton = element("button", "cn-molgrid-mode", "Properties");
   modeButton.type = "button";
-  if (config.static) { modeButton.disabled = true; modeButton.title = "SMARTS search needs a live kernel"; }
   const sortSelect = element("select", "cn-molgrid-sort");
-  sortSelect.appendChild(sortOption("Sort: none", ""));
-  const sortable = Array.from(new Set(Object.keys((items[0] || {}).fields || {})));
-  for (const field of sortable) sortSelect.appendChild(sortOption(`Sort: ${field}`, field));
-  if (state.sortBy) sortSelect.value = state.sortBy.field;
   const sortDir = element("button", "cn-molgrid-sort-dir", state.sortBy && state.sortBy.descending ? "desc" : "asc");
   sortDir.type = "button";
   const info = element("span", "cn-molgrid-info");
@@ -213,17 +220,6 @@ export function createGrid(model, el) {
   root.appendChild(toolbar);
 
   let clusterBox = null;
-  if (config.cluster_labels && config.cluster_labels.length) {
-    clusterBox = element("div", "cn-molgrid-cluster");
-    const counts = new Map();
-    for (const item of items) counts.set(item.cluster, (counts.get(item.cluster) || 0) + 1);
-    for (const label of config.cluster_labels) {
-      const chip = element("button", "cn-molgrid-cluster-item", config.cluster_counts ? `${label} (${counts.get(label) || 0})` : label);
-      chip.type = "button"; chip.dataset.cluster = label; clusterBox.appendChild(chip);
-    }
-    root.appendChild(clusterBox);
-  }
-
   const message = element("div", "cn-molgrid-message");
   const list = element("div", "cn-molgrid-list");
   const pager = element("div", "cn-molgrid-pager");
@@ -243,10 +239,112 @@ export function createGrid(model, el) {
    * an assignment equal to the current value, so mutating a published container in place would
    * lose the update outright; requests that can legitimately repeat carry a sequence number.
    *
+   * A torn-down view publishes nothing: its `visible` would otherwise keep the kernel rendering
+   * images for a grid that is no longer in the document.
+   *
    * @param {string} name
    * @param {unknown} value
    */
-  function publish(name, value) { model.set(name, value); model.save_changes(); }
+  function publish(name, value) {
+    if (destroyed) return;
+    model.set(name, value);
+    model.save_changes();
+  }
+
+  /**
+   * Subscribe to a trait change, remembering the pair so teardown can undo it.
+   *
+   * @param {string} name - trait name
+   * @param {() => void} handler
+   */
+  function observe(name, handler) {
+    const event = `change:${name}`;
+    // The guard covers a host model with no `off`: its handlers survive teardown, so they have
+    // to become inert rather than redraw a detached grid.
+    const guarded = () => { if (!destroyed) handler(); };
+    model.on(event, guarded);
+    observers.push([event, guarded]);
+  }
+
+  /** Rebuild the sort menu, keeping whatever the user has chosen. */
+  function buildSortOptions() {
+    const chosen = state.sortBy ? state.sortBy.field : "";
+    const fields = Array.from(new Set(Object.keys((items[0] || {}).fields || {})));
+    sortSelect.replaceChildren(sortOption("Sort: none", ""), ...fields.map((f) => sortOption(`Sort: ${f}`, f)));
+    sortSelect.value = chosen;
+  }
+
+  /** Rebuild the cluster chips, or remove the row entirely when there are no clusters. */
+  function buildClusterChips() {
+    const labels = config.cluster_labels || [];
+    if (!labels.length) {
+      // A grid with no clusters has no cluster row at all, not an empty one.
+      if (clusterBox) { clusterBox.remove(); clusterBox = null; }
+      state.clusters.clear();
+      return;
+    }
+    if (!clusterBox) {
+      clusterBox = element("div", "cn-molgrid-cluster");
+      clusterBox.addEventListener("click", onClusterClick);
+      root.insertBefore(clusterBox, message);
+    }
+    // A label that has gone would otherwise keep filtering from a chip nobody can see.
+    for (const label of [...state.clusters]) if (!labels.includes(label)) state.clusters.delete(label);
+    const counts = new Map();
+    for (const item of items) counts.set(item.cluster, (counts.get(item.cluster) || 0) + 1);
+    clusterBox.replaceChildren(...labels.map((label) => {
+      const chip = element("button", "cn-molgrid-cluster-item", config.cluster_counts ? `${label} (${counts.get(label) || 0})` : label);
+      chip.type = "button";
+      chip.dataset.cluster = label;
+      if (state.clusters.has(label)) chip.classList.add("cn-molgrid-cluster-active");
+      return chip;
+    }));
+  }
+
+  /**
+   * Apply everything derived from `config` to the chrome that shows it.
+   *
+   * Python republishes `config` when render options change the image size, so none of these
+   * values can be read once at construction and left alone.
+   */
+  function applyConfig() {
+    root.dataset.theme = resolveTheme(config.theme, el);
+    root.style.setProperty("--cn-molgrid-image-width", `${config.image_width || 260}px`);
+    root.style.setProperty("--cn-molgrid-image-height", `${config.image_height || 240}px`);
+    pageSize = Math.max(1, config.page_size || 24);
+    modeButton.disabled = Boolean(config.static);
+    modeButton.title = config.static ? "SMARTS search needs a live kernel" : "";
+    buildSortOptions();
+    buildClusterChips();
+  }
+
+  /**
+   * Abandon the SMARTS request in flight, if there is one.
+   *
+   * Moving the sequence past an outstanding request is what invalidates it: the answer that
+   * arrives afterwards no longer matches, so it cannot filter a cleared box down to the matches
+   * of a deleted query or report its error from the Properties view. Nothing is published - the
+   * kernel's answer is simply no longer wanted.
+   */
+  function abandonSmarts() {
+    if (state.awaitingSmarts) { state.smartsSeq += 1; state.awaitingSmarts = false; }
+    state.smartsMatches = null;
+    state.message = "";
+  }
+
+  /**
+   * Toggle one cluster chip.
+   *
+   * @param {MouseEvent} event
+   */
+  function onClusterClick(event) {
+    const chip = event.target.closest(".cn-molgrid-cluster-item");
+    if (!chip) return;
+    const label = chip.dataset.cluster;
+    if (state.clusters.has(label)) state.clusters.delete(label); else state.clusters.add(label);
+    chip.classList.toggle("cn-molgrid-cluster-active", state.clusters.has(label));
+    state.page = 0; render();
+  }
 
   /** @returns {Array<object>} the items that pass the filters, in sort order */
   function matching() {
@@ -343,20 +441,27 @@ export function createGrid(model, el) {
   search.addEventListener("input", () => {
     state.query = search.value; state.page = 0;
     if (state.mode === SMARTS_MODE) {
-      if (!state.query.trim()) { state.smartsMatches = null; state.message = ""; render(); return; }
-      // The sequence, not the query text, is what makes the request new: re-running the same
-      // pattern has to reach the kernel, and an answer to an abandoned query has to be
-      // recognisable as stale when it arrives.
-      state.smartsSeq += 1;
-      publish("smarts_request", { seq: state.smartsSeq, query: state.query.trim() });
-      return;
+      if (state.query.trim()) {
+        // The sequence, not the query text, is what makes the request new: re-running the same
+        // pattern has to reach the kernel, and an answer to an abandoned query has to be
+        // recognisable as stale when it arrives.
+        state.smartsSeq += 1;
+        state.awaitingSmarts = true;
+        publish("smarts_request", { seq: state.smartsSeq, query: state.query.trim() });
+      } else {
+        abandonSmarts();
+      }
     }
+    // Always redraw, including on the path that has just asked the kernel: the mode or the
+    // query has already changed what the grid shows and what its message says, and leaving the
+    // previous state on screen until the answer arrives is a stale view.
     render();
   });
   modeButton.addEventListener("click", () => {
     state.mode = state.mode === PROP_MODE ? SMARTS_MODE : PROP_MODE;
     modeButton.textContent = state.mode === PROP_MODE ? "Properties" : "SMARTS";
-    state.smartsMatches = null; state.message = ""; state.page = 0;
+    abandonSmarts();
+    state.page = 0;
     search.dispatchEvent(new Event("input"));
   });
   sortSelect.addEventListener("change", () => {
@@ -369,16 +474,6 @@ export function createGrid(model, el) {
   });
   prev.addEventListener("click", () => { state.page -= 1; render(); });
   next.addEventListener("click", () => { state.page += 1; render(); });
-  if (clusterBox) {
-    clusterBox.addEventListener("click", (event) => {
-      const chip = event.target.closest(".cn-molgrid-cluster-item");
-      if (!chip) return;
-      const label = chip.dataset.cluster;
-      if (state.clusters.has(label)) state.clusters.delete(label); else state.clusters.add(label);
-      chip.classList.toggle("cn-molgrid-cluster-active", state.clusters.has(label));
-      state.page = 0; render();
-    });
-  }
   actions.addEventListener("click", (event) => {
     const button = event.target.closest(".cn-molgrid-action");
     if (!button) return;
@@ -398,34 +493,65 @@ export function createGrid(model, el) {
     render();
   });
 
-  model.on("change:images", () => { state.images = { ...(model.get("images") || {}) }; render(); });
+  observe("images", () => { state.images = { ...(model.get("images") || {}) }; render(); });
   // A new revision invalidates every depiction: the images this view holds are of the previous
   // render options. Dropping them puts spinners back, and the render that follows republishes
   // the visible window so the kernel knows what to send first.
-  model.on("change:revision", () => { state.images = {}; state.revision = model.get("revision"); render(); });
-  model.on("change:selection", () => { state.selection = new Set(model.get("selection") || []); render(); });
-  model.on("change:smarts_result", () => {
+  observe("revision", () => { state.images = {}; state.revision = model.get("revision"); render(); });
+  observe("selection", () => { state.selection = new Set(model.get("selection") || []); render(); });
+  // Render options change the image size and the page size, and Python republishes the whole
+  // config when they do.
+  observe("config", () => { config = model.get("config") || {}; applyConfig(); render(); });
+  observe("smarts_result", () => {
     const result = model.get("smarts_result") || {};
-    // An answer to a query the user has already replaced would show the wrong molecules.
+    // An answer to a query the user has already replaced or abandoned would show the wrong
+    // molecules, or an error about a pattern that is no longer in the box.
     if (result.seq !== state.smartsSeq) return;
+    state.awaitingSmarts = false;
     state.smartsMatches = result.error ? new Set() : new Set(result.matches || []);
     state.message = result.error || "";
     state.page = 0; render();
   });
-  model.on("change:error", () => { state.message = model.get("error") || ""; render(); });
+  observe("error", () => { state.message = model.get("error") || ""; render(); });
 
+  /**
+   * Detach from the model and remove the grid.
+   *
+   * The model outlives the view in anywidget, so a view that is dropped without this leaves a
+   * permanent subscriber behind: re-running the cell would stack another set of handlers, and
+   * each dead view would go on publishing `visible` from a detached grid, making the kernel
+   * render images nobody can see.
+   */
+  function destroy() {
+    if (destroyed) return;
+    destroyed = true;
+    for (const [event, handler] of observers) {
+      // anywidget's model exposes Backbone's off. A host model without it keeps its handlers,
+      // which is why every observer is guarded by `destroyed` as well.
+      if (typeof model.off === "function") model.off(event, handler);
+    }
+    observers.length = 0;
+    root.remove();
+  }
+
+  applyConfig();
   render();
-  return { render, state, root };
+  return { render, destroy, state, root };
 }
 
 export default {
   /**
-   * anywidget entry point.
+   * anywidget entry point: mount one controller per view.
+   *
+   * The teardown is returned rather than dropped so that re-rendering a cell does not leave an
+   * earlier controller subscribed to the same model.
    *
    * @param {{model: object, el: HTMLElement}} view
+   * @returns {() => void} cleanup run when the view is destroyed
    */
   render({ model, el }) {
-    createGrid(model, el);
+    const controller = createGrid(model, el);
+    return () => controller.destroy();
   },
 };
 
