@@ -403,18 +403,22 @@ class TestModuleImports:
         }
         for name, value in expected.items():
             assert getattr(cnotebook, name) is value
-        # `render_dataframe` is the one documented export deliberately kept out of
-        # `__all__`, so that a star-import cannot fail where pandas is not installed.
-        assert set(expected) - set(cnotebook.__all__) == {"render_dataframe"}
+        # `render_dataframe` is exported here because this environment has both halves of
+        # the pandas backend; without them a star-import could not resolve it.
+        assert get_env().pandas_available
+        assert set(expected) <= set(cnotebook.__all__)
 
     def test_all_names_resolve_and_are_listed_once(self):
         """Every name in ``__all__`` has to resolve, or a star-import raises."""
         for name in cnotebook.__all__:
             assert getattr(cnotebook, name) is not None
         assert len(set(cnotebook.__all__)) == len(cnotebook.__all__)
-        # The optional frame renderers stay reachable as attributes, and `__dir__` still
-        # advertises them; only the star-import list leaves them out.
-        assert {"render_dataframe", "render_polars_dataframe"}.isdisjoint(cnotebook.__all__)
+        assert cnotebook.__all__ == sorted(cnotebook.__all__)
+        # Each frame renderer is listed exactly when its backend is installed; both stay
+        # reachable as attributes either way, and `__dir__` advertises all six.
+        env = get_env()
+        assert ("render_dataframe" in cnotebook.__all__) is env.pandas_available
+        assert ("render_polars_dataframe" in cnotebook.__all__) is env.polars_available
         assert set(cnotebook._LAZY_EXPORTS) <= set(dir(cnotebook))
 
 
@@ -759,6 +763,33 @@ class TestLazyExports:
             cnotebook.__dict__.update(removed)
             cnotebook._WARNED_EXPORTS.discard("C3D")
 
+    def test_unavailable_export_is_an_attributeerror_under_warnings_as_errors(self, caplog):
+        """A filter that promotes CNotebookWarning must not change what a lookup raises.
+
+        ``hasattr`` and ``getattr(..., default)`` swallow ``AttributeError`` and nothing
+        else, so a warning raised from here would propagate out of both.
+        """
+        removed = self._unbind_exports("MolGrid")
+        real_import_module = importlib.import_module
+
+        def fake_import_module(name, *args, **kwargs):
+            if name == "cnotebook.grid":
+                raise ImportError("No module named 'anywidget'")
+            return real_import_module(name, *args, **kwargs)
+
+        try:
+            with patch("importlib.import_module", side_effect=fake_import_module), \
+                    caplog.at_level(logging.WARNING, logger="cnotebook"), \
+                    warnings.catch_warnings():
+                warnings.simplefilter("error", CNotebookWarning)
+                assert hasattr(cnotebook, "MolGrid") is False
+                assert getattr(cnotebook, "MolGrid", None) is None
+            # The report still reaches the user, by the one route left open to it.
+            assert "cnotebook.MolGrid is unavailable" in caplog.text
+        finally:
+            cnotebook.__dict__.update(removed)
+            cnotebook._WARNED_EXPORTS.discard("MolGrid")
+
     def test_unknown_attribute_raises_without_warning(self):
         """An unknown name is a plain AttributeError, not an optional-dependency report."""
         with warnings.catch_warnings():
@@ -954,7 +985,10 @@ class TestDisplayC3DMolGridStatic:
 
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
-_OPTIONAL_LIBRARIES = ("pandas", "polars", "oepandas", "oepolars", "marimo", "anywidget")
+# cnotebook requires the OpenEye toolkits and nothing else, and IPython is as optional as
+# the frame libraries: `_activate_ipython` only does anything for a session that already
+# imported it, so an eager `import IPython` in the package would be a broken promise.
+_OPTIONAL_LIBRARIES = ("IPython", "pandas", "polars", "oepandas", "oepolars", "marimo", "anywidget")
 
 
 def _run(code: str, **env_overrides):
@@ -975,7 +1009,8 @@ def test_import_does_not_import_optional_libraries():
     code = (f"import sys, cnotebook; print(sorted(m for m in {_OPTIONAL_LIBRARIES!r} if m in sys.modules))")
     out = _run(code)
     assert out.returncode == 0, out.stderr
-    assert out.stdout.strip().endswith("[]")
+    # Compared as a whole line so a failure names the library that was imported.
+    assert out.stdout.strip().splitlines()[-1] == "[]"
 
 
 def test_detection_imports_nothing():
@@ -994,7 +1029,7 @@ def test_detection_imports_nothing():
         cnotebook.get_env()
         # Twice: the first call could plausibly be the one that memoises something.
         cnotebook.get_env()
-        forbidden = set({_OPTIONAL_LIBRARIES + ("IPython",)!r})
+        forbidden = set({_OPTIONAL_LIBRARIES!r})
         print(sorted(forbidden & (set(sys.modules) - before)))
     """)
     out = _run(code)
@@ -1002,11 +1037,13 @@ def test_detection_imports_nothing():
     assert out.stdout.strip().splitlines()[-1] == "[]"
 
 
-def test_star_import_binds_the_public_names_and_nothing_heavy():
-    """`from cnotebook import *` exports what ``__all__`` promises, at no extra import cost.
+def test_star_import_binds_the_public_names_including_the_installed_renderers():
+    """`from cnotebook import *` binds every name ``__all__`` promises, and no private one.
 
-    Star-importing resolves every lazy name in ``__all__`` through ``__getattr__``, so this
-    is also the check that those names cost only cnotebook's own submodules.
+    Star-importing resolves each lazy name through ``__getattr__``, which is how the frame
+    renderers keep the package-scope binding notebooks star-import them for. Paying pandas
+    and polars for that is the point here; the guarantee that a plain `import cnotebook`
+    pays nothing belongs to ``test_import_does_not_import_optional_libraries``.
     """
     code = textwrap.dedent("""
         from cnotebook import *
@@ -1018,13 +1055,61 @@ def test_star_import_binds_the_public_names_and_nothing_heavy():
         missing = sorted(n for n in cnotebook.__all__ if n not in bound)
         # Module-level helpers of cnotebook's own; `__all__` is what keeps them private.
         leaked = sorted(n for n in ("sys", "importlib", "logging", "oechem", "oedepict") if n in bound)
-        heavy = sorted(m for m in ("pandas", "polars", "anywidget", "marimo") if m in sys.modules)
-        print(missing, leaked, heavy)
-        print(sorted(m for m in ("cnotebook.grid", "cnotebook.c3d") if m in sys.modules))
+        renderers = sorted(n for n in ("render_dataframe", "render_polars_dataframe") if n in bound)
+        print(missing, leaked, renderers)
+        lazy = ("cnotebook.c3d", "cnotebook.grid", "cnotebook.pandas_ext", "cnotebook.polars_ext")
+        print(sorted(m for m in lazy if m in sys.modules))
     """)
     out = _run(code)
     assert out.returncode == 0, out.stderr
-    assert out.stdout.strip().splitlines()[-2:] == ["[] [] []", "['cnotebook.c3d', 'cnotebook.grid']"]
+    assert out.stdout.strip().splitlines()[-2:] == [
+        "[] [] ['render_dataframe', 'render_polars_dataframe']",
+        "['cnotebook.c3d', 'cnotebook.grid', 'cnotebook.pandas_ext', 'cnotebook.polars_ext']",
+    ]
+
+
+def test_star_import_without_the_frame_backends_leaves_the_renderers_out():
+    """Where a backend is missing its renderer leaves ``__all__``, not the API.
+
+    The child makes the four packages undiscoverable to ``importlib.util.find_spec``,
+    which is what the export list is decided by, and unimportable, which is what the lazy
+    attribute runs into. A ``builtins.__import__`` guard alone would prove nothing:
+    detection never imports.
+    """
+    code = textwrap.dedent("""
+        import builtins
+        import importlib.util
+
+        blocked = {"pandas", "oepandas", "polars", "oepolars"}
+        real_find_spec = importlib.util.find_spec
+        real_import = builtins.__import__
+
+        def find_spec(name, package=None):
+            return None if name.split(".")[0] in blocked else real_find_spec(name, package)
+
+        def guarded_import(name, *args, **kwargs):
+            if name.split(".")[0] in blocked:
+                raise ImportError("blocked " + name)
+            return real_import(name, *args, **kwargs)
+
+        importlib.util.find_spec = find_spec
+        builtins.__import__ = guarded_import
+
+        from cnotebook import *
+
+        bound = set(globals())
+        import cnotebook
+        renderers = ("render_dataframe", "render_polars_dataframe")
+        print(sorted(n for n in renderers if n in cnotebook.__all__))
+        print(sorted(n for n in renderers if n in bound))
+        try:
+            cnotebook.render_dataframe
+        except AttributeError as exc:
+            print("is unavailable" in str(exc))
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-3:] == ["[]", "[]", "True"]
 
 
 def test_bare_formatters_registered_without_oepandas():

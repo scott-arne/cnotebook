@@ -17,7 +17,7 @@ from openeye import oechem, oedepict
 # Core functionality that doesn't depend on backends
 from . import _hooks
 from .context import CNotebookContext, cnotebook_context
-from .core.errors import warn
+from .core.errors import _report, warn
 from .core.render import render_design_unit as render_design_unit
 from .core.render import render_display as render_display
 from .core.render import render_molecule as render_molecule
@@ -352,10 +352,12 @@ if TYPE_CHECKING:
     from .polars_ext import render_polars_dataframe as render_polars_dataframe
 
 # `from cnotebook import *` resolves every name here through `__getattr__`, so a lazy name
-# in this list is imported by the star-import. Only the lazy names that need nothing beyond
-# cnotebook's own requirements are listed: `render_dataframe` and `render_polars_dataframe`
-# would make a star-import fail outright in an environment without pandas or polars. Both
-# stay reachable as attributes, and `__dir__` still advertises all six.
+# in this list is imported by the star-import. That is what a frame renderer needs to stay
+# exported the way it was when it was bound eagerly, and also what would make a star-import
+# fail where its backend is missing -- so each renderer is listed only when both halves of
+# its backend are installed. The question is answered from package metadata and imports
+# nothing; the renderers stay reachable as attributes either way, and `__dir__` still
+# advertises all six lazy exports.
 __all__ = [
     "BEST_FIT_ORIENTATION",
     "C3D",
@@ -374,12 +376,19 @@ __all__ = [
     "highlight_smarts",
     "log",
     "molgrid",
+    "render_dataframe",
     "render_design_unit",
     "render_display",
     "render_molecule",
+    "render_polars_dataframe",
     "save_image",
     "warn",
 ]
+
+if not (_installed("pandas") and _installed("oepandas")):
+    __all__.remove("render_dataframe")
+if not (_installed("polars") and _installed("oepolars")):
+    __all__.remove("render_polars_dataframe")
 
 
 def __getattr__(name: str):
@@ -392,7 +401,9 @@ def __getattr__(name: str):
     Every failure is reported that way, not just ``ImportError``: a submodule is free to
     raise anything at all from its body -- a ``RuntimeError`` from a version check, say --
     and an attribute lookup that raises something other than ``AttributeError`` breaks the
-    contract ``hasattr()`` and ``getattr(..., default)`` are built on.
+    contract ``hasattr()`` and ``getattr(..., default)`` are built on. A session whose
+    filters promote ``CNotebookWarning`` to an exception would break that contract too,
+    which is why the report cannot raise either.
 
     :param name: Attribute being accessed on the ``cnotebook`` module.
     :returns: The resolved export, also bound on the module so the import happens once.
@@ -413,7 +424,7 @@ def __getattr__(name: str):
         )
         if name not in _WARNED_EXPORTS:
             _WARNED_EXPORTS.add(name)
-            warn(message)
+            _report(message)
         raise AttributeError(message) from exc
 
     globals()[name] = value

@@ -7,12 +7,14 @@ themselves.
 """
 
 import importlib
+import logging
 import os
 import subprocess
 import sys
 import textwrap
 import threading
 import types
+import warnings
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 
@@ -25,7 +27,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
 # Throwaway modules the fixture writes; every test starts and ends with them unimported.
 _FAKE_NAMES = ("hookdummy", "hookcb", "hookbroken", "hookpkg", "hookpkg.sub", "hookns", "hookns.leaf",
-               "hookselfimport", "hookslow", "hookcircular")
+               "hookselfimport", "hookslow", "hookcircular", "hookwrapped", "hookinmemory")
 
 _CALLBACKS = """
 import sys
@@ -55,8 +57,10 @@ def wait_until_blocked_on(ident, module_name, timeout=10.0):
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        locks = _blocking_on.get(ident)
-        if locks and any(getattr(lock, "name", None) == module_name for lock in locks):
+        blocked = _blocking_on.get(ident)
+        # Python 3.12 records every lock a thread waits on; 3.11 records the one lock.
+        locks = blocked if isinstance(blocked, list) else [blocked] if blocked else []
+        if any(getattr(lock, "name", None) == module_name for lock in locks):
             return True
         time.sleep(0.001)
     return False
@@ -76,6 +80,14 @@ def slow_attach():
 
 def second():
     CALLS.append("second")
+
+
+def one():
+    CALLS.append("one")
+
+
+def two():
+    CALLS.append("two")
 
 
 def note_package():
@@ -134,6 +146,7 @@ def fake_packages(tmp_path, monkeypatch):
     # session did before; monkeypatch puts the real registry and meta path back afterwards.
     monkeypatch.setattr(sys, "meta_path", [f for f in sys.meta_path if f is not _hooks._FINDER])
     monkeypatch.setattr(_hooks._FINDER, "_callbacks", {})
+    monkeypatch.setattr(_hooks._FINDER, "_pending", {})
     monkeypatch.setattr(_hooks._FINDER, "_installed", False)
     _forget_fakes()
     yield
@@ -185,6 +198,35 @@ def test_failing_callback_does_not_break_the_users_import(fake_packages):
     assert hookdummy.VALUE == 1
     # A broken integration must not cost the ones registered after it either.
     assert hookcb.CALLS == ["second"]
+
+
+def test_failing_callback_does_not_abort_the_import_under_warnings_as_errors(fake_packages, caplog):
+    # The report fires from inside the watched module's own `exec_module`, so a session
+    # that promotes CNotebookWarning to an exception -- `-W error`, or a test suite's
+    # filters -- would otherwise see `import oepandas` fail because an adapter did. The
+    # warning is demoted to a log record instead, and the import survives intact.
+    _hooks.on_import("hookdummy", "hookcb:boom")
+
+    with caplog.at_level(logging.WARNING, logger="cnotebook"), warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        import hookdummy
+
+    assert hookdummy.VALUE == 1
+    assert sys.modules["hookdummy"] is hookdummy
+    assert "hookcb:boom failed: nope" in caplog.text
+
+
+def test_failing_callback_registered_after_the_import_does_not_raise_under_warnings_as_errors(
+        fake_packages, caplog):
+    # The same guarantee on the immediate path: registering against an already-imported
+    # library happens during `import cnotebook`, which a promoted warning would abort.
+    import hookdummy  # noqa: F401
+
+    with caplog.at_level(logging.WARNING, logger="cnotebook"), warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
+        _hooks.on_import("hookdummy", "hookcb:boom")
+
+    assert "hookcb:boom failed: nope" in caplog.text
 
 
 def test_unregistered_names_are_not_wrapped(fake_packages):
@@ -327,6 +369,82 @@ def test_registration_during_another_threads_import_waits_for_it(fake_packages, 
     assert [w for w in recwarn if issubclass(w.category, CNotebookWarning)] == []
 
 
+def test_registration_during_another_threads_import_of_a_wrapped_module_attaches_once(
+        fake_packages, tmp_path, recwarn):
+    # The same race as above, except something was already watching the module when the
+    # import began, so its loader is wrapped. The registration lands in the pending list
+    # the loader is about to drain *and* the registering thread goes on to wait for the
+    # module; whichever gets there first, the callback runs exactly once.
+    (tmp_path / "hookslow.py").write_text(textwrap.dedent("""
+        import hookcb
+
+        hookcb.CALLS.append("body-start")
+        hookcb.STARTED.set()
+        hookcb.wait_until_blocked_on(hookcb.REGISTRAR_IDENT, "hookslow")
+        hookcb.CALLS.append("body-end")
+
+        VALUE = 5
+    """))
+    import hookcb
+
+    hookcb.REGISTRAR_IDENT = threading.get_ident()
+    _hooks.on_import("hookslow", "hookcb:one")
+    importer = threading.Thread(target=importlib.import_module, args=("hookslow",))
+    importer.start()
+    try:
+        assert hookcb.STARTED.wait(10), "the importing thread never reached hookslow's body"
+        _hooks.on_import("hookslow", "hookcb:slow_attach")
+    finally:
+        importer.join(timeout=30)
+
+    assert not importer.is_alive()
+    assert hookcb.CALLS == ["body-start", "body-end", "one", ("attached", 5)]
+    assert [w for w in recwarn if issubclass(w.category, CNotebookWarning)] == []
+
+
+def test_registration_from_inside_a_wrapped_modules_own_body_runs_once_at_the_end(
+        fake_packages, tmp_path, recwarn):
+    # A module that registers a hook for itself cannot have that hook run mid-body, so
+    # the registration is left pending. Here the module's loader is wrapped -- something
+    # registered for it before the import started -- and the drain at the end of the body
+    # is what runs it, once, against the finished module.
+    (tmp_path / "hookwrapped.py").write_text(textwrap.dedent("""
+        from cnotebook import _hooks
+
+        _hooks.on_import("hookwrapped", "hookcb:two")
+
+        VALUE = 7
+    """))
+    import hookcb
+
+    _hooks.on_import("hookwrapped", "hookcb:one")
+    import hookwrapped
+
+    assert hookwrapped.VALUE == 7
+    assert hookcb.CALLS == ["one", "two"]
+    assert [w for w in recwarn if issubclass(w.category, CNotebookWarning)] == []
+
+
+def test_registration_while_a_wrapped_loader_executes_the_body_runs_it_once(fake_packages):
+    # A loader that runs a module body without flagging the module as initializing -- the
+    # case the import system's `_initializing` protects everywhere else -- is the sharpest
+    # form of the race: the registration sees a module that looks finished and runs the
+    # callback, and the loader then drains a list that still contains it.
+    import hookcb
+
+    class Inner:
+        def exec_module(self, module):
+            _hooks.on_import("hookinmemory", "hookcb:two")
+
+    _hooks.on_import("hookinmemory", "hookcb:one")
+    module = types.ModuleType("hookinmemory")
+    sys.modules["hookinmemory"] = module
+    _hooks._WrappedLoader(Inner(), _hooks._FINDER, "hookinmemory").exec_module(module)
+
+    # "two" runs from its own registration, "one" from the drain; neither runs twice.
+    assert hookcb.CALLS == ["two", "one"]
+
+
 def test_registration_from_inside_the_watched_modules_own_body_is_skipped(fake_packages, tmp_path, recwarn):
     # A module that imports cnotebook from its own body is already in sys.modules and
     # still initializing, and the import system hands back the partial module rather than
@@ -367,7 +485,9 @@ def test_reload_of_a_hooked_module_does_not_raise(fake_packages):
     importlib.reload(hookdummy)
 
     assert hookdummy.VALUE == 1
-    assert hookcb.CALLS == [1, 1]
+    # A reload re-runs the body through the wrapped loader, which finds nothing left to
+    # claim: a registration is consumed once, so the integration is not attached twice.
+    assert hookcb.CALLS == [1]
 
 
 def test_finder_is_installed_once_and_only_when_needed(fake_packages):
@@ -406,8 +526,8 @@ def test_wrapped_loader_delegates_create_module():
         def exec_module(self, module):
             pass
 
-    assert _hooks._WrappedLoader(Inner(), []).create_module(None) is sentinel
-    assert _hooks._WrappedLoader(WithoutCreateModule(), []).create_module(None) is None
+    assert _hooks._WrappedLoader(Inner(), _hooks._FINDER, "hookdummy").create_module(None) is sentinel
+    assert _hooks._WrappedLoader(WithoutCreateModule(), _hooks._FINDER, "hookdummy").create_module(None) is None
 
 
 def test_wrapped_loader_delegates_load_module():
@@ -431,11 +551,11 @@ def test_wrapped_loader_delegates_load_module():
             pass
 
     inner = Inner()
-    assert _hooks._WrappedLoader(inner, []).load_module("hookdummy") is sentinel
+    assert _hooks._WrappedLoader(inner, _hooks._FINDER, "hookdummy").load_module("hookdummy") is sentinel
     assert inner.loaded == ["hookdummy"]
 
     with pytest.raises(NotImplementedError, match="WithoutLoadModule"):
-        _hooks._WrappedLoader(WithoutLoadModule(), []).load_module("hookdummy")
+        _hooks._WrappedLoader(WithoutLoadModule(), _hooks._FINDER, "hookdummy").load_module("hookdummy")
 
 
 def test_env_var_disables_finder():

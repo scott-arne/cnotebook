@@ -14,12 +14,13 @@ import importlib.abc
 import logging
 import os
 import sys
+import threading
 from collections.abc import Sequence
 from importlib.machinery import ModuleSpec
 from types import ModuleType
 from typing import Any
 
-from cnotebook.core.errors import warn
+from cnotebook.core.errors import _report
 
 log = logging.getLogger("cnotebook")
 
@@ -58,20 +59,28 @@ def _run(dotted: str) -> None:
     try:
         getattr(importlib.import_module(module_name), attr)()
     except Exception as exc:  # noqa: BLE001 - an integration failure must never break the user's import
-        warn(f"cnotebook integration hook {dotted} failed: {exc}")
+        # Reported without raising: this runs inside the user's `import`, and a session
+        # that promotes CNotebookWarning to an exception would otherwise lose the import.
+        _report(f"cnotebook integration hook {dotted} failed: {exc}")
 
 
 class _WrappedLoader(importlib.abc.Loader):
     """Delegates to the real loader and runs the callbacks after ``exec_module``."""
 
-    def __init__(self, inner: importlib.abc.Loader, callbacks: list[str]) -> None:
+    def __init__(self, inner: importlib.abc.Loader, finder: PostImportFinder, fullname: str) -> None:
         """Wrap *inner*.
 
+        The callbacks are read back from *finder* rather than captured here: a module is
+        free to register a hook for itself from its own body, and a snapshot taken when
+        the spec was found would miss it.
+
         :param inner: The loader the real finder chose for the module.
-        :param callbacks: Dotted callbacks to run once the module has executed.
+        :param finder: Finder holding the registrations for this module.
+        :param fullname: Module this loader was chosen for.
         """
         self._inner = inner
-        self._callbacks = callbacks
+        self._finder = finder
+        self._fullname = fullname
 
     def create_module(self, spec: ModuleSpec) -> ModuleType | None:
         """Let the real loader build the module object.
@@ -83,7 +92,7 @@ class _WrappedLoader(importlib.abc.Loader):
         return create(spec) if create is not None else None
 
     def exec_module(self, module: ModuleType) -> None:
-        """Execute the module, then run the callbacks.
+        """Execute the module, then run the callbacks nobody has run yet.
 
         A module that fails to execute has no integration to attach, so its exception
         propagates untouched and the callbacks do not run.
@@ -91,7 +100,7 @@ class _WrappedLoader(importlib.abc.Loader):
         :param module: Module to execute.
         """
         self._inner.exec_module(module)  # type: ignore[attr-defined]
-        for dotted in list(self._callbacks):
+        for dotted in self._finder.claim(self._fullname):
             _run(dotted)
 
     def load_module(self, fullname: str) -> ModuleType:
@@ -128,7 +137,12 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
     """Meta-path finder that wraps the loaders of the modules cnotebook watches."""
 
     def __init__(self) -> None:
+        # `_callbacks` is the registration record and outlives every run; `_pending`
+        # holds the registrations that have not run yet, and is what the two callers
+        # who could each run a registration compete for under `_lock`.
+        self._lock = threading.Lock()
         self._callbacks: dict[str, list[str]] = {}
+        self._pending: dict[str, list[str]] = {}
         self._installed = False
 
     def register(self, module_name: str, dotted: str) -> None:
@@ -137,17 +151,48 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
         :param module_name: Top-level module to watch.
         :param dotted: Callback in ``"package.module:function"`` form.
         """
-        self._callbacks.setdefault(module_name, []).append(dotted)
+        with self._lock:
+            self._callbacks.setdefault(module_name, []).append(dotted)
+            self._pending.setdefault(module_name, []).append(dotted)
         if module_name in sys.modules:
             # There is nothing left to wait for, so this buys no finder either.
             self._run_now(module_name, dotted)
             return
-        if not self._installed and not _DISABLED:
-            sys.meta_path.insert(0, self)
-            self._installed = True
+        with self._lock:
+            if not self._installed and not _DISABLED:
+                sys.meta_path.insert(0, self)
+                self._installed = True
 
-    @staticmethod
-    def _run_now(module_name: str, dotted: str) -> None:
+    def claim(self, module_name: str, dotted: str | None = None) -> list[str]:
+        """Take registrations for *module_name* out of the pending list.
+
+        Two callers can reach the same registration: the wrapped loader draining the
+        list once the module's body has run, and a :meth:`register` call that appended
+        to the list and then parked on that module's import lock. Claiming is what makes
+        one of them the owner. A claim is never given back -- a callback that raised has
+        still been attempted, and a callback that ran must not run twice, because a
+        registration duplicated into a process-wide registry is exactly the damage this
+        guards against.
+
+        :param module_name: Watched module.
+        :param dotted: A single registration to claim, or ``None`` for every pending one.
+        :returns: The callbacks this call owns, in registration order.
+        """
+        with self._lock:
+            pending = self._pending.get(module_name)
+            if not pending:
+                return []
+            if dotted is None:
+                del self._pending[module_name]
+                return pending
+            if dotted not in pending:
+                return []
+            pending.remove(dotted)
+            if not pending:
+                del self._pending[module_name]
+            return [dotted]
+
+    def _run_now(self, module_name: str, dotted: str) -> None:
         """Run *dotted* for a module that is already in ``sys.modules``.
 
         Being in ``sys.modules`` does not mean the module has finished executing, and the
@@ -158,9 +203,15 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
         initialization -- the import system hands back the partial module rather than
         deadlocking, and there is nothing complete to attach to.
 
-        Known limitation: in that circular case the callback is dropped, not deferred. The
-        registration stays in ``_callbacks``, but the finder is never consulted for a name
-        that is already in ``sys.modules``, so the callback cannot fire until something
+        Waiting is also why the callback is claimed rather than simply run: while this
+        call was parked on the module lock, the loader executing that module reached the
+        end of the body and drained the same registration.
+
+        In the circular case the registration is left pending. If something had already
+        registered for that module before its import began its loader is wrapped, and
+        that loader claims the registration when the body ends, so the callback still
+        runs -- just not from here. Otherwise the finder is never consulted for a name
+        that is already in ``sys.modules``, and the callback cannot fire until something
         imports the watched module afresh.
 
         :param module_name: Watched module, already present in ``sys.modules``.
@@ -170,13 +221,17 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
             try:
                 importlib.import_module(module_name)
             except Exception as exc:  # noqa: BLE001 - the importer owns this failure, not the hook
-                warn(f"cnotebook integration hook {dotted} skipped: importing {module_name} failed: {exc}")
+                # Non-raising for the same reason as `_run`: this can be reached from
+                # inside an import, and a promoted warning would replace the real error.
+                _report(f"cnotebook integration hook {dotted} skipped: importing {module_name} failed: {exc}")
                 return
             if _initializing(sys.modules.get(module_name)):
-                log.debug("[cnotebook] %s is importing cnotebook from its own body; hook %s cannot run "
-                          "until %s is imported again", module_name, dotted, module_name)
+                log.debug("[cnotebook] %s is importing cnotebook from its own body; hook %s runs when that "
+                          "body ends if its loader was wrapped, and otherwise not until %s is imported again",
+                          module_name, dotted, module_name)
                 return
-        _run(dotted)
+        if self.claim(module_name, dotted):
+            _run(dotted)
 
     def find_spec(self, fullname: str, path: Sequence[str] | None = None,
                   target: ModuleType | None = None) -> ModuleSpec | None:
@@ -200,7 +255,7 @@ class PostImportFinder(importlib.abc.MetaPathFinder):
             # A namespace package has no loader to wrap. Its callbacks never fire, but
             # nothing about the import changes either.
             return spec
-        spec.loader = _WrappedLoader(spec.loader, self._callbacks[fullname])
+        spec.loader = _WrappedLoader(spec.loader, self, fullname)
         return spec
 
     def _find_real_spec(self, fullname: str, path: Sequence[str] | None,
