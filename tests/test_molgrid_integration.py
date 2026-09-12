@@ -44,7 +44,7 @@ def test_full_workflow():
     html = grid.to_html()
     assert "Ethanol" in html
     assert "Benzene" in html
-    assert "pagination" in html.lower()
+    assert '"page_size":3' in html
 
     # Test SMARTS search
     matches = grid._search_smarts("c1ccccc1")  # Aromatic ring
@@ -149,7 +149,8 @@ def test_custom_rendering_parameters():
     assert grid.n_items_per_page == 2
 
     html = grid.to_html()
-    assert "<svg" in html.lower() or "data:image" in html
+    # The images ride inside a script element, so the SVG markup arrives escaped.
+    assert "\\u003csvg" in html.lower()
 
 
 def test_tooltip_data_extraction():
@@ -230,13 +231,16 @@ def test_html_contains_all_menu_actions():
     grid = MolGrid(mols)
     html = grid.to_html()
 
-    # Check for all action buttons
-    assert "select-all" in html
-    assert "clear-selection" in html
-    assert "invert-selection" in html
-    assert "copy-clipboard" in html
-    assert "save-smiles" in html
-    assert "save-csv" in html
+    # The actions live in the embedded module rather than in generated markup.
+    for label in (
+        "Select all",
+        "Clear selection",
+        "Invert selection",
+        "Copy CSV",
+        "Save SMILES",
+        "Save CSV",
+    ):
+        assert label in html
 
 
 def test_responsive_css_present():
@@ -249,8 +253,9 @@ def test_responsive_css_present():
     grid = MolGrid([mol])
     html = grid.to_html()
 
-    # Check for media queries
-    assert "@media" in html
+    # The card grid tracks the container width through the track sizing itself, so it
+    # needs no breakpoints.
+    assert "repeat(auto-fill, minmax(" in html
 
 
 def test_search_fields_in_html():

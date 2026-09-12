@@ -252,7 +252,7 @@ def test_dataframe_molgrid_search_fields_extracted():
 
 
 def test_dataframe_molgrid_html_contains_search_field_values():
-    """Test that HTML contains search field values for List.js."""
+    """Test that the document carries the field values the front end searches."""
     import pandas as pd
     from openeye import oechem
     from cnotebook import MolGrid
@@ -268,9 +268,8 @@ def test_dataframe_molgrid_html_contains_search_field_values():
     grid = MolGrid([mol], dataframe=df, mol_col="Molecule")
     html = grid.to_html()
 
-    # Search field value should be in HTML (hidden span for List.js)
-    assert "Ethanol" in html
-    assert 'class="Name"' in html
+    assert '"search_fields":["Name"]' in html
+    assert '"Name":"Ethanol"' in html
 
 
 def test_dataframe_molgrid_empty_dataframe():
@@ -502,11 +501,9 @@ def test_dataframe_molgrid_info_fields_in_tooltip():
     grid = MolGrid([mol], dataframe=df, mol_col="Molecule", data=["Name", "MW"])
     html = grid.to_html()
 
-    # Should contain data field labels and values in tooltip
-    assert "Name:" in html
-    assert "Ethanol" in html
-    assert "MW:" in html
-    assert "46.07" in html
+    assert '"info_fields":["Name","MW"]' in html
+    assert '"Name":"Ethanol"' in html
+    assert '"MW":"46.07"' in html
 
 
 def test_dataframe_molgrid_info_fields_extracted():

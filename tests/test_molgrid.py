@@ -368,11 +368,10 @@ def test_molgrid_set_render_options_updates_rendered_output(simple_mol):
     grid.set_render_options(width=320, height=240, image_format="png")
 
     html = grid.to_html()
-    data = grid._prepare_data()
 
-    assert "--molgrid-image-width: 320px;" in html
-    assert "--molgrid-image-height: 240px;" in html
-    assert "data:image/png" in data[0]["img"]
+    assert '"image_width":320' in html
+    assert '"image_height":240' in html
+    assert "data:image/png" in html
 
 
 def test_molgrid_custom_parameters(simple_mol):
@@ -586,16 +585,17 @@ def test_molgrid_generates_html(simple_mol):
 
 
 def test_molgrid_html_contains_grid_elements(simple_mol):
-    """Test HTML contains required grid elements."""
+    """Test the document mounts the front end and carries none of the old markup."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
 
-    assert "molgrid-container" in html
-    assert "molgrid-toolbar" in html
-    assert "molgrid-list" in html
-    assert "molgrid-pagination" in html
+    assert '<div id="molgrid-root"></div>' in html
+    assert "__CNOTEBOOK_MOLGRID_STATIC__" in html
+    # The cards are built by the embedded module; no server-rendered list remains.
+    assert "molgrid-container" not in html
+    assert "List(" not in html
 
 
 def test_molgrid_html_contains_title(simple_mol):
@@ -609,13 +609,14 @@ def test_molgrid_html_contains_title(simple_mol):
 
 
 def test_molgrid_html_contains_svg(simple_mol):
-    """Test HTML contains SVG images."""
+    """Test SVG images are embedded, escaped for the script context they travel in."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], image_format="svg")
     html = grid.to_html()
 
-    assert "<svg" in html.lower() or "data:image" in html
+    assert "\\u003csvg" in html.lower()
+    assert "<svg" not in html.lower()
 
 
 def test_molgrid_html_contains_search_elements(simple_mol):
@@ -631,30 +632,27 @@ def test_molgrid_html_contains_search_elements(simple_mol):
 
 
 def test_molgrid_html_contains_actions_menu(simple_mol):
-    """Test HTML contains actions dropdown menu."""
+    """Test the document ships the front end that draws the actions menu."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
 
-    assert "molgrid-actions" in html
-    assert "molgrid-dropdown" in html
-    assert "Select All" in html
-    assert "Clear Selection" in html
-    assert "Invert Selection" in html
-    assert "Copy to Clipboard" in html
-    assert "Save to SMILES" in html
-    assert "Save to CSV" in html
+    # The menu is built by the embedded module; Python only supplies what it exports.
+    assert "Select all" in html
+    assert "Invert selection" in html
+    assert "Save CSV" in html
+    assert '"export_columns":' in html
 
 
 def test_molgrid_html_contains_checkbox_when_enabled(simple_mol):
-    """Test HTML contains checkbox when select=True."""
+    """Test the document tells the front end that selection is enabled."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], select=True)
     html = grid.to_html()
 
-    assert 'class="molgrid-checkbox"' in html
+    assert '"select":true' in html
 
 
 def test_molgrid_html_no_checkbox_when_disabled(simple_mol):
@@ -668,26 +666,25 @@ def test_molgrid_html_no_checkbox_when_disabled(simple_mol):
 
 
 def test_molgrid_html_pagination_info(sample_molecules):
-    """Test HTML contains pagination info."""
+    """Test the document carries the page size and every molecule to page through."""
     from cnotebook import MolGrid
 
     grid = MolGrid(sample_molecules, n_items_per_page=3)
     html = grid.to_html()
 
-    assert "showing-start" in html
-    assert "showing-end" in html
-    assert "showing-total" in html
+    assert '"page_size":3' in html
+    assert f'"i":{len(sample_molecules) - 1}' in html
 
 
 def test_molgrid_html_export_data_embedded(simple_mol):
-    """Test that export data is embedded in HTML."""
+    """Test the document carries what the front end exports: columns and SMILES."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol])
     html = grid.to_html()
 
-    assert "exportData" in html
-    assert "exportColumns" in html
+    assert '"export_columns":' in html
+    assert '"smiles":"CCO"' in html
 
 
 def test_molgrid_html_contains_listjs(simple_mol):
@@ -863,17 +860,16 @@ def test_molgrid_selection_isolated_between_grids(sample_molecules):
 # ============================================================================
 
 def test_molgrid_display_returns_html(simple_mol):
-    """display() should return iframe HTML containing the rendered grid."""
+    """display() should return the document in an iframe when no front end can draw."""
     from cnotebook import MolGrid
-    from IPython.display import HTML
 
     grid = MolGrid([simple_mol], name="display-test")
     result = grid.display()
 
-    assert isinstance(result, HTML)
-    assert 'class="molgrid-iframe"' in result.data
-    assert 'id="molgrid-iframe-display-test"' in result.data
-    assert "Ethanol" in result.data
+    markup = result._repr_html_()
+    assert 'class="molgrid-iframe"' in markup
+    assert "srcdoc=" in markup
+    assert "Ethanol" in markup
 
 
 # ============================================================================
@@ -1011,8 +1007,10 @@ def test_molgrid_molecules_with_special_characters():
     grid = MolGrid([mol])
     html = grid.to_html()
 
-    # Should escape HTML special characters
-    assert '<script>' not in html or '&lt;script&gt;' in html
+    # The title travels inside a script element, so the angle brackets have to leave
+    # escape_script_json as </> rather than as markup the parser would act on.
+    assert "\\u003cscript\\u003e" in html
+    assert "<script>alert" not in html
 
 
 def test_molgrid_unicode_title():
@@ -1116,8 +1114,7 @@ def test_molgrid_html_contains_info_button_when_enabled(simple_mol):
     grid = MolGrid([simple_mol], information=True)
     html = grid.to_html()
 
-    assert 'class="molgrid-info-btn"' in html
-    assert 'class="molgrid-info-tooltip"' in html
+    assert '"information":true' in html
 
 
 def test_molgrid_html_no_info_button_when_disabled(simple_mol):
@@ -1127,19 +1124,17 @@ def test_molgrid_html_no_info_button_when_disabled(simple_mol):
     grid = MolGrid([simple_mol], information=False)
     html = grid.to_html()
 
-    assert 'class="molgrid-info-btn"' not in html
-    assert 'class="molgrid-info-tooltip"' not in html
+    assert '"information":false' in html
 
 
 def test_molgrid_info_tooltip_contains_index(simple_mol):
-    """Test info tooltip always contains index."""
+    """Test every item carries the index the tooltip shows."""
     from cnotebook import MolGrid
 
     grid = MolGrid([simple_mol], information=True)
     html = grid.to_html()
 
-    assert "Index:" in html
-    assert 'class="molgrid-info-tooltip-label"' in html
+    assert '"i":0' in html
 
 
 def test_molgrid_info_tooltip_contains_title_when_set():
@@ -1191,8 +1186,8 @@ def test_molgrid_info_css_present(simple_mol):
     grid = MolGrid([simple_mol])
     html = grid.to_html()
 
-    assert ".molgrid-info-btn" in html
-    assert ".molgrid-info-tooltip" in html
+    assert ".cn-molgrid-infobtn" in html
+    assert ".cn-molgrid-tooltip" in html
 
 
 def test_molgrid_info_tooltip_pinned_css(simple_mol):
@@ -1202,8 +1197,7 @@ def test_molgrid_info_tooltip_pinned_css(simple_mol):
     grid = MolGrid([simple_mol])
     html = grid.to_html()
 
-    assert ".molgrid-info-tooltip.pinned" in html
-    assert ".molgrid-info-btn.active" in html
+    assert ".cn-molgrid-pinned" in html
 
 
 def test_molgrid_data_parameter_string(simple_mol):
@@ -1252,11 +1246,9 @@ def test_molgrid_info_tooltip_displays_data_fields(mol_with_sd_data):
     grid = MolGrid([mol_with_sd_data], data=["MW", "Formula"])
     html = grid.to_html()
 
-    # Should contain the data field labels and values
-    assert "MW:" in html
-    assert "46.07" in html
-    assert "Formula:" in html
-    assert "C2H6O" in html
+    assert '"info_fields":["MW","Formula"]' in html
+    assert '"MW":"46.07"' in html
+    assert '"Formula":"C2H6O"' in html
 
 
 # ============================================================================
@@ -1468,9 +1460,9 @@ def test_molgrid_html_contains_cluster_data():
     grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
     html = grid.to_html()
 
-    assert "clusterData" in html
-    assert "Active" in html
-    assert "Inactive" in html
+    assert '"cluster_labels":["Active","Inactive"]' in html
+    assert '"cluster":"Active"' in html
+    assert '"cluster":"Inactive"' in html
 
 
 def test_molgrid_html_cluster_counts():
@@ -1493,8 +1485,10 @@ def test_molgrid_html_cluster_counts():
     grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id", cluster_counts=True)
     html = grid.to_html()
 
-    # Should have counts embedded
-    assert "clusterCounts" in html
+    # The front end counts the members of each label itself; the document only has to
+    # say that the counts are wanted, and carry a label on every item.
+    assert '"cluster_counts":true' in html
+    assert '"cluster_labels":["Active","Inactive"]' in html
 
 
 def test_molgrid_html_no_cluster_data_when_disabled():
@@ -1508,118 +1502,9 @@ def test_molgrid_html_no_cluster_data_when_disabled():
     grid = MolGrid([mol])
     html = grid.to_html()
 
-    assert "clusterData" not in html
-
-
-def test_molgrid_html_cluster_data_attribute():
-    """Test grid items have data-cluster attribute."""
-    import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
-    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
-    html = grid.to_html()
-
-    assert 'data-cluster="Active"' in html
-
-
-def test_molgrid_html_contains_cluster_css():
-    """Test HTML contains cluster-related CSS when cluster is enabled."""
-    import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
-    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
-    html = grid.to_html()
-
-    # CSS should always be included (it's in the static _CSS)
-    assert ".molgrid-cluster-row" in html
-    assert ".molgrid-cluster-dropdown" in html
-    assert ".molgrid-cluster-pill" in html
-
-
-def test_molgrid_html_contains_cluster_row():
-    """Test HTML contains cluster row when cluster is enabled."""
-    import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
-    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
-    html = grid.to_html()
-
-    assert 'class="molgrid-cluster-row"' in html
-    assert 'class="molgrid-cluster-btn"' in html
-    assert 'class="molgrid-cluster-dropdown"' in html
-    assert 'class="molgrid-cluster-pills"' in html
-
-
-def test_molgrid_html_no_cluster_row_when_disabled():
-    """Test HTML does not contain cluster row when cluster=None."""
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    grid = MolGrid([mol])
-    html = grid.to_html()
-
-    assert 'class="molgrid-cluster-row"' not in html
-
-
-def test_molgrid_html_cluster_dropdown_contains_items():
-    """Test cluster dropdown contains cluster items."""
-    import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mols = []
-    for smiles in ["CCO", "CC"]:
-        mol = oechem.OEGraphMol()
-        oechem.OESmilesToMol(mol, smiles)
-        mols.append(mol)
-
-    df = pd.DataFrame({
-        "mol": mols,
-        "cluster_id": ["Active", "Inactive"]
-    })
-
-    grid = MolGrid(mols, dataframe=df, mol_col="mol", cluster="cluster_id")
-    html = grid.to_html()
-
-    assert 'class="molgrid-cluster-item"' in html
-    assert 'data-cluster="Active"' in html or "Active" in html
-
-
-def test_molgrid_html_contains_cluster_javascript():
-    """Test HTML contains cluster filtering JavaScript."""
-    import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
-    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
-    html = grid.to_html()
-
-    # Should have cluster filter function
-    assert "applyClusterFilter" in html or "selectedClusters" in html
-    # Should have pill creation function
-    assert "createPill" in html or "molgrid-cluster-pill" in html
+    # No labels means no cluster control at all, and nothing to filter items by.
+    assert '"cluster_labels":null' in html
+    assert '"cluster":null' in html
 
 
 # ============================================================================
@@ -1663,25 +1548,17 @@ def test_molgrid_cluster_full_workflow():
     # Verify HTML generation
     html = grid.to_html()
 
-    # Check cluster row present
-    assert 'class="molgrid-cluster-row"' in html
-    assert 'class="molgrid-cluster-btn"' in html
+    assert '"cluster_labels":["Active","Inactive"]' in html
+    assert '"cluster_counts":true' in html
 
-    # Check cluster data embedded
-    assert "clusterData" in html
-    assert "Active" in html
-    assert "Inactive" in html
+    # Every molecule carries its own label, so the front end can both fill the
+    # control and count the members of each label from the items alone.
+    labels = [item["cluster"] for item in grid.items()]
+    assert labels == ["Active", "Inactive", "Active", "Inactive", "Active"]
 
-    # Check cluster counts in dropdown
-    assert "(3)" in html  # Active has 3 molecules
-    assert "(2)" in html  # Inactive has 2 molecules
-
-    # Check data-cluster attributes on items
-    assert 'data-cluster="Active"' in html
-    assert 'data-cluster="Inactive"' in html
-
-    # Check JavaScript functions present
-    assert "applyClusterFilter" in html or "selectedClusters" in html
+    # The searchable field travels with each item too.
+    assert '"search_fields":["property"]' in html
+    assert '"property":"A"' in html
 
 
 def test_molgrid_cluster_dict_mapping():
@@ -1741,69 +1618,8 @@ def test_molgrid_cluster_without_counts():
 
     html = grid.to_html()
 
-    # Should have cluster UI
-    assert 'class="molgrid-cluster-row"' in html
-
-    # Should not have count spans in dropdown items
-    assert 'class="molgrid-cluster-count"' not in html
-
-
-# ============================================================================
-# Combined Filter and Export Tests
-# ============================================================================
-
-def test_molgrid_html_combined_filter_function():
-    """Test HTML contains combined filter function for SMARTS + cluster."""
-    import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    df = pd.DataFrame({"mol": [mol], "cluster_id": ["Active"]})
-    grid = MolGrid([mol], dataframe=df, mol_col="mol", cluster="cluster_id")
-    html = grid.to_html()
-
-    # Should have combined filter function
-    assert "applyCombinedFilter" in html
-    # SMARTS filter should delegate to combined filter
-    assert "smartsMatchIndices" in html
-    # Cluster filter should delegate to combined filter
-    assert "applyClusterFilterToGrid" in html
-
-
-def test_molgrid_html_export_respects_filter():
-    """Test that getExportRows intersects selection with matching items."""
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    grid = MolGrid([mol])
-    html = grid.to_html()
-
-    # Export function should intersect selection with matching indices
-    assert "matchingSet" in html
-    assert "getMatchingIndices" in html
-
-
-def test_molgrid_html_no_combined_filter_without_cluster():
-    """Test combined filter works when clustering is not enabled."""
-    from cnotebook import MolGrid
-    from openeye import oechem
-
-    mol = oechem.OEGraphMol()
-    oechem.OESmilesToMol(mol, "CCO")
-
-    grid = MolGrid([mol])
-    html = grid.to_html()
-
-    # Combined filter should still be present (handles SMARTS-only case)
-    assert "applyCombinedFilter" in html
-    # But cluster-specific UI should not be present
-    assert 'class="molgrid-cluster-row"' not in html
+    assert '"cluster_labels":["Active","Inactive"]' in html
+    assert '"cluster_counts":false' in html
 
 
 # ============================================================================
@@ -2171,3 +1987,390 @@ def test_widget_config_shape_and_branches():
     assert bare_config["theme"] == "light"
     assert bare_config["static"] is True
     assert bare_config["title"] is True
+
+
+# ============================================================================
+# Widget protocol, display modes and the static document
+# ============================================================================
+
+def test_widget_protocol_visible_images_selection_and_smarts():
+    """Test the widget pre-renders two pages, serves images on demand and answers SMARTS."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("c1ccccc1"), _mol("CCC")], n_items_per_page=2)
+    widget = grid.widget
+
+    # The first page and the one after it are rendered before the front end asks.
+    assert set(widget.images) == {"0", "1", "2"}
+    assert widget.config["page_size"] == 2 and [it["i"] for it in widget.items] == [0, 1, 2]
+
+    widget.selection = [2, 0]
+    assert grid.get_selection_indices() == [0, 2]
+
+    widget.smarts_request = {"seq": 3, "query": "c1ccccc1", "view": "view-a"}
+    assert widget.smarts_result == {"seq": 3, "view": "view-a", "matches": [1], "error": None}
+    widget.smarts_request = {"seq": 4, "query": "c1cc(", "view": "view-a"}
+    assert widget.smarts_result["error"] and widget.smarts_result["matches"] == []
+
+    grid.set_render_options(image_format="png", device_pixel_ratio=1.0)
+    assert widget.revision == 1 and widget.images == {}
+    widget.visible = [2]
+    assert set(widget.images) == {"2"} and "data:image/png" in widget.images["2"]
+    grid.set_render_options(image_format="svg")
+    assert widget.revision == 2 and set(widget.images) == {"2"} and "<svg" in widget.images["2"]
+
+
+def test_widget_answers_each_view_with_its_own_token_and_drops_malformed_requests():
+    """Test every SMARTS answer echoes the asking view and malformed requests are ignored."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    widget = MolGrid([_mol("c1ccccc1")]).widget
+
+    for malformed in (
+        {"seq": 1, "query": "c1ccccc1"},                 # no view token
+        {"seq": 1, "view": "view-a"},                    # no query
+        {"seq": True, "query": "C", "view": "view-a"},   # a flag is not a sequence number
+        {"seq": "1", "query": "C", "view": "view-a"},
+        {"seq": 1, "query": 5, "view": "view-a"},
+        {"seq": 1, "query": "C", "view": 5},
+    ):
+        widget.smarts_request = malformed
+        assert widget.smarts_result == {}
+
+    widget.smarts_request = {"seq": 7, "query": "c1ccccc1", "view": "view-a"}
+    assert widget.smarts_result == {"seq": 7, "view": "view-a", "matches": [0], "error": None}
+    # A second view of the same widget gets its own token back, never the first view's.
+    widget.smarts_request = {"seq": 1, "query": "c1ccccc1", "view": "view-b"}
+    assert widget.smarts_result == {"seq": 1, "view": "view-b", "matches": [0], "error": None}
+
+
+def test_revision_push_clears_images_then_republishes_config_and_the_visible_window():
+    """Test a render-option change drops stale images, republishes config and re-renders."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC")], n_items_per_page=1)
+    widget = grid.widget
+    widget.visible = [1]
+    events: list[tuple[str, object]] = []
+    widget.observe(
+        lambda change: events.append((change["name"], change["new"])),
+        names=["images", "revision", "config"],
+    )
+
+    grid.set_render_options(width=310, image_format="png")
+
+    # The empty dict goes first so the front end drops the images of the previous
+    # revision; the window it last asked for is then rendered again on this side,
+    # because the widget model suppresses a republished but unchanged ``visible``.
+    assert [name for name, _ in events] == ["images", "revision", "config", "images"]
+    assert events[0][1] == {}
+    assert events[1][1] == 1
+    assert events[2][1]["image_width"] == 310
+    assert set(events[3][1]) == {"1"} and "data:image/png" in events[3][1]["1"]
+
+
+def test_images_arrive_as_a_new_dict_that_keeps_the_earlier_renders():
+    """Test on-demand images are merged into a new dict instead of mutated in place."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol("CCC"), _mol("CCCC")], n_items_per_page=1)
+    widget = grid.widget
+    first = widget.images
+    assert set(first) == {"0", "1"}
+
+    widget.visible = [1, 2]
+
+    # traitlets only notifies on a new container, and the previous one is left alone.
+    assert set(widget.images) == {"0", "1", "2"}
+    assert widget.images is not first and set(first) == {"0", "1"}
+
+
+def test_a_widget_keeps_its_grid_alive():
+    """Test a grid nothing else refers to still renders and searches for its widget."""
+    pytest.importorskip("anywidget")
+    import gc
+
+    from cnotebook.grid import MolGrid
+
+    # display(df.chem.molgrid()) never names the grid: the widget is all that is left,
+    # and every image, search and selection is still answered on the Python side.
+    widget = MolGrid([_mol(), _mol("c1ccccc1")], n_items_per_page=1).widget
+    gc.collect()
+
+    widget.visible = [1]
+    assert set(widget.images) == {"0", "1"}
+    widget.smarts_request = {"seq": 1, "query": "c1ccccc1", "view": "view-a"}
+    assert widget.smarts_result["matches"] == [1]
+    widget.selection = [1]
+    assert widget.selection == [1]
+
+
+def test_closing_a_grid_releases_it_and_its_widget():
+    """Test close() lets a displayed grid and its widget be collected."""
+    pytest.importorskip("anywidget")
+    import gc
+    import weakref
+
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol()])
+    widget_ref = weakref.ref(grid.widget)
+    grid_ref = weakref.ref(grid)
+
+    grid.close()
+    del grid
+    gc.collect()
+
+    assert grid_ref() is None and widget_ref() is None
+
+
+def test_initial_state_carries_only_two_pages_of_images():
+    """Test widget creation renders the first two pages and indexes every molecule."""
+    pytest.importorskip("anywidget")
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol() for _ in range(200)], n_items_per_page=24)
+    assert len(grid.widget.images) == 48
+    assert len(grid.widget.items) == 200
+
+
+def test_display_modes_and_static_fallback(monkeypatch):
+    """Test widget mode returns the widget and falls back to static without anywidget."""
+    pytest.importorskip("anywidget")
+    import sys
+
+    from cnotebook.core.errors import CNotebookWarning
+    from cnotebook.grid import MolGrid
+    from cnotebook.grid.widget import MolGridWidget
+
+    grid = MolGrid([_mol()])
+    assert isinstance(grid.display(static=False), MolGridWidget)
+    static = grid.display(static=True)
+    assert "cn-molgrid" in static._repr_html_()
+    assert "__CNOTEBOOK_MOLGRID_STATIC__" in static._repr_html_()
+
+    other = MolGrid([_mol()])
+    monkeypatch.setitem(sys.modules, "anywidget", None)
+    monkeypatch.setitem(sys.modules, "cnotebook.grid.widget", None)
+    with pytest.warns(CNotebookWarning, match="anywidget"):
+        assert hasattr(other.display(static=False), "_repr_html_")
+
+
+def test_display_static_creates_no_widget(monkeypatch):
+    """Test the static path never imports anywidget and never builds a widget."""
+    import sys
+    import warnings
+
+    from cnotebook.grid import MolGrid
+
+    monkeypatch.setitem(sys.modules, "anywidget", None)
+    monkeypatch.setitem(sys.modules, "cnotebook.grid.widget", None)
+    grid = MolGrid([_mol()])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        out = grid.display(static=True)
+
+    assert hasattr(out, "_repr_html_") and grid._widget is None
+
+
+def test_display_without_a_front_end_returns_the_static_output():
+    """Test display() falls back to the document when no kernel front end can draw a widget."""
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol()])
+    out = grid.display()
+
+    assert hasattr(out, "_repr_html_") and grid._widget is None
+
+
+def test_display_is_wrapped_for_marimo():
+    """Test marimo gets mo.Html for the document and mo.ui.anywidget for the widget."""
+    pytest.importorskip("anywidget")
+    from unittest.mock import MagicMock, patch
+
+    from cnotebook.grid import MolGrid
+
+    mock_mo = MagicMock()
+    grid = MolGrid([_mol()])
+
+    with patch("cnotebook.grid.grid._is_marimo", return_value=True), \
+         patch.dict("sys.modules", {"marimo": mock_mo}):
+        static = grid.display(static=True)
+        live = grid.display(static=False)
+
+    mock_mo.Html.assert_called_once()
+    assert static is mock_mo.Html.return_value
+    mock_mo.ui.anywidget.assert_called_once_with(grid.widget)
+    assert live is mock_mo.ui.anywidget.return_value
+
+
+def test_static_html_escapes_script_and_attribute_payloads():
+    """Test hostile titles and field values cannot break out of the embedded payload."""
+    import pandas as pd
+
+    from cnotebook.grid import MolGrid
+
+    mol = _mol(title='</script><img src=x onerror=alert(1)>')
+    oechem.OESetSDData(mol, "MW", '46" onmouseover="alert(1)')
+    df = pd.DataFrame({"note": ["</script><img src=x onerror=alert(2)>"]})
+    grid = MolGrid([mol], dataframe=df, tooltip_fields=["MW"], badges=["MW"])
+    html_doc = grid.to_html()
+
+    assert "</script><img" not in html_doc
+    assert 'onmouseover="alert(1)"' not in html_doc
+    assert "\\u003c/script\\u003e" in html_doc
+    assert "\\u003cimg src=x onerror=alert(2)\\u003e" in html_doc
+    # The only script elements in the document are the two it writes itself.
+    assert html_doc.count("</script>") == 2
+
+
+def test_static_display_never_interpolates_the_grid_name():
+    """Test the grid name never reaches the static output, hostile or not."""
+    from cnotebook.grid import MolGrid
+
+    hostile = 'x" onload="alert(1)'
+    html_out = MolGrid([_mol()], name=hostile).display(static=True)._repr_html_()
+
+    assert 'onload="alert(1)"' not in html_out and hostile not in html_out
+
+
+def test_to_html_warns_above_static_max_items():
+    """Test the static export warns when it embeds more molecules than the threshold."""
+    from cnotebook.core.errors import CNotebookWarning
+    from cnotebook.grid import MolGrid
+
+    grid = MolGrid([_mol(), _mol()], static_max_items=1)
+    with pytest.warns(CNotebookWarning, match="static_max_items"):
+        grid.to_html()
+
+
+def test_to_html_embeds_the_front_end_module_the_stylesheet_and_every_image():
+    """Test the static document is self-contained and boots the front end in static mode."""
+    from cnotebook.grid import MolGrid
+
+    html_doc = MolGrid([_mol()], theme="dark").to_html()
+
+    assert html_doc.startswith("<!DOCTYPE html>") and html_doc.rstrip().endswith("</html>")
+    assert '<div id="molgrid-root"></div>' in html_doc
+    assert "window.__CNOTEBOOK_MOLGRID_STATIC__ = {" in html_doc
+    assert ".cn-molgrid" in html_doc            # molgrid.css
+    assert "export default" in html_doc         # molgrid.js, loaded as an ES module
+    assert '"static":true' in html_doc and '"theme":"dark"' in html_doc
+    # A saved document has no kernel to ask, so every image travels with it.
+    assert '"images":{"0":' in html_doc
+
+
+def test_selection_frame_pandas_and_polars_and_error():
+    """Test selection_frame returns the selected rows of either frame kind."""
+    pytest.importorskip("anywidget")
+    import pandas as pd
+    import polars as pl
+
+    from cnotebook.core.errors import CNotebookError
+    from cnotebook.grid import MolGrid
+
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    grid = MolGrid([_mol(), _mol(), _mol()], dataframe=df)
+    grid.widget.selection = [2, 0]
+    assert list(grid.selection_frame()["x"]) == [1, 3]
+    assert [m is grid._molecules[i] for i, m in zip([0, 2], grid.get_selection())] == [True, True]
+
+    pgrid = MolGrid([_mol(), _mol()], dataframe=pl.DataFrame({"x": [7, 8]}))
+    pgrid.widget.selection = [1]
+    assert pgrid.selection_frame()["x"].to_list() == [8]
+
+    with pytest.raises(CNotebookError):
+        MolGrid([_mol()]).selection_frame()
+
+
+def test_save_writes_static_document(tmp_path):
+    """Test save writes the static document and returns its path."""
+    from cnotebook.grid import MolGrid
+
+    out = MolGrid([_mol()]).save(tmp_path / "grid.html")
+
+    assert out.read_text().startswith("<!DOCTYPE html>")
+
+
+def test_save_is_durable_and_checks_the_destination(tmp_path, monkeypatch):
+    """Test an interrupted save keeps the previous document and leaves nothing behind."""
+    import os
+    import stat
+
+    from cnotebook.core.errors import CNotebookError
+    from cnotebook.grid import MolGrid
+
+    target = tmp_path / "grid.html"
+    grid = MolGrid([_mol()])
+    grid.save(target)
+    previous = target.read_text()
+
+    def failing_replace(src, dst):
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError, match="interrupted"):
+        grid.save(target)
+    monkeypatch.undo()
+
+    assert target.read_text() == previous
+    assert [p.name for p in tmp_path.iterdir()] == ["grid.html"]
+
+    # The document is an ordinary output file, not a 0600 temporary one.
+    plain = tmp_path / "plain.html"
+    plain.write_text("x")
+    assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(plain.stat().st_mode)
+
+    with pytest.raises(CNotebookError, match="does not exist"):
+        MolGrid([_mol()]).save(tmp_path / "missing" / "grid.html")
+
+
+def test_search_smarts_skips_query_molecules():
+    """Test a query molecule in the grid is skipped instead of aborting the interpreter."""
+    from cnotebook.grid import MolGrid
+
+    qmol = oechem.OEQMol()
+    oechem.OEParseSmarts(qmol, "c1ccccc1")
+    grid = MolGrid([_mol("c1ccccc1"), qmol])
+
+    # OESubSearch::SingleMatch is a Fatal stub for query molecules: handing it one kills
+    # the process, so this test also fails by never returning.
+    matches, error = grid.search_smarts("c1ccccc1")
+
+    assert matches == [0] and error is None
+
+
+def test_static_path_runs_with_anywidget_blocked():
+    """Test the grid module, the item index, the document and save need no anywidget."""
+    import subprocess
+    import sys
+
+    code = (
+        "import pathlib, sys, tempfile\n"
+        "class Block:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'anywidget' or name.startswith('anywidget.'):\n"
+        "            raise ImportError('anywidget is blocked')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, Block())\n"
+        "import cnotebook.grid\n"
+        "from openeye import oechem\n"
+        "m = oechem.OEGraphMol(); oechem.OESmilesToMol(m, 'CCO')\n"
+        "grid = cnotebook.grid.MolGrid([m])\n"
+        "assert grid.items()[0]['smiles'] == 'CCO'\n"
+        "assert grid.to_html().startswith('<!DOCTYPE html>')\n"
+        "with tempfile.TemporaryDirectory() as directory:\n"
+        "    out = grid.save(pathlib.Path(directory) / 'grid.html')\n"
+        "    assert out.read_text().startswith('<!DOCTYPE html>')\n"
+        "assert 'anywidget' not in sys.modules\n"
+        "print('OK')\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("OK")

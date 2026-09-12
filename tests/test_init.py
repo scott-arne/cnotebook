@@ -811,8 +811,8 @@ class TestDisplayC3DMolGridStatic:
             result = cnotebook.display(mg, static=None)
         assert result is not None
 
-    def test_display_molgrid_static_true_raises(self):
-        """Test display(molgrid, static=True) raises when not yet supported."""
+    def test_display_molgrid_static_true_forwards(self):
+        """Test display(molgrid, static=True) returns the self-contained HTML output."""
         env = get_env()
         if not env.molgrid_available:
             pytest.skip("MolGrid not available")
@@ -822,22 +822,24 @@ class TestDisplayC3DMolGridStatic:
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         mg = molgrid([mol])
-        with pytest.raises(TypeError, match="MolGrid.display.*does not support the static option"):
-            cnotebook.display(mg, static=True)
+        result = cnotebook.display(mg, static=True)
+        assert "<iframe" in result._repr_html_()
 
-    def test_display_molgrid_static_false_raises(self):
-        """Test display(molgrid, static=False) raises when not yet supported."""
+    def test_display_molgrid_static_false_forwards(self):
+        """Test display(molgrid, static=False) returns the live widget."""
         env = get_env()
         if not env.molgrid_available:
             pytest.skip("MolGrid not available")
+        pytest.importorskip("anywidget")
         from openeye import oechem
 
         from cnotebook import molgrid
+        from cnotebook.grid.widget import MolGridWidget
         mol = oechem.OEGraphMol()
         oechem.OESmilesToMol(mol, "C")
         mg = molgrid([mol])
-        with pytest.raises(TypeError, match="MolGrid.display.*does not support the static option"):
-            cnotebook.display(mg, static=False)
+        result = cnotebook.display(mg, static=False)
+        assert isinstance(result, MolGridWidget)
 
     def test_display_static_forwarding_when_supported(self):
         """Test static parameter is forwarded when display method accepts it."""

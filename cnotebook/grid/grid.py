@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import json
+import functools
+import logging
+import os
+import stat
 import sys
+import tempfile
 import uuid
 from collections import OrderedDict
-from collections.abc import Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -16,12 +20,14 @@ from openeye import oechem, oedepict  # type: ignore[import-untyped]
 from cnotebook import config as _config
 from cnotebook.config import UNSET
 from cnotebook.core.context import CNotebookContext
-from cnotebook.core.errors import warn
+from cnotebook.core.errors import CNotebookError, warn
 from cnotebook.core.render import oedisp_to_html, oemol_to_html, prepare_depiction_copy
 
-# Load List.js from local static file
+log = logging.getLogger("cnotebook")
+
+# Front-end assets shipped with the package. The live widget loads them through
+# anywidget; the static document inlines them so a saved file needs no network.
 _STATIC_DIR = Path(__file__).parent / "static"
-_LIST_JS = (_STATIC_DIR / "list.min.js").read_text()
 _DEFAULT_RENDER_CONTEXT = CNotebookContext()
 DEFAULT_STRUCTURE_SCALE = _DEFAULT_RENDER_CONTEXT.structure_scale
 DEFAULT_ATOM_LABEL_FONT_SCALE = _DEFAULT_RENDER_CONTEXT.atom_label_font_scale
@@ -118,6 +124,67 @@ def _text(value: Any) -> str:
     return "" if _is_missing(value) else str(value)
 
 
+def _safe_observer(
+    fn: Callable[[dict[str, Any]], None],
+) -> Callable[[dict[str, Any]], None]:
+    """Wrap a trait observer so a failure in it cannot break the update that ran it.
+
+    Observers run inside the trait assignment that delivers the front end's message. An
+    exception there would abort that assignment and leave the grid's Python state
+    half-applied while the browser has already moved on, so a failure is reported
+    through the package logger (visible at ``ERROR``) instead.
+
+    :param fn: Observer to protect.
+    :returns: The same observer, guarded.
+    """
+
+    @functools.wraps(fn)
+    def observer(change: dict[str, Any]) -> None:
+        try:
+            fn(change)
+        except Exception:
+            log.exception("cnotebook: MolGrid %s raised", fn.__name__)
+
+    return observer
+
+
+def _smarts_request(value: Any) -> tuple[int, str, str] | None:
+    """Read a SMARTS request exactly as the front end sends one.
+
+    Nothing is coerced. A sequence number that is not a plain integer, or a missing
+    view token, means the message did not come from this protocol, and answering it
+    would publish a result no view can match to a question it asked. :class:`bool` is
+    an :class:`int` in Python but never a sequence number, so it is rejected too.
+
+    :param value: Raw ``smarts_request`` payload.
+    :returns: ``(seq, query, view)``, or ``None`` when the payload is malformed.
+    """
+    if not isinstance(value, dict):
+        return None
+    seq = value.get("seq")
+    query = value.get("query")
+    view = value.get("view")
+    if isinstance(seq, bool) or not isinstance(seq, int):
+        return None
+    if not isinstance(query, str) or not isinstance(view, str):
+        return None
+    return seq, query, view
+
+
+def _is_pandas(obj: Any) -> bool:
+    """Report whether a frame or column is pandas' rather than polars'.
+
+    Both dataframe accessors hand MolGrid their own frame without converting it, and
+    the two libraries address a row differently. The kind is recognized by pandas'
+    positional indexer instead of by importing pandas, which the grid does not
+    otherwise need.
+
+    :param obj: DataFrame or column supplied by either accessor.
+    :returns: True for a pandas object.
+    """
+    return hasattr(obj, "iloc")
+
+
 def _search_copy(mol: oechem.OEMolBase) -> oechem.OEMolBase:
     """Copy a molecule for substructure searching.
 
@@ -136,664 +203,123 @@ def _search_copy(mol: oechem.OEMolBase) -> oechem.OEMolBase:
     return oechem.OEGraphMol(mol)
 
 
-# CSS matching backup styling
-_CSS = '''
-/* Base styles */
-body {
-    overflow-x: hidden;
-    overflow-y: auto;
-}
-
-/* MolGrid Container */
-.molgrid-container {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        "Helvetica Neue", Arial, sans-serif;
-    font-size: 14px;
-    color: #333;
-    max-width: 100%;
-    margin: 0 auto;
-    padding: 10px;
-    box-sizing: border-box;
-    overflow: visible;
-}
-
-/* Toolbar */
-.molgrid-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 15px;
-    padding: 10px;
-    margin-bottom: 15px;
-    background: #f8f9fa;
-    border-radius: 6px;
-    border: 1px solid #e9ecef;
-    overflow: visible;
-    position: relative;
-}
-
-/* Responsive toolbar layout */
-@media (max-width: 900px) {
-    .molgrid-toolbar {
-        gap: 8px 12px;
-    }
-    .molgrid-info {
-        font-size: 12px;
-    }
-    .toggle-text {
-        font-size: 11px;
-    }
-}
-
-@media (max-width: 700px) {
-    .molgrid-search {
-        order: 1;
-        flex-basis: 100%;
-        min-width: unset;
-    }
-    .molgrid-info {
-        order: 2;
-        flex: 1;
-        min-width: 0;
-    }
-    .molgrid-actions {
-        order: 3;
-        flex-shrink: 0;
-    }
-}
-
-@media (max-width: 500px) {
-    .molgrid-toolbar {
-        gap: 6px 10px;
-    }
-    .molgrid-search {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-    }
-    .toggle-switch {
-        justify-content: center;
-    }
-}
-
-/* Search */
-.molgrid-search {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: 1;
-    min-width: 200px;
-}
-
-.molgrid-search-input {
-    flex: 1;
-    padding: 8px 12px;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    font-size: 14px;
-    outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.molgrid-search-input:focus {
-    border-color: #80bdff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
-}
-
-/* Toggle Switch */
-.toggle-switch {
-    display: flex;
-    align-items: center;
-}
-
-.toggle-label {
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-    user-select: none;
-    gap: 6px;
-}
-
-.toggle-label input[type="checkbox"] {
-    position: relative;
-    width: 40px;
-    height: 20px;
-    appearance: none;
-    -webkit-appearance: none;
-    background: #6c757d;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: background 0.3s;
-    margin: 0;
-}
-
-.toggle-label input[type="checkbox"]:checked {
-    background: #007bff;
-}
-
-.toggle-label input[type="checkbox"]::before {
-    content: "";
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.3s;
-}
-
-.toggle-label input[type="checkbox"]:checked::before {
-    transform: translateX(20px);
-}
-
-.toggle-text {
-    font-size: 12px;
-    color: #6c757d;
-}
-
-.toggle-text.active {
-    color: #333;
-    font-weight: 500;
-}
-
-/* Info */
-.molgrid-info {
-    color: #6c757d;
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex-shrink: 1;
-}
-
-/* Grid List */
-.molgrid-list {
-    display: grid;
-    grid-template-columns: repeat(
-        auto-fill, minmax(var(--molgrid-cell-width, 220px), 1fr)
-    );
-    gap: 12px;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    overflow: visible;
-}
-
-/* Cell */
-.molgrid-cell {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 10px;
-    background: white;
-    border: 1px solid #e9ecef;
-    border-radius: 6px;
-    transition: border-color 0.2s, box-shadow 0.2s;
-    cursor: pointer;
-    overflow: hidden;
-    box-sizing: border-box;
-}
-
-.molgrid-cell:hover {
-    border-color: #80bdff;
-    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
-}
-
-.molgrid-cell.selected {
-    border-color: #007bff;
-    background: #f0f7ff;
-}
-
-/* Checkbox */
-.molgrid-checkbox {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-    z-index: 10;
-}
-
-/* Info Button */
-.molgrid-info-btn {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #e9ecef;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    font-weight: 600;
-    font-style: italic;
-    font-family: Georgia, "Times New Roman", serif;
-    color: #6c757d;
-    transition: background 0.2s, color 0.2s, transform 0.2s;
-    z-index: 10;
-    padding: 0;
-    line-height: 1;
-}
-
-.molgrid-info-btn:hover {
-    background: #007bff;
-    color: white;
-    transform: scale(1.1);
-}
-
-/* Info Tooltip */
-.molgrid-info-tooltip {
-    display: none;
-    position: absolute;
-    top: 30px;
-    right: 8px;
-    min-width: 120px;
-    max-width: 220px;
-    background: #212529;
-    color: white;
-    padding: 8px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    z-index: 100;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.molgrid-info-tooltip::before {
-    content: "";
-    position: absolute;
-    top: -6px;
-    right: 12px;
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-bottom: 6px solid #212529;
-}
-
-/* Show on hover OR when pinned */
-.molgrid-info-btn:hover + .molgrid-info-tooltip,
-.molgrid-info-tooltip.pinned {
-    display: block;
-}
-
-/* Highlight button when tooltip is pinned */
-.molgrid-info-btn.active {
-    background: #007bff;
-    color: white;
-}
-
-.molgrid-info-tooltip-row {
-    display: flex;
-    margin-bottom: 4px;
-}
-
-.molgrid-info-tooltip-row:last-child {
-    margin-bottom: 0;
-}
-
-.molgrid-info-tooltip-label {
-    font-weight: 600;
-    margin-right: 6px;
-    color: #adb5bd;
-}
-
-.molgrid-info-tooltip-value {
-    word-break: break-word;
-}
-
-/* Image */
-.molgrid-image {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    width: 100%;
-    height: var(--molgrid-image-height, 150px);
-    overflow: hidden;
-    flex-shrink: 0;
-}
-
-.molgrid-image svg {
-    max-width: 100%;
-    max-height: 100%;
-    width: auto !important;
-    height: auto !important;
-}
-
-.molgrid-image img {
-    max-width: 100%;
-    max-height: 100%;
-    width: auto;
-    height: auto;
-    object-fit: contain;
-}
-
-/* Title */
-.molgrid-title {
-    margin-top: 8px;
-    font-size: 13px;
-    font-weight: 500;
-    text-align: center;
-    word-break: break-word;
-    color: #495057;
-}
-
-/* Pagination */
-.molgrid-pagination {
-    display: flex;
-    justify-content: center;
-    margin-top: 20px;
-    padding: 10px;
-}
-
-.molgrid-pagination .pagination {
-    display: flex;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    gap: 4px;
-}
-
-.molgrid-pagination .pagination li {
-    display: inline-block;
-}
-
-.molgrid-pagination .pagination li a,
-.molgrid-pagination .pagination li span {
-    display: inline-block;
-    padding: 6px 12px;
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
-    color: #007bff;
-    text-decoration: none;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
-}
-
-.molgrid-pagination .pagination li a:hover {
-    background: #e9ecef;
-    border-color: #dee2e6;
-}
-
-.molgrid-pagination .pagination li.active a,
-.molgrid-pagination .pagination li.active span {
-    background: #007bff;
-    border-color: #007bff;
-    color: white;
-}
-
-.molgrid-pagination .pagination li.disabled a,
-.molgrid-pagination .pagination li.disabled span {
-    color: #6c757d;
-    cursor: not-allowed;
-    background: #f8f9fa;
-}
-
-/* Prev/Next Buttons */
-.molgrid-pagination-nav {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 10px;
-    margin-top: 20px;
-    padding: 10px;
-}
-
-.molgrid-pagination-nav button {
-    width: 100px;
-    padding: 6px 12px;
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
-    background: white;
-    color: #007bff;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
-}
-
-.molgrid-pagination-nav button:hover:not(:disabled) {
-    background: #e9ecef;
-    border-color: #dee2e6;
-}
-
-.molgrid-pagination-nav button:disabled {
-    color: #6c757d;
-    cursor: not-allowed;
-    background: #f8f9fa;
-}
-
-.molgrid-pagination-nav .molgrid-pagination {
-    margin-top: 0;
-    padding: 0;
-}
-
-/* Actions Dropdown */
-.molgrid-actions {
-    position: relative;
-    overflow: visible;
-}
-
-.molgrid-actions-btn {
-    padding: 6px 12px;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    background: white;
-    color: #495057;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
-    line-height: 1;
-}
-
-.molgrid-actions-btn:hover {
-    background: #e9ecef;
-    border-color: #adb5bd;
-}
-
-.molgrid-dropdown {
-    display: none;
-    position: fixed;
-    min-width: 180px;
-    background: white;
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 1000;
-}
-
-.molgrid-dropdown.show {
-    display: block;
-}
-
-.molgrid-dropdown-item {
-    display: block;
-    width: 100%;
-    padding: 10px 14px;
-    border: none;
-    background: none;
-    text-align: left;
-    font-size: 14px;
-    color: #212529;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.molgrid-dropdown-item:hover {
-    background: #f8f9fa;
-}
-
-.molgrid-dropdown-divider {
-    height: 1px;
-    margin: 4px 0;
-    background: #e9ecef;
-}
-
-/* Cluster Filter Row */
-.molgrid-cluster-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    padding: 10px;
-    background: #f8f9fa;
-    border-radius: 6px 6px 0 0;
-    border: 1px solid #e9ecef;
-    border-bottom: none;
-}
-
-.molgrid-cluster-row + .molgrid-toolbar {
-    border-radius: 0 0 6px 6px;
-    border-top: 1px solid #e9ecef;
-}
-
-/* Cluster Dropdown Button */
-.molgrid-cluster-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    background: white;
-    color: #495057;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
-    white-space: nowrap;
-}
-
-.molgrid-cluster-btn:hover {
-    background: #e9ecef;
-    border-color: #adb5bd;
-}
-
-.molgrid-cluster-btn svg {
-    width: 12px;
-    height: 12px;
-    fill: currentColor;
-}
-
-/* Cluster Dropdown Menu */
-.molgrid-cluster-dropdown {
-    display: none;
-    position: fixed;
-    min-width: 200px;
-    max-width: 300px;
-    max-height: 300px;
-    background: white;
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 1000;
-    overflow: hidden;
-}
-
-.molgrid-cluster-dropdown.show {
-    display: flex;
-    flex-direction: column;
-}
-
-.molgrid-cluster-search {
-    padding: 8px;
-    border-bottom: 1px solid #e9ecef;
-}
-
-.molgrid-cluster-search input {
-    width: 100%;
-    padding: 6px 10px;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    font-size: 13px;
-    outline: none;
-    box-sizing: border-box;
-}
-
-.molgrid-cluster-search input:focus {
-    border-color: #80bdff;
-    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
-}
-
-.molgrid-cluster-list {
-    flex: 1;
-    overflow-y: auto;
-    max-height: 240px;
-}
-
-.molgrid-cluster-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.molgrid-cluster-item:hover {
-    background: #f8f9fa;
-}
-
-.molgrid-cluster-item.selected {
-    background: #e7f1ff;
-}
-
-.molgrid-cluster-label {
-    font-size: 14px;
-    color: #212529;
-}
-
-.molgrid-cluster-count {
-    font-size: 12px;
-    color: #6c757d;
-    margin-left: 8px;
-}
-
-/* Cluster Pills */
-.molgrid-cluster-pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-}
-
-.molgrid-cluster-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    background: #e7f1ff;
-    border: 1px solid #b6d4fe;
-    border-radius: 16px;
-    font-size: 13px;
-    color: #0a58ca;
-}
-
-.molgrid-cluster-pill-remove {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border: none;
-    background: transparent;
-    color: #0a58ca;
-    cursor: pointer;
-    border-radius: 50%;
-    padding: 0;
-    font-size: 14px;
-    line-height: 1;
-    transition: background 0.15s, color 0.15s;
-}
-
-.molgrid-cluster-pill-remove:hover {
-    background: #0a58ca;
-    color: white;
-}
-'''
+@functools.cache
+def _static_asset(name: str) -> str:
+    """Read a front-end asset from the package's static directory.
+
+    The static document inlines the same module and stylesheet for every grid it
+    exports, so the text is cached rather than re-read per call. Reading it lazily
+    instead of at import keeps the cost off ``import cnotebook.grid``, which the
+    dataframe accessors pay whether or not anything is ever exported.
+
+    :param name: File name inside ``cnotebook/grid/static``.
+    :returns: The file's text.
+    """
+    return (_STATIC_DIR / name).read_text(encoding="utf-8")
+
+
+def _has_display_frontend() -> bool:
+    """Check whether something in this process could render a widget.
+
+    A widget is a message to a front end, not a value: without one it has nothing to
+    draw into and shows as a bare repr. A terminal IPython session counts as no front
+    end even though it has a shell, because it has no widget manager. The kernel shell
+    is recognized through the MRO so a front end that subclasses it (Colab does) still
+    counts. The check is made per call rather than once at import, because a session
+    can acquire a shell after cnotebook loads.
+
+    :returns: True when a marimo notebook or a Jupyter kernel shell is running.
+    """
+    if _is_marimo():
+        return True
+    try:
+        from IPython.core.getipython import get_ipython
+    except ImportError:
+        return False
+    shell = get_ipython()
+    if shell is None:
+        return False
+    return any(cls.__name__ == "ZMQInteractiveShell" for cls in type(shell).__mro__)
+
+
+def _prepare_target(path: str | os.PathLike[str]) -> Path:
+    """Validate that *path* can be written and return it as a :class:`~pathlib.Path`.
+
+    The directory is checked before any work is done so a mistyped path fails
+    immediately rather than after every molecule in the grid has been rendered.
+
+    :param path: Destination file.
+    :returns: The destination as a path.
+    :raises CNotebookError: If the destination's directory does not exist.
+    """
+    target = Path(path)
+    directory = target.parent
+    if not directory.is_dir():
+        raise CNotebookError(f"Cannot write {target}: the directory {directory} does not exist")
+    return target
+
+
+@functools.cache
+def _default_file_mode() -> int:
+    """Return the permissions a plain ``open(path, "wb")`` would give a new file.
+
+    The umask can only be read by setting it, which is process-global and therefore
+    momentarily wrong for every other thread. The answer is cached so that window is
+    opened once per process instead of once per saved file.
+
+    :returns: The mode bits for a newly created output file.
+    """
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
+def _apply_output_permissions(temporary: Path, target: Path) -> None:
+    """Give the temporary file the permissions the finished document should have.
+
+    :func:`tempfile.mkstemp` creates its file 0600 because temporary files may hold
+    secrets. A saved document is an ordinary output file, so it takes the mode of the
+    file it replaces, or the mode a plain ``open()`` would have produced.
+
+    :param temporary: The file about to be moved into place.
+    :param target: The destination, which may or may not exist yet.
+    """
+    try:
+        mode = stat.S_IMODE(target.stat().st_mode)
+    except OSError:
+        mode = _default_file_mode()
+    os.chmod(temporary, mode)
+
+
+def _write_atomically(path: str | os.PathLike[str], data: bytes) -> Path:
+    """Write *data* to *path* so a failed write never leaves a truncated file.
+
+    The bytes go to a temporary file in the destination directory and are moved onto
+    the target with :func:`os.replace`, which is atomic within one filesystem. A reader
+    therefore sees either the previous file or the complete new one, and an interrupted
+    write leaves the previous document in place.
+
+    :param path: Destination file.
+    :param data: Bytes to write.
+    :returns: The destination path.
+    :raises CNotebookError: If the destination's directory does not exist.
+    :raises OSError: If the write or the move fails.
+    """
+    target = _prepare_target(path)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+        _apply_output_permissions(Path(temporary), target)
+        os.replace(temporary, target)
+    except BaseException:
+        # os.replace consumed the temporary file on success; on any failure it is still
+        # there, and a stray dot-file next to the user's output is its own small bug.
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return target
 
 
 class MolGrid:
@@ -824,7 +350,7 @@ class MolGrid:
         mols: Iterable,
         *,
         dataframe=None,
-        mol_col: str | None = None,
+        mol_col: Hashable | None = None,
         title: bool | str | None = True,
         tooltip_fields: list[str] | None = None,
         n_items_per_page: int = UNSET,
@@ -858,8 +384,7 @@ class MolGrid:
         """Create a molecule grid; nothing is rendered or displayed until asked for.
 
         :param mols: Molecules to show. ``None`` entries become placeholders.
-        :param dataframe: Optional pandas DataFrame with per-molecule data
-            (polars frames are converted by the polars accessor).
+        :param dataframe: Optional pandas or polars DataFrame with per-molecule data.
         :param mol_col: Molecule column of *dataframe*, excluded from data fields.
         :param title: Card label mode. ``True`` uses the molecule title, a
             string names a field, ``None``/``False`` hides labels.
@@ -917,7 +442,6 @@ class MolGrid:
         """
         self._molecules = list(mols)
         self._dataframe = dataframe
-        self._mol_col = mol_col
         # One mapping of exposed field name -> original column label, built and
         # validated once so every field lookup resolves the same way.
         self._fields = self._build_field_map(dataframe, mol_col)
@@ -1021,7 +545,12 @@ class MolGrid:
         if isinstance(self.cluster, str):
             # _validate_cluster rejects a column name without a DataFrame.
             assert self._dataframe is not None
-            values = list(self._dataframe[self.cluster])
+            frame = self._dataframe
+            values = (
+                list(frame[self.cluster])
+                if _is_pandas(frame)
+                else frame.get_column(self.cluster).to_list()
+            )
             return [_UNCATEGORIZED if _is_missing(v) else str(v) for v in values]
         if isinstance(self.cluster, dict):
             return [
@@ -1094,11 +623,16 @@ class MolGrid:
             # Extension dtypes such as ``category`` hide their value type, so
             # fall back to inspecting the first value actually stored.
             try:
-                present = dataframe[col].dropna()
-                first_valid = present.iloc[0] if len(present) > 0 else None
+                column = dataframe[col]
+                if _is_pandas(column):
+                    present = column.dropna()
+                    first_valid = present.iloc[0] if len(present) > 0 else None
+                else:
+                    present = column.drop_nulls()
+                    first_valid = present[0] if len(present) > 0 else None
                 if isinstance(first_valid, str):
                     search_fields.append(name)
-            except (IndexError, KeyError):
+            except (IndexError, KeyError, AttributeError):
                 pass
 
         return search_fields
@@ -1132,7 +666,11 @@ class MolGrid:
         :returns: Raw field value, or None when the field is unknown.
         """
         if self._dataframe is not None and field in self._fields:
-            return self._dataframe.iloc[idx][self._fields[field]]
+            column = self._fields[field]
+            frame = self._dataframe
+            if _is_pandas(frame):
+                return frame.iloc[idx][column]
+            return frame.row(idx, named=True)[column]
 
         if not isinstance(mol, oechem.OEMolBase):
             return None
@@ -1455,6 +993,9 @@ class MolGrid:
     def search_smarts(self, pattern: str) -> tuple[list[int], str | None]:
         """Find molecules matching a SMARTS pattern.
 
+        Query molecules are skipped: matching one pattern against another is not
+        something OEChem supports, and its stub for it aborts the whole process.
+
         :param pattern: SMARTS pattern.
         :returns: ``(matching indices, error message)``; the error is ``None``
             for a valid pattern and the indices are empty for an invalid one.
@@ -1465,7 +1006,11 @@ class MolGrid:
 
         matches: list[int] = []
         for idx, mol in enumerate(self._molecules):
-            if isinstance(mol, oechem.OEMolBase) and mol.IsValid():
+            if (
+                isinstance(mol, oechem.OEMolBase)
+                and not isinstance(mol, oechem.OEQMolBase)
+                and mol.IsValid()
+            ):
                 probe = _search_copy(mol)
                 oechem.OEPrepareSearch(probe, query)
                 if query.SingleMatch(probe):
@@ -1498,7 +1043,8 @@ class MolGrid:
         chemistry accessors. The ``title`` option controls titles drawn inside
         molecule images; grid card labels remain controlled by the MolGrid
         ``title`` constructor argument. Applying any option clears the rendered
-        images and increments :attr:`revision`.
+        images, increments :attr:`revision` and, when a live widget exists,
+        publishes the new revision to it.
 
         :param width: Image width in pixels. If 0, determined by structure scale.
         :param height: Image height in pixels. If 0, determined by structure scale.
@@ -1555,6 +1101,8 @@ class MolGrid:
 
         self._images.clear()
         self.revision += 1
+        if self._widget is not None:
+            self._push_revision()
 
     def close(self) -> None:
         """Release the front end and drop cached images."""
@@ -1566,10 +1114,10 @@ class MolGrid:
         self._images.clear()
         self.closed = True
 
-    # -- legacy helpers for the static template below --------------------------
-    # ``to_html`` still renders through the original List.js template, which
-    # needs the raw (unstringified) field values these helpers return. They go
-    # away with the template when the new front end lands.
+    # -- raw-value helpers ------------------------------------------------------
+    # The front end is handed stringified fields, but callers that work in Python --
+    # and the tests -- need the values as they come out of the frame or the molecule.
+    # These return them untouched.
 
     def _get_field_value(self, idx: int, mol, field: str):
         """Get a field value from a DataFrame column or a molecule property.
@@ -1590,7 +1138,7 @@ class MolGrid:
         return self.search_smarts(smarts_pattern)[0]
 
     def _prepare_data(self) -> list[dict[str, Any]]:
-        """Prepare molecule data for the static template.
+        """Prepare molecule data with raw field values.
 
         :returns: List of dicts with molecule data for each item.
         """
@@ -1644,1010 +1192,286 @@ class MolGrid:
             export_data.append(row)
         return export_data
 
-    def to_html(self) -> str:
-        """Generate HTML representation of the grid.
+    # -- widget ---------------------------------------------------------------
 
-        :returns: Complete HTML document as string.
+    def _initial_indices(self) -> list[int]:
+        """Molecule indices to render before the front end has asked for anything.
+
+        The first page and the one after it: the grid appears filled immediately and
+        the first page turn needs no round trip, while a grid of thousands of molecules
+        still renders only what is about to be looked at.
+
+        :returns: Indices of the first two pages.
+        """
+        return list(range(min(len(self._molecules), 2 * int(self.n_items_per_page))))
+
+    def _push_revision(self) -> None:
+        """Publish a new render revision to the live widget.
+
+        The empty ``images`` goes out first, so no view keeps a depiction drawn with the
+        previous options, and the window each view last reported is then rendered from
+        here: a view that has not scrolled republishes the same ``visible``, and
+        traitlets delivers no notification for a value that has not changed.
+        """
+        widget = self._widget
+        widget.images = {}
+        widget.revision = self.revision
+        widget.config = self.widget_config(static=False)
+        if widget.visible:
+            widget.images = self.render_indices(widget.visible)
+
+    @property
+    def widget(self) -> Any:
+        """The live widget for this grid, created on first access and cached.
+
+        The widget module is imported here rather than at the top of this one, so a
+        grid that is only ever exported or displayed statically never needs anywidget.
+
+        :returns: The :class:`~cnotebook.grid.widget.MolGridWidget` backing this grid.
+        :raises ImportError: If anywidget is not installed.
+        """
+        if self._widget is None:
+            from cnotebook.grid.widget import MolGridWidget
+
+            widget = MolGridWidget(
+                items=self.items(),
+                config=self.widget_config(static=False),
+                revision=self.revision,
+                images=self.render_indices(self._initial_indices()),
+                selection=list(self.selection),
+            )
+            # These observers hold the grid, deliberately. Images, searches and the
+            # selection are all answered on this side, so a widget whose grid had been
+            # collected would render nothing and answer nothing; and the grid is
+            # frequently nameless, as in ``display(df.chem.molgrid())``. The pair is
+            # released by :meth:`close`, which closes the widget and drops it from
+            # ipywidgets' registry of open widgets.
+            grid = self
+
+            def on_visible(change: dict[str, Any]) -> None:
+                missing = [i for i in change["new"] if str(i) not in widget.images]
+                if not missing:
+                    return
+                try:
+                    rendered = grid.render_indices(missing)
+                except Exception as exc:
+                    # A depiction failure is the user's to see: without this the front
+                    # end would sit on a page of permanently blank cards.
+                    log.exception("cnotebook: MolGrid could not render %s", missing)
+                    widget.error = f"Could not render molecules: {exc}"
+                    return
+                widget.error = ""
+                # A new mapping: traitlets compares containers, and images appended to
+                # the one the widget already holds would never reach the browser.
+                widget.images = {**widget.images, **rendered}
+
+            def on_smarts(change: dict[str, Any]) -> None:
+                request = _smarts_request(change["new"])
+                if request is None:
+                    log.debug(
+                        "cnotebook: MolGrid ignoring malformed SMARTS request %r",
+                        change["new"],
+                    )
+                    return
+                seq, query, view = request
+                matches, error = grid.search_smarts(query)
+                # The view token is echoed verbatim: one widget can be shown in several
+                # cells, and each view must recognize the answer to its own question.
+                widget.smarts_result = {
+                    "seq": seq,
+                    "view": view,
+                    "matches": matches,
+                    "error": error,
+                }
+
+            def on_selection(change: dict[str, Any]) -> None:
+                grid.selection = sorted(int(i) for i in change["new"])
+
+            widget.observe(_safe_observer(on_visible), names=["visible"])
+            widget.observe(_safe_observer(on_smarts), names=["smarts_request"])
+            widget.observe(_safe_observer(on_selection), names=["selection"])
+            self._widget = widget
+        return self._widget
+
+    # -- display --------------------------------------------------------------
+
+    def to_html(self) -> str:
+        """Render the grid as a self-contained HTML document.
+
+        Every image is embedded, along with the front-end module and the stylesheet, so
+        the document works from a file, an email attachment or a static web server with
+        no kernel to ask and nothing to fetch.
+
+        :returns: A complete HTML document.
         """
         if len(self._molecules) > self.static_max_items:
             warn(
-                f"Rendering {len(self._molecules)} molecules as static HTML; "
-                f"grids above {self.static_max_items} items may be slow to load. "
-                "Pass static_max_items to raise the threshold."
+                f"MolGrid.to_html() is embedding {len(self._molecules)} molecules, above "
+                f"static_max_items={self.static_max_items}; the document will be large. "
+                "Use display() for the live widget or raise static_max_items."
             )
-
-        items = self._prepare_data()
-        export_data = self._prepare_export_data()
-        grid_id = self.name
-        items_per_page = self.n_items_per_page
-        total_items = len(items)
-
-        # Prepare export data as JSON for JavaScript
-        export_data_js = json.dumps(export_data)
-        # Get column names for CSV header
-        export_columns = ["smiles", *self._frame_columns()]
-        export_columns_js = json.dumps(export_columns)
-
-        # Prepare cluster data for JavaScript
-        cluster_data_js = "null"
-        cluster_counts_js = "null"
-        cluster_enabled = self.cluster is not None
-        cluster_map: dict[str, list[int]] = {}
-
-        if cluster_enabled:
-            # Build cluster metadata: {label: [indices], ...}
-            for item in items:
-                label = item.get("cluster", "Uncategorized")
-                if label not in cluster_map:
-                    cluster_map[label] = []
-                cluster_map[label].append(item["index"])
-
-            cluster_data_js = json.dumps(cluster_map)
-
-            if self.cluster_counts:
-                cluster_counts = {label: len(indices) for label, indices in cluster_map.items()}
-                cluster_counts_js = json.dumps(cluster_counts)
-
-        # Build item HTML - IMPORTANT: data-smiles on cell element for working selection
-        items_html = ""
-        for item in items:
-            tooltip_str = ""
-            if item["tooltip"]:
-                tooltip_parts = [f"{k}: {v}" for k, v in item["tooltip"].items() if v]
-                tooltip_str = "&#10;".join(tooltip_parts)
-
-            # Visible title display
-            title_display_html = ""
-            if item["title"]:
-                title_display_html = f'<div class="molgrid-title">{escape(str(item["title"]))}</div>'
-
-            # Hidden title span for List.js search (always present for consistent indexing)
-            title_value = escape(str(item["title"])) if item["title"] else ""
-
-            checkbox_html = ""
-            if self.selection_enabled:
-                checkbox_html = f'<input type="checkbox" class="molgrid-checkbox" data-index="{item["index"]}">'
-
-            # Info button with tooltip
-            info_html = ""
-            if self.information_enabled:
-                # Build tooltip content: Index always, Title if available, then data fields
-                info_rows = (
-                    '<div class="molgrid-info-tooltip-row">'
-                    '<span class="molgrid-info-tooltip-label">Index:</span>'
-                    f'<span class="molgrid-info-tooltip-value">{item["index"]}</span>'
-                    '</div>'
-                )
-                if item.get("mol_title"):
-                    mol_title_escaped = escape(str(item["mol_title"]))
-                    info_rows += (
-                        '<div class="molgrid-info-tooltip-row">'
-                        '<span class="molgrid-info-tooltip-label">Title:</span>'
-                        f'<span class="molgrid-info-tooltip-value">{mol_title_escaped}</span>'
-                        '</div>'
-                    )
-                # Add data fields from info_fields
-                for field, value in item.get("info_fields", {}).items():
-                    if value is not None:
-                        display_value = escape(str(value))
-                        info_rows += (
-                            '<div class="molgrid-info-tooltip-row">'
-                            f'<span class="molgrid-info-tooltip-label">{escape(field)}:</span>'
-                            f'<span class="molgrid-info-tooltip-value">{display_value}</span>'
-                            '</div>'
-                        )
-                info_html = (
-                    '<button class="molgrid-info-btn" type="button">i</button>\n'
-                    f'                <div class="molgrid-info-tooltip">{info_rows}</div>'
-                )
-
-            tooltip_attr = f'title="{tooltip_str}"' if tooltip_str else ""
-
-            # Build data-cluster attribute if enabled
-            cluster_attr = ""
-            if cluster_enabled and "cluster" in item:
-                cluster_attr = f'data-cluster="{escape(str(item["cluster"]))}"'
-
-            # Build hidden spans for search fields
-            search_fields_html = ""
-            for field, value in item["search_fields"].items():
-                safe_value = escape(str(value)) if value is not None else ""
-                search_fields_html += (
-                    f'<span class="{escape(field)}" style="display:none;">'
-                    f'{safe_value}</span>\n                '
-                )
-
-            # Keep data-smiles on cell element (critical for selection to work)
-            # Add hidden spans for List.js valueNames (index, smiles, title, search fields)
-            smiles_escaped = escape(item["smiles"])
-            items_html += f'''
-            <li class="molgrid-cell"
-                data-index="{item["index"]}"
-                data-smiles="{smiles_escaped}"
-                {cluster_attr}
-                {tooltip_attr}>
-                {checkbox_html}
-                {info_html}
-                <div class="molgrid-image">{item["img"]}</div>
-                {title_display_html}
-                <span class="title" style="display:none;">{title_value}</span>
-                <span class="index" style="display:none;">{item["index"]}</span>
-                <span class="smiles" style="display:none;">{smiles_escaped}</span>
-                {search_fields_html}
-            </li>
-            '''
-
-        # Build cluster row HTML if enabled
-        cluster_row_html = ""
-        if cluster_enabled:
-            # Get unique cluster labels sorted
-            cluster_labels = sorted(cluster_map.keys())
-
-            # Build cluster items for dropdown
-            cluster_items_html = ""
-            for label in cluster_labels:
-                count_html = ""
-                if self.cluster_counts:
-                    count = len(cluster_map[label])
-                    count_html = f'<span class="molgrid-cluster-count">({count})</span>'
-                cluster_items_html += f'''
-                <div class="molgrid-cluster-item" data-cluster="{escape(str(label))}">
-                    <span class="molgrid-cluster-label">{escape(str(label))}</span>
-                    {count_html}
-                </div>'''
-
-            cluster_row_html = f'''
-        <div class="molgrid-cluster-row">
-            <button class="molgrid-cluster-btn" type="button">
-                Cluster
-                <svg viewBox="0 0 12 12"><path d="M2 4l4 4 4-4z"/></svg>
-            </button>
-            <div class="molgrid-cluster-dropdown">
-                <div class="molgrid-cluster-search">
-                    <input type="text"
-                           placeholder="Search clusters..."
-                           class="molgrid-cluster-search-input">
-                </div>
-                <div class="molgrid-cluster-list">
-                    {cluster_items_html}
-                </div>
-            </div>
-            <div class="molgrid-cluster-pills"></div>
-        </div>'''
-
-        # Prepare search fields for JavaScript
-        search_fields_js = json.dumps(self.search_fields or [])
-
-        # JavaScript for selection sync with List.js pagination
-        # Only include cluster variables if clustering is enabled
-        cluster_vars_js = ""
-        if cluster_enabled:
-            cluster_vars_js = f"""
-    var clusterData = {cluster_data_js};
-    var clusterCounts = {cluster_counts_js};
-    var clusterEnabled = true;"""
-        js = f'''
-(function() {{
-    var gridId = "{grid_id}";
-    var itemsPerPage = {items_per_page};
-    var searchFields = {search_fields_js};
-    var exportData = {export_data_js};
-    var exportColumns = {export_columns_js};{cluster_vars_js}
-    var container = document.getElementById(gridId);
-    var selectedIndices = new Set();
-    var searchMode = 'properties';  // 'properties' or 'smarts'
-
-    // Initialize List.js with pagination
-    var options = {{
-        valueNames: ['title', 'index', 'smiles'].concat(searchFields),
-        page: itemsPerPage,
-        pagination: {{
-            innerWindow: 1,
-            outerWindow: 1,
-            left: 1,
-            right: 1,
-            paginationClass: 'pagination',
-            item: '<li><a class="page" href="javascript:void(0)"></a></li>'
-        }}
-    }};
-
-    var molgridList = new List(gridId, options);
-
-    // Prev/Next buttons
-    var prevBtn = container.querySelector('.molgrid-prev');
-    var nextBtn = container.querySelector('.molgrid-next');
-
-    // Update showing info text and prev/next button states
-    function updateShowingInfo() {{
-        var totalItems = molgridList.matchingItems.length;
-        var currentPage = molgridList.i;
-        var perPage = molgridList.page;
-
-        var start = totalItems > 0 ? currentPage : 0;
-        var end = Math.min(currentPage + perPage - 1, totalItems);
-
-        var showingStart = container.querySelector('.showing-start');
-        var showingEnd = container.querySelector('.showing-end');
-        var showingTotal = container.querySelector('.showing-total');
-
-        if (showingStart) showingStart.textContent = start;
-        if (showingEnd) showingEnd.textContent = end;
-        if (showingTotal) showingTotal.textContent = totalItems;
-
-        // Update prev/next button states
-        var totalPages = Math.ceil(totalItems / perPage);
-        var currentPageNum = Math.ceil(currentPage / perPage);
-
-        prevBtn.disabled = currentPageNum <= 1;
-        nextBtn.disabled = currentPageNum >= totalPages || totalPages <= 1;
-    }}
-
-    // Prev button click handler
-    prevBtn.addEventListener('click', function() {{
-        var totalItems = molgridList.matchingItems.length;
-        var currentPage = molgridList.i;
-        var perPage = molgridList.page;
-
-        if (currentPage > 1) {{
-            var newStart = currentPage - perPage;
-            if (newStart < 1) newStart = 1;
-            molgridList.show(newStart, perPage);
-        }}
-    }});
-
-    // Next button click handler
-    nextBtn.addEventListener('click', function() {{
-        var totalItems = molgridList.matchingItems.length;
-        var currentPage = molgridList.i;
-        var perPage = molgridList.page;
-        var totalPages = Math.ceil(totalItems / perPage);
-        var currentPageNum = Math.ceil(currentPage / perPage);
-
-        if (currentPageNum < totalPages) {{
-            var newStart = currentPage + perPage;
-            molgridList.show(newStart, perPage);
-        }}
-    }});
-
-    // Search functionality
-    var searchInput = container.querySelector('.molgrid-search-input');
-    var searchModeToggle = container.querySelector('.search-mode-toggle');
-    var toggleTexts = container.querySelectorAll('.toggle-text');
-    var smartsMatchIndices = null;  // Store SMARTS match results
-
-    // Debounce function for search
-    function debounce(func, wait) {{
-        var timeout;
-        return function() {{
-            var context = this;
-            var args = arguments;
-            clearTimeout(timeout);
-            timeout = setTimeout(function() {{
-                func.apply(context, args);
-            }}, wait);
-        }};
-    }}
-
-    // Apply combined filter (SMARTS + cluster) to the grid.
-    // List.js only supports a single filter function, so both filters
-    // must be combined into one call to molgridList.filter().
-    function applyCombinedFilter() {{
-        var hasSmarts = smartsMatchIndices !== null;
-        var hasClusters = typeof selectedClusters !== 'undefined' && selectedClusters.size > 0;
-
-        if (!hasSmarts && !hasClusters) {{
-            molgridList.filter();  // Clear all filters
-        }} else {{
-            molgridList.filter(function(item) {{
-                if (hasSmarts) {{
-                    var idx = parseInt(item.values().index, 10);
-                    if (!smartsMatchIndices.has(idx)) return false;
-                }}
-                if (hasClusters) {{
-                    var clusterValue = item.elm.getAttribute('data-cluster');
-                    if (!selectedClusters.has(clusterValue)) return false;
-                }}
-                return true;
-            }});
-        }}
-        molgridList.i = 1;  // Reset to first page
-        updateShowingInfo();
-    }}
-
-    // Apply SMARTS filter based on matching indices
-    function applySmartsFilter(matchIndices) {{
-        smartsMatchIndices = new Set(matchIndices);
-        applyCombinedFilter();
-    }}
-
-    // Clear SMARTS filter
-    function clearSmartsFilter() {{
-        smartsMatchIndices = null;
-        applyCombinedFilter();
-    }}
-
-    // Send SMARTS query to Python
-    function sendSmartsQuery(query) {{
-        window.parent.postMessage({{
-            type: "MOLGRID_SMARTS_QUERY",
-            gridId: gridId,
-            query: query
-        }}, "*");
-    }}
-
-    // Listen for SMARTS results from Python
-    window.addEventListener("message", function(event) {{
-        var isSmartsResult = event.data &&
-            event.data.gridId === gridId &&
-            event.data.type === "MOLGRID_SMARTS_RESULTS";
-        if (isSmartsResult) {{
-            var matches = JSON.parse(event.data.matches);
-            applySmartsFilter(matches);
-        }}
-    }});
-
-    // Perform search based on current mode
-    function performSearch(query) {{
-        if (!query) {{
-            molgridList.search();  // Clear text search
-            clearSmartsFilter();   // Clear SMARTS filter
-        }} else if (searchMode === 'smarts') {{
-            // SMARTS mode - send to Python for substructure search
-            molgridList.search();  // Clear any text search
-            sendSmartsQuery(query);
-        }} else {{
-            // Properties mode - search title and configured fields
-            clearSmartsFilter();  // Clear any SMARTS filter
-            var fieldsToSearch = ['title'].concat(searchFields);
-            molgridList.search(query, fieldsToSearch);
-            molgridList.i = 1;  // Reset to first page
-            updateShowingInfo();
-        }}
-    }}
-
-    // Debounced search handler
-    var debouncedSearch = debounce(function(e) {{
-        performSearch(e.target.value);
-    }}, 300);
-
-    searchInput.addEventListener('input', debouncedSearch);
-
-    // Search mode toggle handler
-    searchModeToggle.addEventListener('change', function() {{
-        searchMode = this.checked ? 'smarts' : 'properties';
-
-        // Update toggle text styling
-        toggleTexts[0].classList.toggle('active', !this.checked);
-        toggleTexts[1].classList.toggle('active', this.checked);
-
-        // Re-trigger search with current query
-        if (searchInput.value) {{
-            performSearch(searchInput.value);
-        }} else {{
-            // Clear any existing filter when switching modes with empty query
-            clearSmartsFilter();
-        }}
-    }});
-
-    // Update checkboxes based on selection state (after page change)
-    function updateCheckboxes() {{
-        var checkboxes = container.querySelectorAll('.molgrid-checkbox');
-        checkboxes.forEach(function(checkbox) {{
-            var index = parseInt(checkbox.getAttribute('data-index'), 10);
-            checkbox.checked = selectedIndices.has(index);
-            var cell = checkbox.closest('.molgrid-cell');
-            if (cell) {{
-                cell.classList.toggle('selected', checkbox.checked);
-            }}
-        }});
-    }}
-
-    function syncSelection() {{
-        var selection = {{}};
-        selectedIndices.forEach(function(idx) {{
-            var cell = container.querySelector('.molgrid-cell[data-index="' + idx + '"]');
-            var smiles = cell ? cell.getAttribute("data-smiles") : '';
-            selection[idx] = smiles;
-        }});
-
-        var globalName = "_MOLGRID_" + gridId;
-        var model = window.parent[globalName];
-
-        if (model) {{
-            model.set("selection", JSON.stringify(selection));
-            model.save_changes();
-        }} else {{
-            window.parent.postMessage({{
-                type: "MOLGRID_SELECTION",
-                gridId: gridId,
-                selection: selection
-            }}, "*");
-        }}
-    }}
-
-    // Listen for List.js updates (page changes, filtering)
-    molgridList.on('updated', function() {{
-        updateShowingInfo();
-        updateCheckboxes();
-    }});
-
-    container.addEventListener("change", function(e) {{
-        if (e.target.classList.contains("molgrid-checkbox")) {{
-            var index = parseInt(e.target.getAttribute("data-index"), 10);
-            var cell = e.target.closest(".molgrid-cell");
-
-            if (e.target.checked) {{
-                selectedIndices.add(index);
-                cell.classList.add("selected");
-            }} else {{
-                selectedIndices.delete(index);
-                cell.classList.remove("selected");
-            }}
-
-            syncSelection();
-        }}
-    }});
-
-    container.addEventListener("click", function(e) {{
-        var cell = e.target.closest(".molgrid-cell");
-        // Don't toggle selection when clicking checkbox, info button, or tooltip
-        var isCheckbox = e.target.classList.contains("molgrid-checkbox");
-        var isInfoBtn = e.target.classList.contains("molgrid-info-btn");
-        var isInfoTooltip = e.target.closest(".molgrid-info-tooltip");
-        if (cell && !isCheckbox && !isInfoBtn && !isInfoTooltip) {{
-            var checkbox = cell.querySelector(".molgrid-checkbox");
-            if (checkbox) {{
-                checkbox.checked = !checkbox.checked;
-                checkbox.dispatchEvent(new Event("change", {{ bubbles: true }}));
-            }}
-        }}
-    }});
-
-    // Prevent default on pagination links (fixes Marimo navigation issue)
-    container.querySelector('.molgrid-pagination').addEventListener('click', function(e) {{
-        if (e.target.tagName === 'A') {{
-            e.preventDefault();
-        }}
-    }});
-
-    // Send height to parent for proper iframe sizing
-    function sendHeight() {{
-        var height = document.body.scrollHeight;
-        window.parent.postMessage({{
-            type: "MOLGRID_HEIGHT",
-            gridId: gridId,
-            height: height
-        }}, "*");
-    }}
-
-    // Initial update
-    updateShowingInfo();
-
-    // Send initial height after a short delay for rendering
-    setTimeout(sendHeight, 100);
-
-    // Also send height after List.js updates
-    molgridList.on('updated', function() {{
-        setTimeout(sendHeight, 50);
-    }});
-
-    // ========================================
-    // Info Button Click-to-Pin
-    // ========================================
-
-    // Handle info button clicks to pin/unpin tooltips
-    container.addEventListener('click', function(e) {{
-        if (e.target.classList.contains('molgrid-info-btn')) {{
-            e.stopPropagation();
-            var btn = e.target;
-            var tooltip = btn.nextElementSibling;
-            if (tooltip && tooltip.classList.contains('molgrid-info-tooltip')) {{
-                var isPinned = tooltip.classList.contains('pinned');
-                if (isPinned) {{
-                    // Unpin this tooltip
-                    tooltip.classList.remove('pinned');
-                    btn.classList.remove('active');
-                }} else {{
-                    // Pin this tooltip (don't unpin others - allow comparison)
-                    tooltip.classList.add('pinned');
-                    btn.classList.add('active');
-                }}
-            }}
-        }}
-    }});
-
-    // ========================================
-    // Actions Dropdown
-    // ========================================
-
-    var actionsBtn = container.querySelector('.molgrid-actions-btn');
-    var dropdown = container.querySelector('.molgrid-dropdown');
-
-    // Position and toggle dropdown
-    function positionDropdown() {{
-        var rect = actionsBtn.getBoundingClientRect();
-        var dropdownHeight = dropdown.offsetHeight || 250;
-        var viewportHeight = window.innerHeight;
-
-        // Check if there's room below the button
-        var spaceBelow = viewportHeight - rect.bottom;
-        var spaceAbove = rect.top;
-
-        if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {{
-            // Position below
-            dropdown.style.top = rect.bottom + 4 + 'px';
-            dropdown.style.bottom = 'auto';
-        }} else {{
-            // Position above
-            dropdown.style.bottom = (viewportHeight - rect.top + 4) + 'px';
-            dropdown.style.top = 'auto';
-        }}
-        // Always align to right edge of viewport with 10px margin
-        dropdown.style.right = '10px';
-        dropdown.style.left = 'auto';
-    }}
-
-    // Toggle dropdown
-    actionsBtn.addEventListener('click', function(e) {{
-        e.stopPropagation();
-        var isShowing = dropdown.classList.contains('show');
-        if (!isShowing) {{
-            positionDropdown();
-        }}
-        dropdown.classList.toggle('show');
-    }});
-
-    // Reposition on scroll/resize
-    window.addEventListener('scroll', function() {{
-        if (dropdown.classList.contains('show')) {{
-            positionDropdown();
-        }}
-    }});
-
-    // Close dropdown when clicking outside
-    document.addEventListener('click', function(e) {{
-        if (!dropdown.contains(e.target) && e.target !== actionsBtn) {{
-            dropdown.classList.remove('show');
-        }}
-    }});
-
-    // Get all item indices (respecting current filter)
-    function getAllIndices() {{
-        return molgridList.items.map(function(item) {{
-            return parseInt(item.values().index, 10);
-        }});
-    }}
-
-    // Get matching item indices (respecting current filter/search)
-    function getMatchingIndices() {{
-        return molgridList.matchingItems.map(function(item) {{
-            return parseInt(item.values().index, 10);
-        }});
-    }}
-
-    // Select All action
-    function selectAll() {{
-        var indices = getMatchingIndices();
-        indices.forEach(function(idx) {{
-            selectedIndices.add(idx);
-        }});
-        updateCheckboxes();
-        syncSelection();
-    }}
-
-    // Clear Selection action
-    function clearSelection() {{
-        selectedIndices.clear();
-        updateCheckboxes();
-        syncSelection();
-    }}
-
-    // Invert Selection action
-    function invertSelection() {{
-        var indices = getMatchingIndices();
-        indices.forEach(function(idx) {{
-            if (selectedIndices.has(idx)) {{
-                selectedIndices.delete(idx);
-            }} else {{
-                selectedIndices.add(idx);
-            }}
-        }});
-        updateCheckboxes();
-        syncSelection();
-    }}
-
-    // CSV escape helper
-    function csvEscape(val) {{
-        if (val === null || val === undefined) return '';
-        var str = String(val);
-        if (str.indexOf(',') !== -1 || str.indexOf('"') !== -1 || str.indexOf('\\n') !== -1) {{
-            return '"' + str.replace(/"/g, '""') + '"';
-        }}
-        return str;
-    }}
-
-    // Get data for export (selected or all, respecting active filters)
-    function getExportRows() {{
-        var matching = getMatchingIndices();
-        var indices;
-        if (selectedIndices.size > 0) {{
-            // Intersect selection with currently matching (filtered) items
-            var matchingSet = new Set(matching);
-            indices = Array.from(selectedIndices)
-                .filter(function(idx) {{ return matchingSet.has(idx); }})
-                .sort(function(a, b) {{ return a - b; }});
-        }} else {{
-            indices = matching;
-        }}
-        return indices.map(function(idx) {{
-            return exportData[idx];
-        }});
-    }}
-
-    // Generate CSV content
-    function generateCSV() {{
-        var rows = getExportRows();
-        var lines = [];
-        // Header
-        lines.push(exportColumns.map(csvEscape).join(','));
-        // Data rows
-        rows.forEach(function(row) {{
-            var values = exportColumns.map(function(col) {{
-                return csvEscape(row[col] || '');
-            }});
-            lines.push(values.join(','));
-        }});
-        return lines.join('\\n');
-    }}
-
-    // Generate SMILES content
-    function generateSMILES() {{
-        var rows = getExportRows();
-        return rows.map(function(row) {{
-            return row.smiles || '';
-        }}).filter(function(s) {{ return s; }}).join('\\n');
-    }}
-
-    // Copy to Clipboard action
-    function copyToClipboard() {{
-        var csv = generateCSV();
-        navigator.clipboard.writeText(csv).then(function() {{
-            // Optional: show feedback
-        }}).catch(function(err) {{
-            console.error('Failed to copy:', err);
-        }});
-    }}
-
-    // Save file helper
-    function saveFile(content, filename, mimeType) {{
-        var blob = new Blob([content], {{ type: mimeType }});
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }}
-
-    // Save to SMILES action
-    function saveToSMILES() {{
-        var content = generateSMILES();
-        saveFile(content, 'molgrid.smi', 'chemical/x-daylight-smiles');
-    }}
-
-    // Save to CSV action
-    function saveToCSV() {{
-        var content = generateCSV();
-        saveFile(content, 'molgrid.csv', 'text/csv');
-    }}
-
-    // Handle dropdown item clicks
-    dropdown.addEventListener('click', function(e) {{
-        var item = e.target.closest('.molgrid-dropdown-item');
-        if (!item) return;
-
-        var action = item.dataset.action;
-        dropdown.classList.remove('show');
-
-        switch (action) {{
-            case 'select-all':
-                selectAll();
-                break;
-            case 'clear-selection':
-                clearSelection();
-                break;
-            case 'invert-selection':
-                invertSelection();
-                break;
-            case 'copy-clipboard':
-                copyToClipboard();
-                break;
-            case 'save-smiles':
-                saveToSMILES();
-                break;
-            case 'save-csv':
-                saveToCSV();
-                break;
-        }}
-    }});
-
-    // ========================================
-    // Cluster Filtering
-    // ========================================
-
-    if (clusterEnabled) {{
-        var selectedClusters = new Set();
-        var clusterBtn = container.querySelector('.molgrid-cluster-btn');
-        var clusterDropdown = container.querySelector('.molgrid-cluster-dropdown');
-        var clusterSearchInput = container.querySelector('.molgrid-cluster-search-input');
-        var clusterList = container.querySelector('.molgrid-cluster-list');
-        var clusterPillsContainer = container.querySelector('.molgrid-cluster-pills');
-
-        // Position cluster dropdown
-        function positionClusterDropdown() {{
-            var rect = clusterBtn.getBoundingClientRect();
-            var dropdownHeight = clusterDropdown.offsetHeight || 300;
-            var viewportHeight = window.innerHeight;
-
-            var spaceBelow = viewportHeight - rect.bottom;
-            if (spaceBelow >= dropdownHeight || spaceBelow >= rect.top) {{
-                clusterDropdown.style.top = rect.bottom + 4 + 'px';
-                clusterDropdown.style.bottom = 'auto';
-            }} else {{
-                clusterDropdown.style.bottom = (viewportHeight - rect.top + 4) + 'px';
-                clusterDropdown.style.top = 'auto';
-            }}
-            clusterDropdown.style.left = rect.left + 'px';
-        }}
-
-        // Toggle cluster dropdown
-        clusterBtn.addEventListener('click', function(e) {{
-            e.stopPropagation();
-            var isShowing = clusterDropdown.classList.contains('show');
-            if (!isShowing) {{
-                positionClusterDropdown();
-            }}
-            clusterDropdown.classList.toggle('show');
-            if (!isShowing) {{
-                clusterSearchInput.focus();
-            }}
-        }});
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function(e) {{
-            if (!clusterDropdown.contains(e.target) && e.target !== clusterBtn) {{
-                clusterDropdown.classList.remove('show');
-            }}
-        }});
-
-        // Reposition on scroll
-        window.addEventListener('scroll', function() {{
-            if (clusterDropdown.classList.contains('show')) {{
-                positionClusterDropdown();
-            }}
-        }});
-
-        // Filter cluster list by search
-        clusterSearchInput.addEventListener('input', function(e) {{
-            var query = e.target.value.toLowerCase();
-            var items = clusterList.querySelectorAll('.molgrid-cluster-item');
-            items.forEach(function(item) {{
-                var labelEl = item.querySelector('.molgrid-cluster-label');
-                var label = labelEl.textContent.toLowerCase();
-                var isMatch = label.indexOf(query) !== -1;
-                item.style.display = isMatch ? '' : 'none';
-            }});
-        }});
-
-        // Apply cluster filter to grid (uses combined filter to preserve SMARTS)
-        function applyClusterFilterToGrid() {{
-            applyCombinedFilter();
-        }}
-
-        // Create a pill element
-        function createPill(label) {{
-            var pill = document.createElement('span');
-            pill.className = 'molgrid-cluster-pill';
-            pill.setAttribute('data-cluster', label);
-            var labelSpan = document.createElement('span');
-            labelSpan.textContent = label;
-            var removeBtn = document.createElement('button');
-            removeBtn.className = 'molgrid-cluster-pill-remove';
-            removeBtn.type = 'button';
-            removeBtn.innerHTML = '&times;';
-            pill.appendChild(labelSpan);
-            pill.appendChild(removeBtn);
-
-            removeBtn.addEventListener('click', function(e) {{
-                e.stopPropagation();
-                removeCluster(label);
-            }});
-
-            return pill;
-        }}
-
-        // Add a cluster to selection
-        function addCluster(label) {{
-            if (!selectedClusters.has(label)) {{
-                selectedClusters.add(label);
-                clusterPillsContainer.appendChild(createPill(label));
-
-                // Update item styling
-                var escapedLabel = CSS.escape(label);
-                var selector = '.molgrid-cluster-item[data-cluster="' +
-                    escapedLabel + '"]';
-                var item = clusterList.querySelector(selector);
-                if (item) item.classList.add('selected');
-
-                applyClusterFilterToGrid();
-            }}
-        }}
-
-        // Remove a cluster from selection
-        function removeCluster(label) {{
-            selectedClusters.delete(label);
-
-            // Remove pill
-            var escapedLabel = CSS.escape(label);
-            var pillSelector = '.molgrid-cluster-pill[data-cluster="' +
-                escapedLabel + '"]';
-            var pill = clusterPillsContainer.querySelector(pillSelector);
-            if (pill) pill.remove();
-
-            // Update item styling
-            var itemSelector = '.molgrid-cluster-item[data-cluster="' +
-                escapedLabel + '"]';
-            var item = clusterList.querySelector(itemSelector);
-            if (item) item.classList.remove('selected');
-
-            applyClusterFilterToGrid();
-        }}
-
-        // Handle cluster item click
-        clusterList.addEventListener('click', function(e) {{
-            var item = e.target.closest('.molgrid-cluster-item');
-            if (!item) return;
-
-            var label = item.getAttribute('data-cluster');
-            if (selectedClusters.has(label)) {{
-                removeCluster(label);
-            }} else {{
-                addCluster(label);
-            }}
-        }});
-    }}
-}})();
-'''
-
-        return f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MolGrid</title>
-    <script>{_LIST_JS}</script>
-    <style>
-        :root {{
-            --molgrid-image-width: {self.width}px;
-            --molgrid-image-height: {self.height}px;
-            --molgrid-cell-width: {self.width + 24}px;
-        }}
-{_CSS}
-    </style>
-</head>
-<body>
-    <div id="{grid_id}" class="molgrid-container">
-        {cluster_row_html}
-        <div class="molgrid-toolbar">
-            <div class="molgrid-search">
-                <input type="text" class="molgrid-search-input" placeholder="Search...">
-                <div class="toggle-switch">
-                    <label class="toggle-label">
-                        <span class="toggle-text active">Properties</span>
-                        <input type="checkbox" class="search-mode-toggle">
-                        <span class="toggle-text">SMARTS</span>
-                    </label>
-                </div>
-            </div>
-            <div class="molgrid-info">
-                Showing <span class="showing-start">1</span>-<span
-                    class="showing-end">{min(items_per_page, total_items)}</span>
-                of <span class="showing-total">{total_items}</span> molecules
-            </div>
-            <div class="molgrid-actions">
-                <button class="molgrid-actions-btn" title="Actions">
-                    &#8943;
-                </button>
-                <div class="molgrid-dropdown">
-                    <button class="molgrid-dropdown-item"
-                            data-action="select-all">Select All</button>
-                    <button class="molgrid-dropdown-item"
-                            data-action="clear-selection">Clear Selection</button>
-                    <button class="molgrid-dropdown-item"
-                            data-action="invert-selection">Invert Selection</button>
-                    <div class="molgrid-dropdown-divider"></div>
-                    <button class="molgrid-dropdown-item"
-                            data-action="copy-clipboard">Copy to Clipboard</button>
-                    <button class="molgrid-dropdown-item"
-                            data-action="save-smiles">Save to SMILES</button>
-                    <button class="molgrid-dropdown-item"
-                            data-action="save-csv">Save to CSV</button>
-                </div>
-            </div>
-        </div>
-        <ul class="molgrid-list list">
-            {items_html}
-        </ul>
-        <div class="molgrid-pagination-nav">
-            <button class="molgrid-prev" disabled>&laquo; Previous</button>
-            <div class="molgrid-pagination">
-                <ul class="pagination"></ul>
-            </div>
-            <button class="molgrid-next">Next &raquo;</button>
-        </div>
-    </div>
-    <script>
-{js}
-    </script>
-</body>
-</html>'''
-
-    def get_selection(self) -> list:
-        """Get list of selected molecules.
-
-        :returns: List of selected OEMol objects.
+        # Imported here because the viewer module reads the bundled 3Dmol assets when it
+        # is imported, which a grid export has no use for.
+        from cnotebook.core.viewer3d import escape_script_json
+
+        payload = {
+            "items": self.items(),
+            "config": self.widget_config(static=True),
+            # A saved document has no kernel to ask for more, so it carries every image.
+            "images": self.render_indices(range(len(self._molecules))),
+            "selection": list(self.selection),
+        }
+        stylesheet = _static_asset("molgrid.css")
+        module = _static_asset("molgrid.js")
+        return (
+            '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+            "<title>MolGrid</title>\n"
+            f"<style>\n{stylesheet}\n</style>\n"
+            '</head>\n<body>\n<div id="molgrid-root"></div>\n'
+            # The payload is escaped for a script context, so a title or a field value
+            # that looks like markup cannot close the element it travels in.
+            f"<script>\nwindow.__CNOTEBOOK_MOLGRID_STATIC__ = {escape_script_json(payload)};\n"
+            "</script>\n"
+            f'<script type="module">\n{module}\n</script>\n'
+            "</body>\n</html>"
+        )
+
+    def save(self, path: str | os.PathLike[str]) -> Path:
+        """Write the static document to *path*.
+
+        The document is moved into place only once it is complete, so an interrupted
+        write leaves any previous file intact. Because the move is a rename, a symbolic
+        link at *path* is replaced by the document rather than followed to its target.
+
+        :param path: Destination file; its directory must exist.
+        :returns: The path written.
+        :raises CNotebookError: If the destination's directory does not exist.
         """
-        return [self._molecules[idx] for idx in sorted(self.selection)]
+        # Checked here as well as in the write, so a mistyped path fails before every
+        # molecule in the grid has been depicted.
+        target = _prepare_target(path)
+        return _write_atomically(target, self.to_html().encode("utf-8"))
+
+    def _static_display(self):
+        """Build the self-contained output for the current environment.
+
+        The document is handed over in an iframe so its stylesheet cannot reach the
+        rest of the notebook, and the other way round.
+
+        :returns: ``marimo.Html`` in marimo, otherwise an object with ``_repr_html_``.
+        """
+        iframe_html = (
+            '<iframe class="molgrid-iframe" '
+            'style="width: 100%; border: none; height: 560px;" '
+            f'srcdoc="{escape(self.to_html())}"></iframe>'
+        )
+        if _is_marimo():
+            import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
+
+            return mo.Html(iframe_html)
+        return _JupyterHtml(iframe_html)
+
+    def display(self, static: bool | None = None):
+        """Display the grid in the current notebook environment.
+
+        :param static: ``True`` for the self-contained document, ``False`` for the live
+            widget, ``None`` (the default) for the display mode snapshotted when this
+            grid was created. Widget mode falls back to the static output, with one
+            :class:`~cnotebook.core.errors.CNotebookWarning`, when anywidget is not
+            installed.
+        :returns: A displayable object for the current environment: the widget itself
+            in Jupyter, ``marimo.ui.anywidget(widget)`` in marimo, or an iframe wrapper.
+        """
+        if static is None:
+            # A widget needs a front end to render into. In a script, a REPL or a test
+            # run there is none, and the widget would show as a bare repr, so the
+            # self-contained document is the only useful output. Asking for the widget
+            # explicitly still returns it, because the caller may want the object.
+            use_static = self._display_mode == "static" or not _has_display_frontend()
+        else:
+            use_static = static
+        if use_static:
+            return self._static_display()
+        try:
+            widget = self.widget
+        except ImportError:
+            warn(
+                "anywidget is not installed; showing the static MolGrid output "
+                "instead of the live widget"
+            )
+            return self._static_display()
+        if _is_marimo():
+            import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
+
+            return mo.ui.anywidget(widget)
+        return widget
+
+    # -- selection ------------------------------------------------------------
 
     def get_selection_indices(self) -> list[int]:
-        """Get indices of selected molecules.
+        """Indices of the selected molecules.
 
-        :returns: List of selected indices.
+        :returns: The selected indices, in ascending order.
         """
         return sorted(self.selection)
 
-    def display(self):
-        """Display the grid in the notebook.
+    def get_selection(self) -> list:
+        """The selected molecules themselves.
 
-        Automatically detects Jupyter vs Marimo environment.
-
-        :returns: Displayable HTML object.
+        :returns: The selected molecule objects, in index order.
         """
-        html_content = self.to_html()
-        iframe_id = f"molgrid-iframe-{self.name}"
+        return [self._molecules[idx] for idx in self.get_selection_indices()]
 
-        iframe_html = f'''<iframe
-            id="{iframe_id}"
-            class="molgrid-iframe"
-            style="width: 100%; border: none; height: 500px; overflow: hidden;"
-            srcdoc="{escape(html_content)}"
-        ></iframe>'''
+    def selection_frame(self):
+        """The selected rows of the source DataFrame.
 
-        if _is_marimo():
-            import marimo as mo  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
-            return mo.Html(iframe_html)
-
-        # Imported here so the grid module stays usable without IPython installed.
-        try:
-            from IPython.display import HTML
-        except ModuleNotFoundError:
-            return iframe_html
-        return HTML(iframe_html)
+        :returns: A frame of the same kind the grid was created from, holding the
+            selected rows in index order.
+        :raises CNotebookError: If the grid was not created from a DataFrame.
+        """
+        if self._dataframe is None:
+            raise CNotebookError(
+                "selection_frame() needs a grid created from a DataFrame; "
+                "use get_selection() for the selected molecules"
+            )
+        indices = self.get_selection_indices()
+        frame = self._dataframe
+        if _is_pandas(frame):
+            return frame.iloc[indices]
+        return frame[indices]
 
     def get_marimo_selection(self):
-        """Get marimo reactive state for selection.
+        """Getter returning the current selection indices (marimo convenience).
 
-        Only available in marimo environment.
-
-        :returns: State getter function.
-        :raises RuntimeError: If not in marimo environment.
+        :returns: A callable returning the selected indices.
+        :raises RuntimeError: If not running in a marimo notebook.
         """
         if not _is_marimo():
             raise RuntimeError("This method is only available in a marimo notebook.")
 
-        def get_state():
-            return sorted(self.selection)
+        return self.get_selection_indices
 
-        return get_state
+
+class _JupyterHtml:
+    """Minimal ``_repr_html_`` wrapper for the static output.
+
+    A custom class rather than ``IPython.display.HTML``, which warns when the HTML it
+    is given contains an ``<iframe>``, and which the grid would otherwise have to
+    import on a path that needs no IPython at all.
+    """
+
+    def __init__(self, html_text: str):
+        """Wrap already-rendered HTML.
+
+        :param html_text: Markup to hand to the notebook front end.
+        """
+        self._html = html_text
+
+    def _repr_html_(self) -> str:
+        """Render for the notebook.
+
+        :returns: The wrapped markup.
+        """
+        return self._html
+

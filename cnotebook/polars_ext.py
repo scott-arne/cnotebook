@@ -984,15 +984,13 @@ def _dataframe_molgrid(
     :param kwargs: Further options for :class:`~cnotebook.grid.MolGrid`.
     :returns: The grid.
     """
-    import pandas as pd
-
     from cnotebook.grid import MolGrid
 
-    # MolGrid reads pandas frames, so the non-molecule columns are handed over as plain
-    # Python values, which also keeps pyarrow out of the conversion.
-    pdf = pd.DataFrame({col: self._df.get_column(col).to_list() for col in self._df.columns if col != mol_col})
-    return MolGrid(self._df.get_column(mol_col).to_list(), dataframe=pdf, mol_col=mol_col, title=title,
-                   tooltip_fields=tooltip_fields, **kwargs)
+    # The frame is handed over as it is: MolGrid reads either library's frames, and a
+    # conversion here would cost a copy of every column and return a pandas frame from
+    # ``selection_frame()`` on a polars grid.
+    return MolGrid(self._df.get_column(mol_col).to_list(), dataframe=self._df, mol_col=mol_col,
+                   title=title, tooltip_fields=tooltip_fields, **kwargs)
 
 
 def _attach() -> None:
