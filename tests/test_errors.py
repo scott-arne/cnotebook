@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+
 from cnotebook.core.errors import CNotebookError, CNotebookWarning, warn
 
 

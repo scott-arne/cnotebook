@@ -262,7 +262,7 @@ def test_render_summary_png_many_terminal_only_paths_no_crash():
 
 
 def test_primitives_exported_from_core():
-    import cnotebook.core as core
+    from cnotebook import core
     for name in ("highlight_alerts", "render_path", "render_summary", "summary_image",
                  "AlertGroup", "PathStep", "Terminal"):
         assert name in core.__all__

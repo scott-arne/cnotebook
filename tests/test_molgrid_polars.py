@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("polars")
 pytest.importorskip("oepolars")
 
-import cnotebook as _cnotebook  # noqa: E402,F401
+import cnotebook as _cnotebook  # noqa: F401
 
 
 def test_polars_series_molgrid():

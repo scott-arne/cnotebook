@@ -163,6 +163,11 @@ filterwarnings = [
 [tool.mypy]
 ignore_missing_imports = true
 
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["build", "dist", "venv", "vendor", "docs/_build", "examples"]
+
 [tool.ruff.lint.per-file-ignores]
 "examples/**/*.ipynb" = ["F401"]
 "examples/**/*.py" = ["F401"]

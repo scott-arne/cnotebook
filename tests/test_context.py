@@ -1,9 +1,6 @@
-import warnings
-
 import pytest
 from openeye import oechem, oedepict
 
-import cnotebook
 from cnotebook.context import (
     DEFERRED,
     CNotebookContext,
@@ -658,9 +655,8 @@ def test_render_options_restores_global():
 
 
 def test_render_options_rejects_unknown_option():
-    with pytest.raises(TypeError, match="no_such_option"):
-        with render_options(no_such_option=1):
-            pass
+    with pytest.raises(TypeError, match="no_such_option"), render_options(no_such_option=1):
+        pass
 
 
 @pytest.mark.parametrize(
@@ -730,6 +726,5 @@ def test_render_options_applies_callbacks():
 
 def test_render_options_rejects_read_only_property():
     """render_options must reject genuinely read-only properties like 'scope'."""
-    with pytest.raises(TypeError, match="scope"):
-        with render_options(scope="local"):
-            pass
+    with pytest.raises(TypeError, match="scope"), render_options(scope="local"):
+        pass

@@ -11,34 +11,34 @@ def test_old_context_path_still_works():
 
 
 def test_core_render_exports():
-    from cnotebook.core.render import oemol_to_image, oeimage_to_html
+    from cnotebook.core.render import oeimage_to_html, oemol_to_image
     assert callable(oemol_to_image)
     assert callable(oeimage_to_html)
 
 
 def test_old_render_path_still_works():
-    from cnotebook.render import oemol_to_image as old
     from cnotebook.core.render import oemol_to_image as new
+    from cnotebook.render import oemol_to_image as old
     assert old is new
 
 
 def test_core_helpers_align_exports():
-    from cnotebook.core.helpers import highlight_smarts
     from cnotebook.core.align import create_aligner
+    from cnotebook.core.helpers import highlight_smarts
     assert callable(highlight_smarts)
     assert callable(create_aligner)
 
 
 def test_old_helpers_align_paths_still_work():
-    from cnotebook.helpers import highlight_smarts as old_h
-    from cnotebook.core.helpers import highlight_smarts as new_h
     from cnotebook.align import create_aligner as old_a
     from cnotebook.core.align import create_aligner as new_a
+    from cnotebook.core.helpers import highlight_smarts as new_h
+    from cnotebook.helpers import highlight_smarts as old_h
     assert old_h is new_h and old_a is new_a
 
 
 def test_core_convert_exports():
-    from cnotebook.core.convert import MoleculeData, convert_molecule, convert_design_unit
+    from cnotebook.core.convert import MoleculeData, convert_design_unit, convert_molecule
     assert callable(MoleculeData)
     assert callable(convert_molecule)
     assert callable(convert_design_unit)

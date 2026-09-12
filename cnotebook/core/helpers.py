@@ -1,6 +1,8 @@
 import logging
 import re
-from typing import Callable, Literal, Sequence, TypeAlias
+from collections.abc import Callable, Sequence
+from typing import Literal, TypeAlias
+
 from openeye import oechem, oedepict
 
 from cnotebook.core.errors import warn
@@ -119,10 +121,15 @@ def create_structure_highlighter(
         return _structure_highlighter
 
 
+# Default highlight color, built once at import. highlight_smarts only reads the color it is
+# given, so one shared instance is safe and keeps the OEColor call out of the default argument.
+_DEFAULT_HIGHLIGHT_COLOR = oechem.OEColor(oechem.OELightBlue)
+
+
 def highlight_smarts(
     mol: oechem.OEMolBase,
     smarts: str | Sequence[str],
-    color: oechem.OEColor | Sequence[oechem.OEColor] = oechem.OEColor(oechem.OELightBlue),
+    color: oechem.OEColor | Sequence[oechem.OEColor] = _DEFAULT_HIGHLIGHT_COLOR,
     style: int | Sequence[int] = oedepict.OEHighlightStyle_Stick,
     opts: oedepict.OE2DMolDisplayOptions | None = None,
 ) -> oedepict.OE2DMolDisplay:

@@ -2,9 +2,9 @@
 
 import pytest
 from openeye import oechem, oedepict
+
 from cnotebook.context import CNotebookContext
 from cnotebook.grid import BEST_FIT_ORIENTATION
-
 
 # ============================================================================
 # Fixtures
@@ -1247,8 +1247,9 @@ def test_molgrid_info_tooltip_displays_data_fields(mol_with_sd_data):
 def test_molgrid_cluster_parameter_string():
     """Test cluster parameter accepts a column name string."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1262,8 +1263,9 @@ def test_molgrid_cluster_parameter_string():
 
 def test_molgrid_cluster_parameter_dict():
     """Test cluster parameter accepts a dict mapping."""
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1277,8 +1279,9 @@ def test_molgrid_cluster_parameter_dict():
 def test_molgrid_cluster_counts_parameter():
     """Test cluster_counts parameter can be set to False."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1291,9 +1294,10 @@ def test_molgrid_cluster_counts_parameter():
 
 def test_molgrid_cluster_string_requires_dataframe():
     """Test cluster string parameter requires a DataFrame."""
-    from cnotebook import MolGrid
-    from openeye import oechem
     import pytest
+    from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1305,9 +1309,10 @@ def test_molgrid_cluster_string_requires_dataframe():
 def test_molgrid_cluster_string_validates_column():
     """Test cluster string parameter validates column exists."""
     import pandas as pd
-    from cnotebook import MolGrid
-    from openeye import oechem
     import pytest
+    from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1320,9 +1325,10 @@ def test_molgrid_cluster_string_validates_column():
 
 def test_molgrid_cluster_invalid_type():
     """Test cluster parameter rejects invalid types."""
-    from cnotebook import MolGrid
-    from openeye import oechem
     import pytest
+    from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1338,8 +1344,9 @@ def test_molgrid_cluster_invalid_type():
 def test_molgrid_prepare_data_includes_cluster():
     """Test _prepare_data includes cluster value for each item."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC", "CCC"]:
@@ -1363,8 +1370,9 @@ def test_molgrid_prepare_data_includes_cluster():
 def test_molgrid_prepare_data_cluster_with_dict():
     """Test _prepare_data uses dict mapping for cluster labels."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC"]:
@@ -1388,10 +1396,11 @@ def test_molgrid_prepare_data_cluster_with_dict():
 
 def test_molgrid_prepare_data_cluster_none_value():
     """Test _prepare_data handles None/NaN cluster values."""
-    import pandas as pd
     import numpy as np
-    from cnotebook import MolGrid
+    import pandas as pd
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC"]:
@@ -1413,8 +1422,9 @@ def test_molgrid_prepare_data_cluster_none_value():
 
 def test_molgrid_no_cluster_field_when_disabled():
     """Test _prepare_data does not include cluster when cluster=None."""
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1432,8 +1442,9 @@ def test_molgrid_no_cluster_field_when_disabled():
 def test_molgrid_html_contains_cluster_data():
     """Test HTML contains cluster metadata when cluster is enabled."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC", "CCC"]:
@@ -1457,8 +1468,9 @@ def test_molgrid_html_contains_cluster_data():
 def test_molgrid_html_cluster_counts():
     """Test HTML contains cluster counts when cluster_counts=True."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC", "CCC"]:
@@ -1482,8 +1494,9 @@ def test_molgrid_html_cluster_counts():
 
 def test_molgrid_html_no_cluster_data_when_disabled():
     """Test HTML does not contain cluster data when cluster=None."""
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "CCO")
@@ -1503,8 +1516,9 @@ def test_molgrid_html_no_cluster_data_when_disabled():
 def test_molgrid_cluster_full_workflow():
     """Integration test for cluster filtering workflow."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     # Create test molecules with clusters
     mols = []
@@ -1553,8 +1567,9 @@ def test_molgrid_cluster_full_workflow():
 def test_molgrid_cluster_dict_mapping():
     """Test cluster with dict value mapping."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC", "CCC"]:
@@ -1583,8 +1598,9 @@ def test_molgrid_cluster_dict_mapping():
 def test_molgrid_cluster_without_counts():
     """Test cluster with counts disabled."""
     import pandas as pd
-    from cnotebook import MolGrid
     from openeye import oechem
+
+    from cnotebook import MolGrid
 
     mols = []
     for smiles in ["CCO", "CC"]:

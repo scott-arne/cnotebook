@@ -385,17 +385,19 @@ class TestColorBondByOverlapScore:
         mock_layer = MagicMock()
         mock_disp.GetLayer.return_value = mock_layer
         
-        with patch('oedepict.OEPen') as mock_pen_class:
-            with patch('oedepict.OEFill_Off'):
-                with patch('oedepict.OELayerPosition_Below'):
-                    mock_pen = MagicMock()
-                    mock_pen_class.return_value = mock_pen
-                    
-                    result = bond_glyph.RenderGlyph(mock_disp, mock_bond)
-                    
-                    assert result is True
-                    mock_cg.GetColorAt.assert_called_once_with(0.5)
-                    mock_layer.DrawLine.assert_called_once_with(mock_bgn_coords, mock_end_coords, mock_pen)
+        with (
+            patch('oedepict.OEPen') as mock_pen_class,
+            patch('oedepict.OEFill_Off'),
+            patch('oedepict.OELayerPosition_Below'),
+        ):
+            mock_pen = MagicMock()
+            mock_pen_class.return_value = mock_pen
+
+            result = bond_glyph.RenderGlyph(mock_disp, mock_bond)
+
+            assert result is True
+            mock_cg.GetColorAt.assert_called_once_with(0.5)
+            mock_layer.DrawLine.assert_called_once_with(mock_bgn_coords, mock_end_coords, mock_pen)
     
     def test_render_glyph_no_bond_display(self):
         """Test rendering when bond display is None"""
@@ -455,7 +457,7 @@ class TestRegisterPandasFormatters:
         # Test when formatter doesn't exist
         mock_html_formatter.lookup.side_effect = KeyError()
         
-        with patch('cnotebook.pandas_ext.get_ipython', return_value=mock_ipython):
+        with patch('cnotebook.pandas_ext._get_ipython', return_value=mock_ipython):
             register_pandas_formatters()
         
         mock_html_formatter.for_type.assert_called_once_with(pd.DataFrame, render_dataframe)
@@ -472,7 +474,7 @@ class TestRegisterPandasFormatters:
         # Test when formatter already exists and is different
         mock_html_formatter.lookup.return_value = "some_other_formatter"
         
-        with patch('cnotebook.pandas_ext.get_ipython', return_value=mock_ipython):
+        with patch('cnotebook.pandas_ext._get_ipython', return_value=mock_ipython):
             register_pandas_formatters()
         
         mock_html_formatter.for_type.assert_called_once_with(pd.DataFrame, render_dataframe)
@@ -482,10 +484,12 @@ class TestRegisterPandasFormatters:
         if not ipython_present:
             pytest.skip("IPython not available for testing")
         
-        with patch('cnotebook.pandas_ext.get_ipython', return_value=None):
-            with patch('cnotebook.pandas_ext.log.debug') as mock_log_debug:
-                register_pandas_formatters()
-                mock_log_debug.assert_called_once()
+        with (
+            patch('cnotebook.pandas_ext._get_ipython', return_value=None),
+            patch('cnotebook.pandas_ext.log.debug') as mock_log_debug,
+        ):
+            register_pandas_formatters()
+            mock_log_debug.assert_called_once()
     
     def test_register_formatters_ipython_not_present(self):
         """Test when IPython is not available"""

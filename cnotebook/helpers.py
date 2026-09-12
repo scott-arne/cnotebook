@@ -1,6 +1,6 @@
 """Backward-compatible shim. Implementation moved to cnotebook.core.helpers."""
 
-from cnotebook.core.helpers import *  # noqa: F401,F403
+from cnotebook.core.helpers import *
 from cnotebook.core.helpers import (  # noqa: F401
     HighlightColors,
     create_structure_highlighter,

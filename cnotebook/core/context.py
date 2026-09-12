@@ -1,12 +1,14 @@
 import logging
 import math
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from enum import Enum
-from functools import wraps
-from typing import Callable, Any, Literal, Generic, TypeVar, Iterator
-from collections.abc import Iterable
+
 # noinspection PyPackageRequirements
 from contextvars import ContextVar
+from enum import Enum
+from functools import wraps
+from typing import Any, ClassVar, Generic, Literal, TypeVar
+
 from openeye import oechem, oedepict
 
 from cnotebook.core.errors import warn
@@ -164,7 +166,7 @@ class CNotebookContext:
     """
 
     # Supported image formats and their MIME types for rendering
-    supported_mime_types = {
+    supported_mime_types: ClassVar[dict[str, str]] = {
         'png': 'image/png',
         'svg': 'image/svg+xml'
     }
@@ -640,8 +642,12 @@ class CNotebookContext:
 # !!!!!!!!! Global render context !!!!!!!!!
 ########################################################################################################################
 
-# Create our global render context
-cnotebook_context: ContextVar[CNotebookContext] = ContextVar("cnotebook_context", default=CNotebookContext())
+# Create our global render context. Sharing one instance across every context that has not
+# entered a local one is the intended behaviour: callers change process-wide render defaults
+# by mutating the object `cnotebook_context.get()` hands back.
+_GLOBAL_CONTEXT = CNotebookContext()
+
+cnotebook_context: ContextVar[CNotebookContext] = ContextVar("cnotebook_context", default=_GLOBAL_CONTEXT)
 
 
 ########################################################################################################################
@@ -667,10 +673,10 @@ def pass_cnotebook_context(func):
 
             # Other things are not OK
             elif not isinstance(ctx, CNotebookContext):
-                raise TypeError("Received object of type type {} for OERenderContext (ctx) when calling {}".format(
-                    type(ctx).__name__,
-                    func.__name__
-                ))
+                raise TypeError(
+                    f"Received object of type type {type(ctx).__name__} "
+                    f"for OERenderContext (ctx) when calling {func.__name__}"
+                )
         else:
             ctx = cnotebook_context.get().copy()
 

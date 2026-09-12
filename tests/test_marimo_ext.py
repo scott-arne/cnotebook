@@ -74,7 +74,7 @@ class TestDisplayMol:
         mock_mol = MagicMock(spec=oechem.OEMolBase)
 
         # Call the display function
-        mime_type, html_content = _display_mol(mock_mol)
+        mime_type, _html_content = _display_mol(mock_mol)
 
         # Verify format was preserved (not changed to PNG)
         assert mock_ctx.image_format == "svg"
@@ -136,27 +136,29 @@ class TestDisplayMol:
     
     def test_display_mol_return_format(self):
         """Test that display function returns correct format for Marimo"""
-        with patch('cnotebook.marimo_ext.oemol_to_html') as mock_oemol_to_html:
-            with patch('cnotebook.marimo_ext.cnotebook_context') as mock_context_var:
-                # Setup mocks
-                mock_ctx = MagicMock()
-                mock_context_var.get.return_value = mock_ctx
-                mock_ctx.copy.return_value = mock_ctx
-                mock_oemol_to_html.return_value = '<div>test</div>'
-                
-                # Create mock molecule
-                mock_mol = MagicMock(spec=oechem.OEMolBase)
-                
-                # Call the display function
-                result = _display_mol(mock_mol)
-                
-                # Should return a tuple
-                assert isinstance(result, tuple)
-                assert len(result) == 2
-                
-                mime_type, content = result
-                assert mime_type == "text/html"
-                assert content == '<div>test</div>'
+        with (
+            patch('cnotebook.marimo_ext.oemol_to_html') as mock_oemol_to_html,
+            patch('cnotebook.marimo_ext.cnotebook_context') as mock_context_var,
+        ):
+            # Setup mocks
+            mock_ctx = MagicMock()
+            mock_context_var.get.return_value = mock_ctx
+            mock_ctx.copy.return_value = mock_ctx
+            mock_oemol_to_html.return_value = '<div>test</div>'
+
+            # Create mock molecule
+            mock_mol = MagicMock(spec=oechem.OEMolBase)
+
+            # Call the display function
+            result = _display_mol(mock_mol)
+
+            # Should return a tuple
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+
+            mime_type, content = result
+            assert mime_type == "text/html"
+            assert content == '<div>test</div>'
 
 
 class TestMarimoIntegration:
@@ -186,7 +188,7 @@ class TestMarimoBehavior:
         mock_mol = MagicMock(spec=oechem.OEMolBase)
 
         # Call display function
-        mime_type, content = _display_mol(mock_mol)
+        mime_type, _content = _display_mol(mock_mol)
 
         # Format should be preserved (not forced to PNG)
         assert mock_ctx.image_format == "svg"
@@ -194,26 +196,28 @@ class TestMarimoBehavior:
     
     def test_marimo_mime_format_compatibility(self):
         """Test that the return format is compatible with Marimo's expectations"""
-        with patch('cnotebook.marimo_ext.oemol_to_html') as mock_oemol_to_html:
-            with patch('cnotebook.marimo_ext.cnotebook_context') as mock_context_var:
-                # Setup mocks
-                mock_ctx = MagicMock()
-                mock_context_var.get.return_value = mock_ctx
-                mock_ctx.copy.return_value = mock_ctx
-                mock_oemol_to_html.return_value = '<div>marimo_content</div>'
-                
-                mock_mol = MagicMock(spec=oechem.OEMolBase)
-                
-                result = _display_mol(mock_mol)
-                
-                # Marimo expects a tuple of (mime_type, content)
-                assert isinstance(result, tuple)
-                assert len(result) == 2
-                
-                mime_type, content = result
-                assert isinstance(mime_type, str)
-                assert mime_type == "text/html"
-                assert isinstance(content, str)
+        with (
+            patch('cnotebook.marimo_ext.oemol_to_html') as mock_oemol_to_html,
+            patch('cnotebook.marimo_ext.cnotebook_context') as mock_context_var,
+        ):
+            # Setup mocks
+            mock_ctx = MagicMock()
+            mock_context_var.get.return_value = mock_ctx
+            mock_ctx.copy.return_value = mock_ctx
+            mock_oemol_to_html.return_value = '<div>marimo_content</div>'
+
+            mock_mol = MagicMock(spec=oechem.OEMolBase)
+
+            result = _display_mol(mock_mol)
+
+            # Marimo expects a tuple of (mime_type, content)
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+
+            mime_type, content = result
+            assert isinstance(mime_type, str)
+            assert mime_type == "text/html"
+            assert isinstance(content, str)
     
     @patch('cnotebook.marimo_ext.oemol_to_html')
     @patch('cnotebook.marimo_ext.cnotebook_context')
@@ -259,7 +263,7 @@ class TestEdgeCases:
         # This should work - oemol_to_html should handle None gracefully
         result = _display_mol(None)
         
-        mime_type, content = result
+        mime_type, _content = result
         assert mime_type == "text/html"
         mock_oemol_to_html.assert_called_once_with(None, ctx=mock_ctx)
     
@@ -385,8 +389,8 @@ class TestCreateMoleculeFormatter:
 
     def test_none_returns_empty(self):
         """Test that formatter returns empty string for None input"""
-        from cnotebook.marimo_ext import _create_molecule_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_molecule_formatter
 
         ctx = CNotebookContext()
         formatter = _create_molecule_formatter(ctx)
@@ -394,8 +398,8 @@ class TestCreateMoleculeFormatter:
 
     def test_non_molecule_returns_str(self):
         """Test that formatter returns str() for non-OEMolBase input"""
-        from cnotebook.marimo_ext import _create_molecule_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_molecule_formatter
 
         ctx = CNotebookContext()
         formatter = _create_molecule_formatter(ctx)
@@ -403,8 +407,8 @@ class TestCreateMoleculeFormatter:
 
     def test_valid_molecule_with_callbacks(self):
         """Test that valid molecule with callbacks uses oemol_to_disp and applies callbacks"""
-        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
 
         callback_called = []
 
@@ -426,8 +430,8 @@ class TestCreateMoleculeFormatter:
 
     def test_valid_molecule_without_callbacks(self):
         """Test that a valid molecule without callbacks still renders an image"""
-        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
 
         ctx = CNotebookContext(callbacks=[])
         formatter = _create_molecule_formatter(ctx)
@@ -446,8 +450,8 @@ class TestCreateDisplayFormatter:
 
     def test_none_returns_empty(self):
         """Test that formatter returns empty string for None input"""
-        from cnotebook.marimo_ext import _create_display_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_display_formatter
 
         ctx = CNotebookContext()
         formatter = _create_display_formatter(ctx)
@@ -455,8 +459,8 @@ class TestCreateDisplayFormatter:
 
     def test_non_display_returns_str(self):
         """Test that formatter returns str() for non-OE2DMolDisplay input"""
-        from cnotebook.marimo_ext import _create_display_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_display_formatter
 
         ctx = CNotebookContext()
         formatter = _create_display_formatter(ctx)
@@ -464,8 +468,8 @@ class TestCreateDisplayFormatter:
 
     def test_invalid_display_returns_str(self):
         """Test that formatter returns str() for invalid display object"""
-        from cnotebook.marimo_ext import _create_display_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_display_formatter
 
         ctx = CNotebookContext()
         formatter = _create_display_formatter(ctx)
@@ -486,8 +490,8 @@ class TestCreateDisplayFormatter:
 
     def test_valid_display_with_callbacks(self):
         """Test that valid display with callbacks copies and applies callbacks"""
-        from cnotebook.marimo_ext import _create_display_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_display_formatter, _CtxBoundImage
 
         callback = MagicMock()
         ctx = CNotebookContext(callbacks=[callback])
@@ -513,8 +517,8 @@ class TestCreateDuFormatter:
 
     def test_none_returns_empty(self):
         """Test that formatter returns empty string for None input"""
-        from cnotebook.marimo_ext import _create_du_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_du_formatter
 
         ctx = CNotebookContext()
         formatter = _create_du_formatter(ctx)
@@ -522,8 +526,8 @@ class TestCreateDuFormatter:
 
     def test_non_du_returns_str(self):
         """Test that formatter returns str() for non-OEDesignUnit input"""
-        from cnotebook.marimo_ext import _create_du_formatter
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_du_formatter
 
         ctx = CNotebookContext()
         formatter = _create_du_formatter(ctx)
@@ -531,8 +535,8 @@ class TestCreateDuFormatter:
 
     def test_valid_du(self):
         """Test that valid OEDesignUnit is rendered to a _CtxBoundImage wrapping an OEImage"""
-        from cnotebook.marimo_ext import _create_du_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_du_formatter, _CtxBoundImage
 
         ctx = CNotebookContext()
         formatter = _create_du_formatter(ctx)
@@ -550,8 +554,8 @@ class TestCtxBoundImage:
 
     def test_ctx_bound_image_mime_uses_bound_ctx(self):
         """_CtxBoundImage._mime_ must call oeimage_to_html with the bound ctx, not the global ContextVar."""
-        from cnotebook.marimo_ext import _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _CtxBoundImage
 
         # Bound ctx with an explicit width that should survive through _mime_
         bound_ctx = CNotebookContext(width=123, height=77, image_format="png")
@@ -573,8 +577,8 @@ class TestCtxBoundImage:
 
     def test_molecule_formatter_returns_ctx_bound_image(self):
         """_create_molecule_formatter wraps the OEImage in a _CtxBoundImage bound to the column ctx."""
-        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_molecule_formatter, _CtxBoundImage
 
         col_ctx = CNotebookContext(width=150, height=150, image_format="png")
         formatter = _create_molecule_formatter(col_ctx)
@@ -598,8 +602,8 @@ class TestCtxBoundImage:
 
     def test_display_formatter_returns_ctx_bound_image(self):
         """_create_display_formatter wraps its rendered OEImage in a _CtxBoundImage."""
-        from cnotebook.marimo_ext import _create_display_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_display_formatter, _CtxBoundImage
 
         col_ctx = CNotebookContext(width=250, height=250, image_format="png")
         formatter = _create_display_formatter(col_ctx)
@@ -619,8 +623,8 @@ class TestCtxBoundImage:
 
     def test_du_formatter_returns_ctx_bound_image(self):
         """_create_du_formatter wraps its rendered OEImage in a _CtxBoundImage."""
-        from cnotebook.marimo_ext import _create_du_formatter, _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _create_du_formatter, _CtxBoundImage
 
         col_ctx = CNotebookContext(width=200, height=200, image_format="png")
         formatter = _create_du_formatter(col_ctx)
@@ -640,8 +644,8 @@ class TestCtxBoundImage:
 
     def test_per_column_width_survives_through_mime(self):
         """End-to-end: a per-column ctx.width propagates into the HTML <img> width attribute."""
-        from cnotebook.marimo_ext import _CtxBoundImage
         from cnotebook.context import CNotebookContext
+        from cnotebook.marimo_ext import _CtxBoundImage
 
         # Build a real small image and a real ctx with explicit width/height.
         image = oedepict.OEImage(400, 400)
@@ -825,8 +829,9 @@ def test_marimo_molecule_cell_hidpi():
     """Marimo molecule cells should honor device_pixel_ratio (Finding B)."""
     import base64
     import re
-    from cnotebook.marimo_ext import _display_mol
+
     from cnotebook.context import CNotebookContext, cnotebook_context
+    from cnotebook.marimo_ext import _display_mol
     
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "c1ccccc1O")
@@ -858,9 +863,10 @@ def test_marimo_display_cell_hidpi():
     """Marimo display cells should honor device_pixel_ratio (Finding B)."""
     import base64
     import re
-    from cnotebook.marimo_ext import _display_display
+
     from cnotebook.context import CNotebookContext, cnotebook_context
     from cnotebook.core.render import oemol_to_disp
+    from cnotebook.marimo_ext import _display_display
     
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "c1ccccc1O")
@@ -889,8 +895,8 @@ def test_marimo_display_cell_hidpi():
 
 def test_marimo_svg_unaffected_by_dpr():
     """Marimo SVG cells should ignore device_pixel_ratio (Finding B)."""
-    from cnotebook.marimo_ext import _display_mol
     from cnotebook.context import CNotebookContext, cnotebook_context
+    from cnotebook.marimo_ext import _display_mol
     
     mol = oechem.OEGraphMol()
     oechem.OESmilesToMol(mol, "c1ccccc1O")

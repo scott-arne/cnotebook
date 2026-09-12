@@ -45,7 +45,7 @@ class TestFingerprintTypeMaps:
         assert isinstance(atom_fp_typemap, dict)
         assert len(atom_fp_typemap) > 0
         # Test that keys are lowercase and without prefix
-        for key in atom_fp_typemap.keys():
+        for key in atom_fp_typemap:
             assert key.islower()
             assert not key.startswith("oefpatomtype_")
     
@@ -54,7 +54,7 @@ class TestFingerprintTypeMaps:
         assert isinstance(bond_fp_typemap, dict)
         assert len(bond_fp_typemap) > 0
         # Test that keys are lowercase and without prefix
-        for key in bond_fp_typemap.keys():
+        for key in bond_fp_typemap:
             assert key.islower()
             assert not key.startswith("oefpbondtype_")
 
@@ -101,10 +101,12 @@ class TestGetAtomMask:
     def test_get_atom_mask_empty_mask_error(self):
         """Test error when atom mask is None/empty after processing"""
         # Mock the typemap to return None type initially
-        with patch('cnotebook.core.align.oegraphsim.OEFPAtomType_None', 0):
-            with patch.dict(atom_fp_typemap, {'none': 0}):
-                with pytest.raises(ValueError, match="No atom fingerprint types configured"):
-                    get_atom_mask("none")
+        with (
+            patch('cnotebook.core.align.oegraphsim.OEFPAtomType_None', 0),
+            patch.dict(atom_fp_typemap, {'none': 0}),
+            pytest.raises(ValueError, match="No atom fingerprint types configured"),
+        ):
+            get_atom_mask("none")
 
 
 class TestGetBondMask:
@@ -142,10 +144,12 @@ class TestGetBondMask:
     def test_get_bond_mask_empty_mask_error(self):
         """Test error when bond mask is None/empty after processing"""
         # Mock the typemap to return None type initially
-        with patch('cnotebook.core.align.oegraphsim.OEFPBondType_None', 0):
-            with patch.dict(bond_fp_typemap, {'none': 0}):
-                with pytest.raises(ValueError, match="No bond fingerprint types configured"):
-                    get_bond_mask("none")
+        with (
+            patch('cnotebook.core.align.oegraphsim.OEFPBondType_None', 0),
+            patch.dict(bond_fp_typemap, {'none': 0}),
+            pytest.raises(ValueError, match="No bond fingerprint types configured"),
+        ):
+            get_bond_mask("none")
 
 
 class TestFingerprintMaker:

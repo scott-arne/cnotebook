@@ -1,7 +1,9 @@
 import logging
-from typing import Callable, Literal
 from abc import ABCMeta, abstractmethod
-from openeye import oegraphsim, oechem, oedepict
+from collections.abc import Callable
+from typing import Literal
+
+from openeye import oechem, oedepict, oegraphsim
 
 from cnotebook.core.errors import warn
 
@@ -13,16 +15,16 @@ log = logging.getLogger("cnotebook")
 ########################################################################################################################
 
 # Dynamic creation of a typemap for OpenEye atom type fingerprints
-atom_fp_typemap = dict(
-    (x.replace("OEFPAtomType_", "").lower(), getattr(oegraphsim, x))
+atom_fp_typemap = {
+    x.replace("OEFPAtomType_", "").lower(): getattr(oegraphsim, x)
     for x in list(filter(lambda x: x.startswith("OEFPAtomType_"), dir(oegraphsim)))
-)
+}
 
 # Dynamic creation of a typemap for OpenEye bond type fingerprints
-bond_fp_typemap = dict(
-    (x.replace("OEFPBondType_", "").lower(), getattr(oegraphsim, x))
+bond_fp_typemap = {
+    x.replace("OEFPBondType_", "").lower(): getattr(oegraphsim, x)
     for x in list(filter(lambda x: x.startswith("OEFPBondType_"), dir(oegraphsim)))
-)
+}
 
 
 def get_atom_mask(atom_type):

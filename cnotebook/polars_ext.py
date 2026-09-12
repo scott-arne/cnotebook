@@ -21,19 +21,15 @@ from .core.table import ColumnKind, RowWindow, polars_row_window, render_table
 from .core.versions import at_least as _at_least
 from .render import CNotebookContext
 
-get_ipython: Any = None
-
 # Only register iPython formatters if that is present
 try:
     # noinspection PyProtectedMember,PyPackageRequirements
-    from IPython.core.getipython import get_ipython
-    ipython_present = True
-except ModuleNotFoundError:
-    get_ipython = None
-    ipython_present = False
+    from IPython.core.getipython import get_ipython as _get_ipython
+except ModuleNotFoundError:  # IPython is optional
+    _get_ipython = None  # type: ignore[assignment]
+ipython_present = _get_ipython is not None
 
 if typing.TYPE_CHECKING:
-    from .context import CNotebookContext
     from .grid import MolGrid
 
 log = logging.getLogger("cnotebook")
@@ -1062,10 +1058,10 @@ if ipython_present:
 
         Note: Calls to this function are idempotent.
         """
-        if get_ipython is None:
+        if _get_ipython is None:
             return
 
-        ipython_instance = get_ipython()
+        ipython_instance = _get_ipython()
 
         if ipython_instance is not None:
             html_formatter = ipython_instance.display_formatter.formatters['text/html']  # pyright: ignore

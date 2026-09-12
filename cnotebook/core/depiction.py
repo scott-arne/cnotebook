@@ -12,7 +12,7 @@ from openeye import oechem, oedepict
 
 from cnotebook.core.context import CNotebookContext, cnotebook_context
 from cnotebook.core.helpers import escape_html
-from cnotebook.core.render import oemol_to_image, create_img_tag, oeimage_to_html
+from cnotebook.core.render import create_img_tag, oeimage_to_html, oemol_to_image
 
 log = logging.getLogger("cnotebook")
 
@@ -107,11 +107,11 @@ def highlight_alerts(
 _VALID_FORMATS = ("html", "png", "svg")
 
 
-def _color_hex(color: "oechem.OEColor | None", default: str = "#666666") -> str:
+def _color_hex(color: oechem.OEColor | None, default: str = "#666666") -> str:
     if color is None:
         return default
     # OEColor channel accessors are GetR()/GetG()/GetB() (not R()/G()/B()).
-    return "#{:02X}{:02X}{:02X}".format(color.GetR(), color.GetG(), color.GetB())
+    return f"#{color.GetR():02X}{color.GetG():02X}{color.GetB():02X}"
 
 
 def _path_html(steps: list[PathStep], terminal: Terminal) -> str:

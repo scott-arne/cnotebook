@@ -915,7 +915,7 @@ class TestPolarsRegisterFormatters:
         mock_html_formatter.lookup.side_effect = KeyError
         mock_ipython.display_formatter.formatters.__getitem__.return_value = mock_html_formatter
 
-        with patch("cnotebook.polars_ext.get_ipython", return_value=mock_ipython):
+        with patch("cnotebook.polars_ext._get_ipython", return_value=mock_ipython):
             from cnotebook.polars_ext import register_polars_formatters
             register_polars_formatters()
 
@@ -926,10 +926,12 @@ class TestPolarsRegisterFormatters:
         import logging
         from unittest.mock import patch
 
-        with patch("cnotebook.polars_ext.get_ipython", return_value=None):
-            with caplog.at_level(logging.DEBUG, logger="cnotebook"):
-                from cnotebook.polars_ext import register_polars_formatters
-                register_polars_formatters()
+        with (
+            patch("cnotebook.polars_ext._get_ipython", return_value=None),
+            caplog.at_level(logging.DEBUG, logger="cnotebook"),
+        ):
+            from cnotebook.polars_ext import register_polars_formatters
+            register_polars_formatters()
 
         assert any("not in use" in record.message for record in caplog.records)
 
@@ -944,7 +946,7 @@ class TestPolarsRegisterFormatters:
         mock_html_formatter.lookup.return_value = render_polars_dataframe
         mock_ipython.display_formatter.formatters.__getitem__.return_value = mock_html_formatter
 
-        with patch("cnotebook.polars_ext.get_ipython", return_value=mock_ipython):
+        with patch("cnotebook.polars_ext._get_ipython", return_value=mock_ipython):
             from cnotebook.polars_ext import register_polars_formatters
             register_polars_formatters()
 
@@ -1141,8 +1143,9 @@ def test_highlight_using_column_overlay_produces_different_svg():
     """Test that overlay highlighting actually modifies the rendered output."""
     import polars as pl
     from openeye import oechem, oedepict
-    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
+
     from cnotebook.core.context import CNotebookContext
+    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
     
     # Create a simple molecule
     mol = oechem.OEGraphMol()
@@ -1180,8 +1183,9 @@ def test_highlight_using_column_traditional_produces_different_svg():
     """Test that traditional highlighting actually modifies the rendered output."""
     import polars as pl
     from openeye import oechem, oedepict
-    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
+
     from cnotebook.core.context import CNotebookContext
+    from cnotebook.core.render import oedisp_to_html, oemol_to_disp
     
     # Create a simple molecule
     mol = oechem.OEGraphMol()
