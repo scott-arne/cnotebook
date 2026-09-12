@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import stat
 import sys
@@ -77,6 +78,22 @@ def _prepare_target(path: str | os.PathLike[str]) -> Path:
     return target
 
 
+@functools.cache
+def _default_file_mode() -> int:
+    """Return the permissions a plain ``open(path, "wb")`` would give a new file.
+
+    The umask can only be read by setting it, which is process-global and therefore
+    momentarily wrong for every other thread. The answer is cached so that window is
+    opened once per process instead of once per saved file; a program that changes its
+    umask mid-run is not worth reopening it for.
+
+    :returns: The mode bits for a newly created output file.
+    """
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def _apply_output_permissions(temporary: Path, target: Path) -> None:
     """Give the temporary file the permissions the finished document should have.
 
@@ -90,11 +107,7 @@ def _apply_output_permissions(temporary: Path, target: Path) -> None:
     try:
         mode = stat.S_IMODE(target.stat().st_mode)
     except OSError:
-        # No previous file to imitate, so fall back to the default an ordinary write
-        # would get. The umask can only be read by setting it, hence the restore.
-        umask = os.umask(0)
-        os.umask(umask)
-        mode = 0o666 & ~umask
+        mode = _default_file_mode()
     os.chmod(temporary, mode)
 
 
@@ -1019,7 +1032,8 @@ class C3D:
         """Write the self-contained HTML document to *path*.
 
         The document is moved into place only once it is complete, so an interrupted
-        write leaves any previous file intact.
+        write leaves any previous file intact. Because the move is a rename, a symbolic
+        link at *path* is replaced by the document rather than followed to its target.
 
         :param path: Destination file; its directory must exist.
         :returns: The path written.
@@ -1090,7 +1104,14 @@ class C3D:
         :raises ValueError: If the view is not a sequence of eight finite numbers.
         :raises ImportError: If anywidget is not installed.
         """
-        self.widget.set_view(view)
+        from cnotebook.c3d.widget import _validate_view
+
+        # Validated before the widget is touched: a rejected camera must not be the
+        # thing that brings a live widget into being on a viewer never displayed. The
+        # coordinates go on rather than the caller's iterable, which validating a
+        # generator would have consumed.
+        coordinates = _validate_view(view)
+        self.widget.set_view(coordinates)
 
     def save_view(self, name: str) -> None:
         """Remember the current camera under *name*.
@@ -1133,7 +1154,6 @@ class C3D:
         :raises CNotebookError: If the capture failed, or the front end did not answer
             within 30 s.
         :raises ImportError: If anywidget is not installed.
-        :raises RuntimeError: If there is no running event loop (notebook cells run one).
         """
         future = self.widget.request_screenshot()
         try:
@@ -1152,7 +1172,9 @@ class C3D:
 
         The destination is checked before the capture is requested, and the image is
         moved into place only once it is complete, so a failed capture never replaces
-        an existing screenshot with a truncated one.
+        an existing screenshot with a truncated one. Because the move is a rename, a
+        symbolic link at *path* is replaced by the image rather than followed to its
+        target.
 
         :param path: Destination file; its directory must exist.
         :returns: The path written.

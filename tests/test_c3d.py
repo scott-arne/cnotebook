@@ -1805,6 +1805,40 @@ def test_widget_mode_without_a_front_end_falls_back_quietly(viewer, recwarn):
     assert [w for w in recwarn.list if issubclass(w.category, CNotebookWarning)] == []
 
 
+def test_display_follows_the_front_end_gate(viewer, monkeypatch):
+    """The gate decides display(): the live widget where one can render, else the HTML.
+
+    Without this the gate could be stuck closed and every notebook would quietly get the
+    static document instead of an interactive viewer, with nothing failing to say so.
+    """
+    pytest.importorskip("anywidget")
+    from cnotebook.c3d.widget import C3DWidget
+
+    monkeypatch.setattr("cnotebook.c3d.c3d._has_display_frontend", lambda: True)
+    assert isinstance(viewer.display(), C3DWidget)
+    assert isinstance(viewer.display(static=None), C3DWidget)
+
+    monkeypatch.setattr("cnotebook.c3d.c3d._has_display_frontend", lambda: False)
+    assert "<iframe" in viewer.display()._repr_html_()
+    # An explicit request still wins: the gate only decides the default.
+    assert isinstance(viewer.display(static=False), C3DWidget)
+
+
+def test_the_front_end_gate_looks_for_a_running_shell(monkeypatch):
+    from cnotebook.c3d.c3d import _has_display_frontend
+
+    monkeypatch.setattr("cnotebook.c3d.c3d._is_marimo", lambda: False)
+    monkeypatch.setattr("IPython.core.getipython.get_ipython", lambda: object())
+    assert _has_display_frontend() is True
+    monkeypatch.setattr("IPython.core.getipython.get_ipython", lambda: None)
+    assert _has_display_frontend() is False
+    # IPython is an optional dependency, and its absence is not an error here.
+    monkeypatch.setitem(sys.modules, "IPython.core.getipython", None)
+    assert _has_display_frontend() is False
+    monkeypatch.setattr("cnotebook.c3d.c3d._is_marimo", lambda: True)
+    assert _has_display_frontend() is True
+
+
 def test_construction_and_static_output_never_reach_the_widget_module(ethanol_3d, monkeypatch):
     """Only the live widget needs anywidget; building and rendering must not import it."""
     from cnotebook.c3d import C3D
@@ -1814,6 +1848,40 @@ def test_construction_and_static_output_never_reach_the_widget_module(ethanol_3d
     built = C3D(width=300, height=200).add_molecule(ethanol_3d, name="ethanol")
     assert built._widget is None
     assert "<iframe" in built.display(static=True)._repr_html_()
+
+
+def test_star_import_does_not_need_anywidget(monkeypatch):
+    """The lazily resolved widget names must stay out of `from cnotebook.c3d import *`.
+
+    A star import resolves every name in ``__all__``, so listing them there would import
+    anywidget and undo the isolation the lazy ``__getattr__`` exists for.
+    """
+    import cnotebook.c3d
+
+    class _BlockAnywidget:
+        """Meta path finder that fails `import anywidget` as a missing install would."""
+
+        def find_spec(self, name, path=None, target=None):
+            if name.partition(".")[0] == "anywidget":
+                raise ImportError("anywidget is not installed")
+            # Any other module is none of this finder's business.
+
+    for imported in [n for n in sys.modules if n.partition(".")[0] == "anywidget"]:
+        monkeypatch.delitem(sys.modules, imported)
+    monkeypatch.delitem(sys.modules, "cnotebook.c3d.widget", raising=False)
+    # The submodule is an attribute of its package too, and a `from ... import widget`
+    # would find that instead of trying the blocked import.
+    monkeypatch.delattr(cnotebook.c3d, "widget", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_BlockAnywidget(), *sys.meta_path])
+
+    namespace = {}
+    exec("from cnotebook.c3d import *", namespace)  # noqa: S102 - the statement under test
+    assert namespace["C3D"] is cnotebook.c3d.C3D
+    assert "cnotebook.c3d.widget" not in sys.modules
+
+    # The widget names are still exported by name; they just need the install.
+    with pytest.raises(ImportError, match="anywidget"):
+        namespace["blocked"] = cnotebook.c3d.C3DWidget
 
 
 def test_execute_views_and_picks(viewer):
@@ -1848,6 +1916,17 @@ def test_restore_view_reaches_the_frame_when_the_camera_did_not_move(viewer):
     requests = viewer.widget.view_request
     viewer.restore_view("start")
     assert viewer.widget.view == _VIEW_A and viewer.widget.view_request == requests + 1
+
+
+def test_set_view_rejects_a_bad_camera_before_a_widget_exists(viewer):
+    """A rejected camera must not be what brings a live widget into being."""
+    pytest.importorskip("anywidget")
+    with pytest.raises(ValueError, match="8 numbers"):
+        viewer.set_view([1.0, 2.0])
+    assert viewer._widget is None
+    # Validating first must not consume a one-shot iterable before the widget sees it.
+    viewer.set_view(iter(_VIEW_A))
+    assert viewer.widget.view == _VIEW_A
 
 
 def test_saved_views_are_copies(viewer):
