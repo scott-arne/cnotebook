@@ -1106,12 +1106,14 @@ print(get_formatter(pd.DataFrame({"a": [1]}), include_opinionated=True).__name__
 print(get_formatter(pl.DataFrame({"a": [1]}), include_opinionated=True).__name__)
 """
 
+# cnotebook attaches an adapter when the library it adapts is imported, so every order has
+# to import the frame stack somewhere; what varies is where marimo and cnotebook sit in it.
+_FRAME_STACK = "import pandas\nimport oepandas\nimport polars\nimport oepolars\n"
+
 _IMPORT_ORDERS = {
-    "marimo-first": "import marimo\nimport cnotebook\n",
-    "cnotebook-first": "import cnotebook\nimport marimo\n",
-    "frames-after-cnotebook": (
-        "import cnotebook\nimport marimo\nimport pandas\nimport oepandas\nimport polars\nimport oepolars\n"
-    ),
+    "marimo-first": "import marimo\n" + _FRAME_STACK + "import cnotebook\n",
+    "cnotebook-first": "import cnotebook\nimport marimo\n" + _FRAME_STACK,
+    "frames-first": _FRAME_STACK + "import cnotebook\nimport marimo\n",
 }
 
 _HIGHLIGHT_SCRIPT = _OWN_THE_DISPLAY + """

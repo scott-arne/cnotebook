@@ -1,6 +1,13 @@
+import importlib
 import importlib.util
+import itertools
 import logging
+import os
+import subprocess
+import sys
+import textwrap
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -45,11 +52,12 @@ class TestCNotebookEnvInfo:
         env = get_env()
         assert isinstance(env, CNotebookEnvInfo)
 
-    def test_get_env_returns_singleton(self):
-        """Test that get_env returns the same instance each time"""
+    def test_get_env_returns_equal_values(self):
+        """The environment is recomputed per call, so two calls agree without being one object."""
         env1 = get_env()
         env2 = get_env()
-        assert env1 is env2
+        assert env1 is not env2
+        assert repr(env1) == repr(env2)
 
     def test_pandas_available_property(self):
         """Test pandas_available property"""
@@ -208,6 +216,22 @@ class TestCNotebookEnvInfoReadOnly:
             env.is_marimo_notebook = False
 
 
+def _find_spec_without(*missing: str):
+    """Build a ``find_spec`` replacement that reports *missing* as not installed.
+
+    :param missing: Distribution names that should look absent.
+    :returns: A callable with ``importlib.util.find_spec``'s signature.
+    """
+    real = importlib.util.find_spec
+
+    def fake(name, *args, **kwargs):
+        if name in missing:
+            return None
+        return real(name, *args, **kwargs)
+
+    return fake
+
+
 class TestEnvDetection:
     """Test environment detection accuracy"""
 
@@ -228,6 +252,34 @@ class TestEnvDetection:
             and importlib.util.find_spec("oepolars") is not None
         )
         assert env.polars_available is polars_available
+
+    @pytest.mark.parametrize("missing", ["pandas", "oepandas"])
+    def test_pandas_needs_both_packages_installed(self, missing):
+        """Detection asks the installed specs, so either half missing turns pandas off."""
+        with patch("importlib.util.find_spec", side_effect=_find_spec_without(missing)):
+            env = get_env()
+        assert env.pandas_available is False
+        assert env.pandas_version == ""
+
+    @pytest.mark.parametrize("missing", ["polars", "oepolars"])
+    def test_polars_needs_both_packages_installed(self, missing):
+        """Detection asks the installed specs, so either half missing turns polars off."""
+        with patch("importlib.util.find_spec", side_effect=_find_spec_without(missing)):
+            env = get_env()
+        assert env.polars_available is False
+        assert env.polars_version == ""
+
+    def test_molgrid_availability_follows_anywidget(self):
+        """MolGrid's widget needs anywidget, and nothing is imported to find out."""
+        with patch("importlib.util.find_spec", side_effect=_find_spec_without("anywidget")):
+            assert get_env().molgrid_available is False
+        assert get_env().molgrid_available is (importlib.util.find_spec("anywidget") is not None)
+
+    def test_detection_imports_nothing(self):
+        """A detection pass must not pull in a library the session had not imported."""
+        before = set(sys.modules)
+        get_env()
+        assert set(sys.modules) - before == set()
 
 
 class TestLevelSpecificFormatter:
@@ -340,15 +392,23 @@ class TestModuleImports:
     """Test module imports and exports"""
 
     def test_all_expected_exports(self):
-        """Public package exports should point at the imported implementations."""
-        assert cnotebook.__version__ == __version__
-        assert cnotebook.LevelSpecificFormatter is LevelSpecificFormatter
-        assert cnotebook.enable_debugging is enable_debugging
-        assert cnotebook.log is log
-        assert cnotebook.render_dataframe is render_dataframe
-        assert cnotebook.cnotebook_context is cnotebook_context
-        assert cnotebook.get_env is get_env
-        assert cnotebook.CNotebookEnvInfo is CNotebookEnvInfo
+        """Public package exports should point at the imported implementations.
+
+        Optional exports resolve through the module ``__getattr__``, so every name is
+        read with ``getattr`` rather than assumed to be bound already.
+        """
+        expected = {
+            "__version__": __version__,
+            "LevelSpecificFormatter": LevelSpecificFormatter,
+            "enable_debugging": enable_debugging,
+            "log": log,
+            "render_dataframe": render_dataframe,
+            "cnotebook_context": cnotebook_context,
+            "get_env": get_env,
+            "CNotebookEnvInfo": CNotebookEnvInfo,
+        }
+        for name, value in expected.items():
+            assert getattr(cnotebook, name) is value or getattr(cnotebook, name) == value
 
 
 class TestIntegration:
@@ -607,11 +667,11 @@ class TestDisplayHtmlEnvironments:
             assert result == "marimo_html"
 
 
-class TestMissingOptionalExport:
-    """Test the module __getattr__ that explains unavailable optional exports."""
+class TestLazyExports:
+    """Test the module __getattr__ that resolves optional exports on first access."""
 
     def _unbind_exports(self, *names):
-        """Remove optional exports from the module, simulating a failed import.
+        """Forget resolved exports so the next access goes back through ``__getattr__``.
 
         :param names: Module attribute names to remove.
         :returns: Mapping of removed names to their previous values for restoration.
@@ -620,61 +680,63 @@ class TestMissingOptionalExport:
         for name in names:
             if name in cnotebook.__dict__:
                 removed[name] = cnotebook.__dict__.pop(name)
+            cnotebook._WARNED_EXPORTS.discard(name)
         return removed
 
-    def test_missing_anywidget_raises_actionable_import_error(self):
-        """Accessing molgrid without anywidget warns and raises with install guidance."""
-        removed = self._unbind_exports("molgrid", "MolGrid", "BEST_FIT_ORIENTATION")
+    def test_lazy_export_resolves_to_the_submodule_object(self):
+        """``cnotebook.MolGrid`` is the class from ``cnotebook.grid``, cached after first use."""
+        from cnotebook.grid import MolGrid
+
+        removed = self._unbind_exports("MolGrid")
         try:
-            real_find_spec = importlib.util.find_spec
-
-            def fake_find_spec(name, *args, **kwargs):
-                if name == "anywidget":
-                    return None
-                return real_find_spec(name, *args, **kwargs)
-
-            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
-                with pytest.warns(CNotebookWarning, match="anywidget"):
-                    with pytest.raises(AttributeError, match="requires the optional 'anywidget'"):
-                        cnotebook.molgrid
+            assert cnotebook.MolGrid is MolGrid
+            # Resolution binds the name, so __getattr__ pays the import cost once.
+            assert cnotebook.__dict__["MolGrid"] is MolGrid
         finally:
             cnotebook.__dict__.update(removed)
 
-    def test_present_anywidget_reports_underlying_failure(self):
-        """When anywidget is present but grid still failed, point at cnotebook.grid."""
-        removed = self._unbind_exports("molgrid", "MolGrid", "BEST_FIT_ORIENTATION")
+    @pytest.mark.parametrize("name", ["MolGrid", "molgrid", "BEST_FIT_ORIENTATION", "C3D",
+                                      "render_dataframe", "render_polars_dataframe"])
+    def test_every_lazy_export_resolves(self, name):
+        """Each advertised lazy export imports cleanly in a fully installed environment."""
+        assert getattr(cnotebook, name) is not None
+
+    def test_dir_lists_the_lazy_exports(self):
+        """Tab completion has to see the names that only ``__getattr__`` can produce."""
+        listed = dir(cnotebook)
+        assert set(cnotebook._LAZY_EXPORTS) <= set(listed)
+        assert len(listed) == len(set(listed))
+
+    def test_failed_lazy_import_warns_once_and_raises(self):
+        """A broken optional import is reported once, naming the module and the real cause."""
+        removed = self._unbind_exports("MolGrid")
+        real_import_module = importlib.import_module
+
+        def fake_import_module(name, *args, **kwargs):
+            if name == "cnotebook.grid":
+                raise ImportError("No module named 'anywidget'")
+            return real_import_module(name, *args, **kwargs)
+
         try:
-            real_find_spec = importlib.util.find_spec
-            fake_spec = MagicMock()
-
-            def fake_find_spec(name, *args, **kwargs):
-                if name == "anywidget":
-                    return fake_spec
-                return real_find_spec(name, *args, **kwargs)
-
-            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
-                with pytest.warns(CNotebookWarning):
+            with patch("importlib.import_module", side_effect=fake_import_module):
+                with pytest.warns(CNotebookWarning, match="anywidget"), \
+                        pytest.raises(AttributeError, match="cnotebook.grid"):
+                    _ = cnotebook.MolGrid
+                # The name has been explained once; repeating the warning would be noise.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", CNotebookWarning)
                     with pytest.raises(AttributeError, match="cnotebook.grid"):
-                        cnotebook.MolGrid
+                        _ = cnotebook.MolGrid
         finally:
             cnotebook.__dict__.update(removed)
+            cnotebook._WARNED_EXPORTS.discard("MolGrid")
 
-    def test_missing_c3d_reports_underlying_failure(self):
-        """C3D has no optional dependency, so a failed import points at cnotebook.c3d."""
-        removed = self._unbind_exports("C3D")
-        try:
-            with pytest.warns(CNotebookWarning):
-                with pytest.raises(AttributeError, match="cnotebook.c3d") as exc_info:
-                    cnotebook.C3D
-            # The message must not falsely blame anywidget: C3D does not use it.
-            assert "anywidget" not in str(exc_info.value)
-        finally:
-            cnotebook.__dict__.update(removed)
-
-    def test_unknown_attribute_raises_attribute_error(self):
-        """Unknown attributes still raise AttributeError, not ImportError."""
-        with pytest.raises(AttributeError, match="does_not_exist"):
-            cnotebook.does_not_exist
+    def test_unknown_attribute_raises_without_warning(self):
+        """An unknown name is a plain AttributeError, not an optional-dependency report."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", CNotebookWarning)
+            with pytest.raises(AttributeError, match="does_not_exist"):
+                _ = cnotebook.does_not_exist
 
 
 def test_user_warnings_are_cnotebook_warnings():
@@ -685,9 +747,6 @@ def test_user_warnings_are_cnotebook_warnings():
 
 
 def test_no_stream_handler_at_import():
-    import subprocess
-    import sys
-
     code = (
         "import logging, cnotebook; "
         "hs = logging.getLogger('cnotebook').handlers; "
@@ -703,7 +762,7 @@ def test_hasattr_optional_export(monkeypatch):
         warnings.simplefilter("ignore", CNotebookWarning)
         assert hasattr(cnotebook, "MolGrid") in (True, False)
     with pytest.raises(AttributeError):
-        getattr(cnotebook, "no_such_attribute")
+        _ = cnotebook.no_such_attribute
 
 
 def test_display_honours_column_contexts():
@@ -859,3 +918,102 @@ class TestDisplayC3DMolGridStatic:
         with patch("cnotebook._display_html", side_effect=lambda html, env: html):
             cnotebook.display(stub2, static=False)
         assert stub2.static_value is False
+
+
+########################################################################################################################
+# Import cost: what `import cnotebook` is allowed to pull in
+########################################################################################################################
+
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+
+_OPTIONAL_LIBRARIES = ("pandas", "polars", "oepandas", "oepolars", "marimo", "anywidget")
+
+
+def _run(code: str, **env_overrides):
+    """Run *code* in a fresh interpreter that imports this checkout's cnotebook.
+
+    :param code: Python source to run with ``-c``.
+    :param env_overrides: Environment variables to set for the child process.
+    :returns: The completed process.
+    """
+    env = {**os.environ, **env_overrides}
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (_REPO_ROOT, env.get("PYTHONPATH")) if part)
+    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                          env=env, cwd=_REPO_ROOT, check=False)
+
+
+def test_import_does_not_import_optional_libraries():
+    """``import cnotebook`` costs the OpenEye toolkits and nothing else."""
+    code = (f"import sys, cnotebook; print(sorted(m for m in {_OPTIONAL_LIBRARIES!r} if m in sys.modules))")
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("[]")
+
+
+def test_bare_formatters_registered_without_oepandas():
+    """OpenEye objects get their IPython formatters even where the frame libraries cannot load."""
+    code = textwrap.dedent("""
+        import builtins, sys
+        real = builtins.__import__
+        def guard(name, *a, **k):
+            if name.split('.')[0] == 'oepandas':
+                raise ImportError('blocked oepandas')
+            return real(name, *a, **k)
+        builtins.__import__ = guard
+        from IPython.core.interactiveshell import InteractiveShell
+        shell = InteractiveShell.instance()
+        import cnotebook
+        from openeye import oechem
+        fmt = shell.display_formatter.formatters['text/html']
+        print(fmt.lookup_by_type(oechem.OEGraphMol) is not None)
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("True")
+
+
+def test_dataframes_render_through_cnotebook_without_being_imported_first():
+    """The by-name registration means a frame imported after cnotebook still renders as ours."""
+    code = textwrap.dedent("""
+        from IPython.core.interactiveshell import InteractiveShell
+        shell = InteractiveShell.instance()
+        import sys
+        import cnotebook
+        assert 'pandas' not in sys.modules and 'polars' not in sys.modules
+        import pandas as pd
+        import polars as pl
+        from cnotebook.ipython_ext import _render_pandas, _render_polars
+        fmt = shell.display_formatter.formatters['text/html']
+        frames = (pd.DataFrame({'a': [1]}), pl.DataFrame({'a': [1]}))
+        print(fmt.lookup(frames[0]) is _render_pandas, fmt.lookup(frames[1]) is _render_polars)
+        print(all('<table' in fmt(frame) for frame in frames))
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines() == ["True True", "True"]
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations(["import marimo", "import oepandas",
+                                                               "import oepolars"])))
+def test_marimo_attach_import_orders(order):
+    """Whichever of marimo, oepandas and oepolars lands last, both table formatters are marimo's."""
+    pytest.importorskip("marimo")
+    code = "import cnotebook\n" + "\n".join(order) + textwrap.dedent("""
+        import pandas as pd, polars as pl
+        from marimo._output.formatting import OPINIONATED_FORMATTERS
+        registry = OPINIONATED_FORMATTERS.formatters
+        print(registry[pd.DataFrame].__name__, registry[pl.DataFrame].__name__)
+    """)
+    out = _run(code)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "marimo_pandas_formatter marimo_polars_formatter"
+
+
+def test_lazy_exports_and_get_env_is_live():
+    """The optional exports resolve on demand and the environment is answered per call."""
+    assert cnotebook.C3D.__name__ == "C3D"
+    assert cnotebook.MolGrid.__name__ == "MolGrid"
+    env = cnotebook.get_env()
+    assert env.c3d_available is True
+    assert isinstance(env.pandas_available, bool)
+    assert cnotebook.get_env() is not env

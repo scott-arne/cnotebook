@@ -4,12 +4,17 @@ CNotebook - Ergonomic chemistry visualization in notebooks.
 Auto-detects available backends (Pandas/Polars) and environments (Jupyter/Marimo).
 Only requires openeye-toolkits; all other dependencies are optional.
 """
+import importlib
+import importlib.metadata
+import importlib.util
 import logging
+import sys
 
 # Required imports (openeye-toolkits)
 from openeye import oechem, oedepict
 
 # Core functionality that doesn't depend on backends
+from . import _hooks
 from .context import CNotebookContext, cnotebook_context
 from .core.errors import warn
 from .core.render import render_design_unit as render_design_unit
@@ -82,12 +87,12 @@ class CNotebookEnvInfo:
     """Environment information for CNotebook.
 
     This class provides read-only access to detected backend and environment
-    availability. A singleton instance is created at module load time and
-    can be retrieved via :func:`get_env`.
+    availability. An instance describes the environment at the moment
+    :func:`get_env` was called; call it again after importing something new.
 
-    All properties are read-only to ensure consistency throughout the
-    application lifecycle. Availability is determined by checking if the
-    version string is non-empty.
+    All properties are read-only, so a snapshot cannot drift while it is being
+    read. Availability is determined by checking if the version string is
+    non-empty.
     """
 
     def __init__(
@@ -101,7 +106,7 @@ class CNotebookEnvInfo:
         is_jupyter_notebook: bool,
         is_marimo_notebook: bool,
     ):
-        """Create environment info (typically called once at module load).
+        """Create an environment snapshot.
 
         :param pandas_version: Detected Pandas version string, or empty if unavailable.
         :param polars_version: Detected Polars version string, or empty if unavailable.
@@ -195,96 +200,90 @@ class CNotebookEnvInfo:
         )
 
 
+def _installed(name: str) -> bool:
+    """Report whether *name* could be imported, without importing it.
+
+    :param name: Top-level module name.
+    :returns: True when an import of *name* would find something.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        # A package whose parent is broken, or one already in sys.modules with no spec,
+        # is not something cnotebook can use either.
+        return False
+
+
+def _version(name: str) -> str:
+    """Read a package's version, without importing the package.
+
+    :param name: Top-level module name, also used as the distribution name.
+    :returns: The version string, or empty when it cannot be determined.
+    """
+    # An already-imported package answers for free and answers for itself, which matters
+    # for anything installed outside a distribution; otherwise fall back to the metadata.
+    version = getattr(sys.modules.get(name), "__version__", "")
+    if version:
+        return str(version)
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
 def _detect_environment() -> CNotebookEnvInfo:
     """Detect available backends and environments.
 
+    Every answer comes from installed package metadata plus what the session has already
+    imported, so asking the question never itself imports pandas, polars, marimo or
+    anywidget.
+
     :returns: CNotebookEnvInfo instance with detection results.
     """
-    pandas_version = ""
-    polars_version = ""
     ipython_version = ""
-    marimo_version = ""
-    molgrid_available = False
-    c3d_available = False
     is_jupyter = False
-    is_marimo = False
-
-    # Detect molgrid (requires anywidget)
-    try:
-        from cnotebook.grid import MolGrid, molgrid
-        molgrid_available = MolGrid is not None and molgrid is not None
-    except ImportError:
-        pass
-
-    # Detect C3D viewer
-    try:
-        from cnotebook.c3d import C3D
-        c3d_available = C3D is not None
-    except ImportError:
-        pass
-
-    # Detect pandas/oepandas
-    try:
-        # noinspection PyUnusedImports
-        import oepandas as oepd
-        import pandas as pd
-        pandas_version = pd.__version__ if oepd is not None else ""
-    except ImportError:
-        pass
-
-    # Detect polars/oepolars
-    try:
-        # noinspection PyUnusedImports
-        import oepolars as oeplr  # pyright: ignore[reportMissingImports]
-        import polars as pl
-        polars_version = pl.__version__ if oeplr is not None else ""
-    except ImportError:
-        pass
-
-    # Detect iPython
-    try:
-        import IPython
+    if "IPython" in sys.modules:
         from IPython.core.getipython import get_ipython
-        ipy = get_ipython()
-        if ipy is not None:
-            ipython_version = IPython.__version__
-            # Check if running in Jupyter notebook
-            is_jupyter = ipy.__class__.__name__ == 'ZMQInteractiveShell'
-    except (ImportError, Exception):
-        pass
 
-    # Detect Marimo
-    try:
-        import marimo as mo  # pyright: ignore[reportMissingImports]
-        if mo.running_in_notebook():
-            marimo_version = mo.__version__
-            is_marimo = True
-    except (ImportError, Exception):
-        # Marimo raises exception if not running in notebook context
-        pass
+        shell = get_ipython()
+        if shell is not None:
+            ipython_version = str(getattr(sys.modules["IPython"], "__version__", ""))
+            is_jupyter = shell.__class__.__name__ == 'ZMQInteractiveShell'
+
+    marimo_version = ""
+    is_marimo = False
+    if "marimo" in sys.modules:
+        mo = sys.modules["marimo"]
+        try:
+            is_marimo = bool(mo.running_in_notebook())
+        except Exception:  # noqa: BLE001 - marimo raises outside a notebook context, which is an answer
+            is_marimo = False
+        if is_marimo:
+            marimo_version = str(getattr(mo, "__version__", ""))
+
+    # A backend counts as available only with both halves installed: the dataframe
+    # library and the OpenEye adapter cnotebook renders through.
+    pandas_ok = _installed("pandas") and _installed("oepandas")
+    polars_ok = _installed("polars") and _installed("oepolars")
 
     return CNotebookEnvInfo(
-        pandas_version=pandas_version,
-        polars_version=polars_version,
+        pandas_version=_version("pandas") if pandas_ok else "",
+        polars_version=_version("polars") if polars_ok else "",
         ipython_version=ipython_version,
         marimo_version=marimo_version,
-        molgrid_available=molgrid_available,
-        c3d_available=c3d_available,
+        molgrid_available=_installed("anywidget"),
+        # The C3D viewer ships with cnotebook and needs nothing optional to import.
+        c3d_available=True,
         is_jupyter_notebook=is_jupyter,
         is_marimo_notebook=is_marimo,
     )
 
 
-# Initialize environment detection at module load (singleton instance)
-_env_info: CNotebookEnvInfo = _detect_environment()
-
-
 def get_env() -> CNotebookEnvInfo:
     """Get environment information for CNotebook.
 
-    Returns a singleton instance containing information about available
-    backends and environments. The environment is detected once at module
-    load time and the same object is returned on subsequent calls.
+    The environment is recomputed on each call, because detection is now cheap and a
+    library imported after cnotebook -- which is the normal order now -- has to show up.
 
     :returns: CNotebookEnvInfo instance with read-only properties.
 
@@ -294,114 +293,92 @@ def get_env() -> CNotebookEnvInfo:
         if env.pandas_available:
             print(f"Pandas {env.pandas_version} is available")
     """
-    return _env_info
+    return _detect_environment()
 
 
 ########################################################################################################################
-# Register Formatters Based on Availability
+# Register Formatters and Integration Hooks
 ########################################################################################################################
 
-# Import and register pandas formatters if available
-if _env_info.pandas_available:
-    try:
-        from .pandas_ext import register_pandas_formatters
-        from .pandas_ext import render_dataframe as render_dataframe
+def _activate_ipython() -> None:
+    """Register the IPython formatters, if this session has IPython at all.
 
-        if _env_info.ipython_available:
-            from .ipython_ext import register_ipython_formatters
-            register_ipython_formatters()
-            register_pandas_formatters()
-            log.debug("[cnotebook] Registered Pandas formatters for iPython")
-    except Exception as e:
-        warn(f"[cnotebook] Failed to import/register Pandas extension: {e}")
-
-# Import and register polars formatters if available
-if _env_info.polars_available:
-    try:
-        from .polars_ext import register_polars_formatters
-        from .polars_ext import render_polars_dataframe as render_polars_dataframe
-
-        if _env_info.ipython_available:
-            register_polars_formatters()
-            log.debug("[cnotebook] Registered Polars formatters for iPython")
-    except Exception as e:
-        warn(f"[cnotebook] Failed to import/register Polars extension: {e}")
-
-# Import marimo extension if available
-if _env_info.marimo_available:
-    try:
-        from . import marimo_ext
-        log.debug(f"[cnotebook] Imported Marimo extension: {marimo_ext.__name__}")
-    except Exception as e:
-        warn(f"[cnotebook] Failed to import Marimo extension: {e}")
-
-# Export molgrid at top level if available
-if _env_info.molgrid_available:
-    from .grid import (
-        BEST_FIT_ORIENTATION as BEST_FIT_ORIENTATION,
-    )
-    from .grid import (
-        MolGrid as MolGrid,
-    )
-    from .grid import (
-        molgrid as molgrid,
+    The DataFrame formatters are registered by type name, so a session that never
+    imports pandas or polars never pays for them.
+    """
+    if "IPython" not in sys.modules:
+        return
+    from .ipython_ext import (
+        register_dataframe_formatters_by_name,
+        register_ipython_formatters,
     )
 
-# Export C3D at top level if available
-if _env_info.c3d_available:
-    from .c3d import C3D as C3D
+    register_ipython_formatters()
+    register_dataframe_formatters_by_name()
 
 
-# Optional top-level exports and the submodule that provides each. These names
-# are bound as module attributes above only when their submodule imports
-# cleanly; otherwise __getattr__ explains why instead of raising a cryptic
-# ``cannot import name`` error. The third value, when set, is the optional
-# third-party dependency whose absence is the usual cause, so the message can
-# tell the user exactly what to install. ``None`` means the export has no
-# optional dependency (e.g. C3D), so a broken import points at the submodule.
-_OPTIONAL_EXPORTS = {
-    "molgrid": ("grid", "anywidget"),
-    "MolGrid": ("grid", "anywidget"),
-    "BEST_FIT_ORIENTATION": ("grid", "anywidget"),
-    "C3D": ("c3d", None),
+_activate_ipython()
+
+# Each adapter attaches when -- and only when -- the library it adapts finishes importing,
+# whether that happens before this line or long after it.
+_hooks.on_import("oepandas", "cnotebook.pandas_ext:_attach")
+_hooks.on_import("oepolars", "cnotebook.polars_ext:_attach")
+_hooks.on_import("marimo", "cnotebook.marimo_ext:_attach")
+
+
+# Optional top-level exports and the submodule that provides each. Binding them here
+# would import anywidget, pandas and polars on `import cnotebook`, which is exactly the
+# cost this package avoids, so each name resolves on first access instead.
+_LAZY_EXPORTS = {
+    "BEST_FIT_ORIENTATION": ("cnotebook.grid", "BEST_FIT_ORIENTATION"),
+    "C3D": ("cnotebook.c3d", "C3D"),
+    "MolGrid": ("cnotebook.grid", "MolGrid"),
+    "molgrid": ("cnotebook.grid", "molgrid"),
+    "render_dataframe": ("cnotebook.pandas_ext", "render_dataframe"),
+    "render_polars_dataframe": ("cnotebook.polars_ext", "render_polars_dataframe"),
 }
 _WARNED_EXPORTS: set[str] = set()
 
 
 def __getattr__(name: str):
-    """Explain unavailable optional exports instead of a cryptic error (PEP 562).
+    """Resolve an optional top-level export on first access (PEP 562).
 
-    Optional exports such as ``molgrid``/``MolGrid`` and ``C3D`` are only bound
-    as module attributes when their submodule imports successfully. When one
-    does not, accessing the name would otherwise raise an opaque
-    ``ImportError: cannot import name '...'``. This intercepts that access to
-    warn with an actionable message — naming the missing optional dependency
-    when there is one, or pointing at the submodule to reveal the real error.
+    A submodule that cannot be imported would otherwise surface as an opaque
+    ``ImportError: cannot import name '...'``, so the failure is reported once as a
+    warning naming both the submodule and the underlying cause.
 
     :param name: Attribute being accessed on the ``cnotebook`` module.
-    :raises AttributeError: If an optional export is requested while unavailable, or the name is unknown.
+    :returns: The resolved export, also bound on the module so the import happens once.
+    :raises AttributeError: If the name is unknown, or its submodule failed to import.
     """
-    export = _OPTIONAL_EXPORTS.get(name)
-    if export is not None:
-        import importlib.util
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-        submodule, optional_dep = export
-        if optional_dep is not None and importlib.util.find_spec(optional_dep) is None:
-            message = (
-                f"cnotebook.{name} requires the optional '{optional_dep}' package, which is not "
-                f"installed in this environment. Install it, e.g. `uv pip install {optional_dep}`."
-            )
-        else:
-            message = (
-                f"cnotebook.{name} is unavailable: the cnotebook.{submodule} module failed to "
-                f"import. Import `cnotebook.{submodule}` directly to see the underlying error."
-            )
+    module_name, attribute = target
+    try:
+        value = getattr(importlib.import_module(module_name), attribute)
+    except ImportError as exc:
+        message = (
+            f"cnotebook.{name} is unavailable: importing {module_name} failed ({exc}). "
+            f"Install the optional dependency it names, or import {module_name} directly "
+            f"to see the full error."
+        )
         if name not in _WARNED_EXPORTS:
             _WARNED_EXPORTS.add(name)
             warn(message)
-        raise AttributeError(message)
+        raise AttributeError(message) from exc
 
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    """List the module's attributes, including the exports that only resolve on access.
+
+    :returns: Sorted attribute names.
+    """
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
 
 
 ########################################################################################################################
@@ -441,13 +418,15 @@ def display(obj, ctx: CNotebookContext | None = None, *, static: bool | None = N
     if isinstance(obj, oedepict.OEImage):
         return _display_html(oeimage_to_html(obj, ctx=render_ctx), env)
 
-    # Check DataFrame types before widgets (DataFrames can have display methods too)
-    if env.pandas_available:
+    # Check DataFrame types before widgets (DataFrames can have display methods too).
+    # A frame of either kind can only exist if its library is already imported, so the
+    # isinstance check costs an import only when it could possibly succeed.
+    if "pandas" in sys.modules:
         import pandas as pd
         if isinstance(obj, pd.DataFrame):
             from .pandas_ext import render_dataframe as _render_dataframe
             return _display_html(_render_dataframe(obj, ctx=ctx), env)
-    if env.polars_available:
+    if "polars" in sys.modules:
         import polars as pl
         if isinstance(obj, pl.DataFrame):
             from .polars_ext import render_polars_dataframe as _render_polars_dataframe
