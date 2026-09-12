@@ -47,8 +47,17 @@ def build_init_payload(
     :param orient: Orient setting, or ``None``.
     :returns: Payload dictionary consumed by the 3dmol-js-gui front end.
     """
+    # "frames" is written for every entry, not only the ones that set it: the front end
+    # reads the flag per entry, and an entry that omits it loads its models as one flat
+    # object rather than as the frames of an animation.
     mol_payload = [
-        {"name": m.name, "data": m.data, "format": m.format, "disabled": m.disabled}
+        {
+            "name": m.name,
+            "data": m.data,
+            "format": m.format,
+            "disabled": m.disabled,
+            "frames": m.frames,
+        }
         for m in molecules
     ]
     n_mols = len(molecules)

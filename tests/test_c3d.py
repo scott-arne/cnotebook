@@ -2116,6 +2116,13 @@ def _mutations(viewer, mol):
         "zoom_to": lambda: viewer.zoom_to("all"),
         "orient": lambda: viewer.orient(),
         "set_preset": lambda: viewer.set_preset("simple"),
+        "color_entry": lambda: viewer.color_entry("lig", "red"),
+        "label_residues": lambda: viewer.label_residues("resn LIG"),
+        "measure_distance": lambda: viewer.measure_distance("resi 1", "resi 2"),
+        # One conformer would be refused by add_conformers, and a loop mode of
+        # "sideways" by animate: a frozen viewer has to refuse both before it looks.
+        "add_conformers": lambda: viewer.add_conformers(mol),
+        "animate": lambda: viewer.animate("confs", loop="sideways"),
     }
 
 
@@ -2243,3 +2250,142 @@ def test_widget_output_is_small(viewer):
     bundle = viewer.display(static=False)._repr_mimebundle_()
     data = bundle[0] if isinstance(bundle, tuple) else bundle
     assert len(json.dumps(data)) < 20_000
+
+
+# ---------------------------------------------------------------------------
+# Convenience builders (spec D3)
+# ---------------------------------------------------------------------------
+
+# setInterval stores its delay in a signed 32-bit integer, so the GUI refuses a
+# larger one rather than animating every millisecond; the Python side refuses it
+# before it can reach the front end at all.
+_MAX_INTERVAL_MS = 2147483647
+
+
+def _conformers(n: int = 3) -> oechem.OEMol:
+    """Return a molecule carrying *n* Omega conformers."""
+    from openeye import oeomega
+
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "CCCCO")
+    mol.SetTitle("butanol")
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(n)
+    omega.SetStrictStereo(False)
+    assert omega(mol)
+    return mol
+
+
+def test_convenience_operations(ethanol_3d):
+    from cnotebook.c3d import C3D
+
+    v = (
+        C3D(width=100, height=100)
+        .add_molecule(ethanol_3d, name="lig")
+        .color_entry("lig", "magenta", hets=False)
+        .label_residues("resn LIG", template="{resn}{resi}")
+        .measure_distance("resi 1", "resi 2", name="d1")
+    )
+    ops = v._build_init_payload()["operations"]
+    assert ops[0] == {"op": "color", "selection": "lig", "color": "magenta", "hets": False}
+    assert ops[1] == {"op": "label", "selection": "resn LIG", "template": "{resn}{resi}"}
+    assert ops[2] == {"op": "distance", "a": "resi 1", "b": "resi 2", "name": "d1"}
+
+
+def test_add_conformers_and_animate():
+    from openeye import oeomega
+
+    from cnotebook.c3d import C3D
+
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "CCCCO")
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(3)
+    assert omega(mol)
+    v = C3D().add_conformers(mol, name="confs").animate("confs", interval_ms=50, loop="backAndForth")
+    payload = v._build_init_payload()
+    assert payload["molecules"][0]["frames"] is True
+    assert payload["molecules"][0]["data"].count("$$$$") == mol.NumConfs()
+    assert payload["operations"][-1] == {"op": "animate", "entry": "confs", "interval": 50, "loop": "backAndForth"}
+    with pytest.raises(ValueError):
+        v.animate("confs", loop="sideways")
+
+
+def test_add_conformers_registers_the_entry_animate_names(ethanol_3d):
+    """`animate` acts on an entry by name, so the name the entry took has to be the
+    one the operation carries."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().add_molecule(ethanol_3d, name="lig").add_conformers(_conformers())
+    # No name given: the entry takes the molecule title, exactly as add_molecule does.
+    assert [m["name"] for m in viewer._build_init_payload()["molecules"]] == ["lig", "butanol"]
+    assert viewer._build_init_payload()["molecules"][0]["frames"] is False
+    viewer.animate("butanol")
+    assert viewer._build_init_payload()["operations"][-1] == {
+        "op": "animate", "entry": "butanol", "interval": 100, "loop": "forward",
+    }
+
+
+def test_add_conformers_refuses_a_single_conformer(ethanol_3d):
+    """The GUI rejects `animate` and `frame` on a one-model entry, so such an entry is
+    never built: the failure belongs where the molecule is added, not on screen."""
+    from cnotebook.c3d import C3D
+
+    assert ethanol_3d.NumConfs() == 1
+    with pytest.raises(ValueError, match="has 1"):
+        C3D().add_conformers(ethanol_3d, name="confs")
+
+
+def test_animate_validates_the_loop_mode_and_the_interval():
+    """Both bounds are the front end's, where a bad value is a terminal message from a
+    cell that has already returned; rejecting it here puts the error on the call."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D()
+    for loop in ("forward", "backward", "backAndForth"):
+        viewer.animate("confs", loop=loop)
+    viewer.animate("confs", interval_ms=1)
+    viewer.animate("confs", interval_ms=_MAX_INTERVAL_MS)
+    viewer.animate("confs", interval_ms=50.0)  # whole, so it is a millisecond count
+    accepted = list(viewer._operations)
+    assert [op["interval"] for op in accepted[-3:]] == [1, _MAX_INTERVAL_MS, 50]
+    assert all(isinstance(op["interval"], int) for op in accepted)
+
+    for bad in (0, -1, _MAX_INTERVAL_MS + 1, 12.5, float("nan"), float("inf"), "50", None, True):
+        with pytest.raises(ValueError, match="interval_ms"):
+            viewer.animate("confs", interval_ms=bad)
+    with pytest.raises(ValueError, match="sideways"):
+        viewer.animate("confs", loop="sideways")
+    # A rejected call adds nothing: a half-built operation would animate on its own.
+    assert viewer._operations == accepted
+
+
+def test_label_residues_passes_the_template_through_verbatim():
+    """The GUI hands the template to the label implementation without re-splitting it,
+    so a template holding the separator of the equivalent command still works."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().label_residues("resi 1-2", template="{resn}{resi}, chain {chain}")
+    assert viewer._operations[-1] == {
+        "op": "label", "selection": "resi 1-2", "template": "{resn}{resi}, chain {chain}",
+    }
+    assert C3D().label_residues("resn LIG")._operations[-1]["template"] == "{resn}{resi}"
+
+
+def test_measure_distance_nulls_an_unnamed_measurement():
+    """A null name is what lets the GUI number the measurement itself."""
+    from cnotebook.c3d import C3D
+
+    viewer = C3D().measure_distance("resi 41 and name OG", "resn LIG and name O2")
+    assert viewer._operations[-1] == {
+        "op": "distance", "a": "resi 41 and name OG", "b": "resn LIG and name O2", "name": None,
+    }
+
+
+def test_color_entry_is_set_color(ethanol_3d):
+    from cnotebook.c3d import C3D
+
+    entry = C3D().add_molecule(ethanol_3d, name="lig").color_entry("lig", "magenta")
+    direct = C3D().add_molecule(ethanol_3d, name="lig").set_color("lig", "magenta")
+    assert entry._operations == direct._operations
+    assert entry._operations[-1]["hets"] is True

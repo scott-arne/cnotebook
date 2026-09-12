@@ -113,6 +113,57 @@ def convert_molecule(mol: oechem.OEMolBase, name: str | None = None, disabled: b
     )
 
 
+def convert_conformers(mol: oechem.OEMCMolBase, name: str | None = None, disabled: bool = False) -> MoleculeData:
+    """Write every conformer of *mol* to one SDF string and mark the entry as frames.
+
+    The viewer loads an entry with ``frames=True`` as one object whose models are the
+    frames of an animation, rather than as every conformer drawn at once. The
+    conformers are written in the order the molecule holds them, which is the order
+    the animation steps through.
+
+    :param mol: Multi-conformer molecule; it is read, never modified.
+    :param name: Optional display name. Falls back to the molecule title, then to
+        ``"conformers"``.
+    :param disabled: If True, the entry is hidden when the viewer starts.
+    :returns: :class:`MoleculeData` with ``format="sdf"`` and ``frames=True``.
+    :raises TypeError: If *mol* is not an :class:`oechem.OEMCMolBase`.
+    :raises ValueError: If *mol* holds fewer than two conformers.
+
+    Example::
+
+        from openeye import oechem, oeomega
+        mol = oechem.OEMol()
+        oechem.OESmilesToMol(mol, "CCCCO")
+        oeomega.OEOmega()(mol)
+        data = convert_conformers(mol, name="confs")
+    """
+    if not isinstance(mol, oechem.OEMCMolBase):
+        raise TypeError(
+            f"Expected OEMCMolBase, got {type(mol).__name__}"
+        )
+
+    # A single model has nothing to step through, and the viewer refuses both `animate`
+    # and `frame` on such an entry. Refusing it here means the mistake is reported on
+    # the call that made it rather than in the viewer's terminal after the cell ran.
+    num_confs = mol.NumConfs()
+    if num_confs < 2:
+        raise ValueError(
+            f"A frames entry needs more than one conformer; this molecule has "
+            f"{num_confs}. Generate conformers with OEOmega, or add the molecule "
+            f"with add_molecule() instead."
+        )
+
+    return MoleculeData(
+        name=name or mol.GetTitle() or "conformers",
+        data=_confs_to_sdf_string(mol),
+        format="sdf",
+        source_type="molecule",
+        num_atoms=mol.NumAtoms(),
+        disabled=disabled,
+        frames=True,
+    )
+
+
 def convert_map(map_input: str | Path | Any, name: str | None = None, format: str | None = None) -> MapData:
     """Convert a local map path or OpenEye scalar grid for 3Dmol.js.
 
@@ -303,6 +354,25 @@ def _mol_to_sdf_string(mol: oechem.OEMolBase) -> str:
     oms.SetFormat(oechem.OEFormat_SDF)
     oechem.OEWriteMolecule(oms, mol)
     return oms.GetString().decode("utf-8")
+
+
+def _confs_to_sdf_string(mol: oechem.OEMCMolBase) -> str:
+    """Write every conformer of a multi-conformer molecule to one SDF string.
+
+    :param mol: Multi-conformer molecule with valid 3D coordinates.
+    :returns: SDF string holding one record per conformer, in conformer order.
+    """
+    oms = oechem.oemolostream()
+    oms.openstring()
+    oms.SetFormat(oechem.OEFormat_SDF)
+    # Each conformer is copied into a single-conformer molecule so that exactly one
+    # record is written for it, whatever the writer would make of the parent, and so
+    # that a conformer carrying its own title keeps it.
+    for conformer in mol.GetConfs():
+        oechem.OEWriteMolecule(oms, oechem.OEGraphMol(conformer))
+    val = oms.GetString().decode("utf-8")
+    oms.close()
+    return val
 
 
 def _mol_to_pdb_string(mol: oechem.OEMolBase) -> str:

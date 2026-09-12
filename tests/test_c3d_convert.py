@@ -8,6 +8,7 @@ from openeye import oechem
 
 from cnotebook.c3d.convert import (
     MoleculeData,
+    convert_conformers,
     convert_design_unit,
     convert_molecule,
 )
@@ -243,3 +244,99 @@ def test_generate_3d_false_keeps_2d():
     data = convert_molecule(mol, generate_3d=False)
     assert not _has_nonzero_z(data.data)
     assert data.frames is False
+
+
+# ---------------------------------------------------------------------------
+# convert_conformers
+# ---------------------------------------------------------------------------
+
+
+def _conformer_molecule(n: int = 3) -> oechem.OEMol:
+    """Return a molecule carrying *n* Omega conformers."""
+    from openeye import oeomega
+
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "CCCCO")
+    mol.SetTitle("butanol")
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(n)
+    omega.SetStrictStereo(False)
+    assert omega(mol)
+    return mol
+
+
+def _coords(mol) -> list[float]:
+    """Flatten a molecule's coordinates in atom index order."""
+    coords = mol.GetCoords()
+    return [value for index in sorted(coords) for value in coords[index]]
+
+
+def _read_sdf_records(sdf: str) -> list[oechem.OEGraphMol]:
+    """Parse an SDF string back into one molecule per record."""
+    ims = oechem.oemolistream()
+    ims.SetFormat(oechem.OEFormat_SDF)
+    assert ims.openstring(sdf.encode("utf-8"))
+    records = [oechem.OEGraphMol(mol) for mol in ims.GetOEGraphMols()]
+    ims.close()
+    return records
+
+
+def test_convert_conformers_writes_every_conformer_in_order():
+    """The frames of the entry are the conformers, so the records the GUI reads back
+    have to be those conformers, in that order, with their own coordinates."""
+    mol = _conformer_molecule()
+    data = convert_conformers(mol)
+
+    assert data.frames is True
+    assert data.format == "sdf"
+    assert data.source_type == "molecule"
+    assert data.name == "butanol"
+    assert data.num_atoms == mol.NumAtoms()
+
+    records = _read_sdf_records(data.data)
+    assert len(records) == mol.NumConfs() == 3
+    assert data.data.count("$$$$") == 3
+    for conformer, record in zip(mol.GetConfs(), records, strict=True):
+        assert record.NumAtoms() == conformer.NumAtoms()
+        # SDF carries four decimals, so the frames are the source coordinates rounded.
+        assert _coords(record) == pytest.approx(_coords(conformer), abs=1e-3)
+    # Distinct frames: comparing the round trip against identical conformers would
+    # pass however the writer ordered or duplicated them.
+    assert _coords(records[0]) != pytest.approx(_coords(records[1]), abs=1e-3)
+
+
+def test_convert_conformers_keeps_per_conformer_titles():
+    """A conformer that carries its own title keeps it, the way the SDF writer does
+    for any molecule; the rest carry the molecule's."""
+    mol = _conformer_molecule()
+    for index, conformer in enumerate(mol.GetConfs()):
+        conformer.SetTitle(f"pose_{index}")
+
+    records = _read_sdf_records(convert_conformers(mol).data)
+    assert [record.GetTitle() for record in records] == ["pose_0", "pose_1", "pose_2"]
+
+
+def test_convert_conformers_names_the_entry_and_leaves_the_molecule_alone():
+    mol = _conformer_molecule()
+    assert convert_conformers(mol, name="confs").name == "confs"
+    assert convert_conformers(mol, disabled=True).disabled is True
+    assert convert_conformers(mol).disabled is False
+
+    mol.SetTitle("")
+    assert convert_conformers(mol).name == "conformers"
+    assert mol.NumConfs() == 3  # the conversion reads the molecule, never edits it
+
+
+def test_convert_conformers_refuses_a_single_conformer():
+    """A one-model entry has nothing to step through and the GUI rejects `animate` and
+    `frame` on it, so the entry is refused here instead of failing on screen."""
+    mol = _conformer_molecule(1)
+    assert mol.NumConfs() == 1
+    with pytest.raises(ValueError, match="has 1"):
+        convert_conformers(mol)
+
+
+def test_convert_conformers_rejects_a_single_conformer_type():
+    """An OEGraphMol holds no conformers at all, whatever its coordinates."""
+    with pytest.raises(TypeError, match="OEMCMolBase"):
+        convert_conformers(_two_d_molecule())

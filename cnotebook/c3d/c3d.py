@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import numbers
 import os
 import stat
 import sys
@@ -18,6 +19,7 @@ from cnotebook.config import UNSET
 from cnotebook.core import viewer3d
 from cnotebook.core.convert import (
     MoleculeData,
+    convert_conformers,
     convert_design_unit,
     convert_map,
     convert_molecule,
@@ -56,6 +58,14 @@ _ISOSURFACE_REPRESENTATIONS = set(_ISOSURFACE_REPRESENTATION_TUPLE)
 # Design section D3: a screenshot request that the front end never answers fails after
 # this long rather than leaving the caller's cell awaiting forever.
 _SCREENSHOT_TIMEOUT = 30.0
+
+# The three directions the GUI's animate command accepts.
+_ANIMATION_LOOPS = ("forward", "backward", "backAndForth")
+
+# The front end animates with setInterval, which stores its delay in a signed 32-bit
+# integer: a larger delay overflows and fires every millisecond instead. The GUI rejects
+# such an interval, and so does this side, before the payload is ever built.
+_MAX_ANIMATION_INTERVAL_MS = 2147483647
 
 # The eight bytes every PNG file starts with (PNG specification, clause 5.2).
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -947,6 +957,148 @@ class C3D:
                 f"Choose from: {', '.join(sorted(_VIEW_PRESETS))}"
             )
         self._operations.append({"op": "preset", "name": key})
+        return self
+
+    # ------------------------------------------------------------------
+    # Convenience builders
+    #
+    # Operations named here run after every entry has loaded, so they may refer to a
+    # molecule added by the same viewer.
+    # ------------------------------------------------------------------
+
+    def color_entry(self, name: str, color: str, hets: bool = True) -> C3D:
+        """Color every atom of the entry *name*.
+
+        An entry name is a selection, so this is :meth:`set_color` under a name that
+        says what is being colored.
+
+        :param name: Entry name, as it was given to :meth:`add_molecule`,
+            :meth:`add_design_unit` or :meth:`add_conformers`.
+        :param color: CSS color string (e.g. ``"magenta"``, ``"#00ff00"``).
+        :param hets: If ``True`` (default), every atom is recolored; if ``False``,
+            only carbons, leaving heteroatoms their element colors.
+        :returns: Self, for method chaining.
+        :raises CNotebookError: If this viewer is displayed as a widget.
+        """
+        return self.set_color(name, color, hets=hets)
+
+    def label_residues(
+        self,
+        selection: str | dict[str, Any],
+        template: str = "{resn}{resi}",
+    ) -> C3D:
+        """Label every atom matching *selection* from a template.
+
+        The template is passed to the front end as it stands, never assembled into a
+        command line, so a template containing a comma survives.
+
+        :param selection: Atoms to label, in the same forms :meth:`add_style` accepts.
+        :param template: Label text with ``{name}``, ``{atom}``, ``{resn}``,
+            ``{resi}``, ``{chain}``, ``{elem}`` and ``{index}`` placeholders.
+        :returns: Self, for method chaining.
+        :raises CNotebookError: If this viewer is displayed as a widget.
+
+        Example::
+
+            viewer.label_residues("resn LIG and elem N", "{resn}{resi} {atom}")
+        """
+        self._assert_mutable()
+        self._operations.append({"op": "label", "selection": selection, "template": template})
+        return self
+
+    def measure_distance(
+        self,
+        selection_a: str | dict[str, Any],
+        selection_b: str | dict[str, Any],
+        name: str | None = None,
+    ) -> C3D:
+        """Draw a dashed distance between the centroids of two selections.
+
+        :param selection_a: First selection, in the forms :meth:`add_style` accepts.
+        :param selection_b: Second selection.
+        :param name: Label for the measurement. ``None`` (the default) lets the viewer
+            number it, the way the ``distance`` command does when given no name.
+        :returns: Self, for method chaining.
+        :raises CNotebookError: If this viewer is displayed as a widget.
+        """
+        self._assert_mutable()
+        self._operations.append(
+            {"op": "distance", "a": selection_a, "b": selection_b, "name": name}
+        )
+        return self
+
+    def add_conformers(self, mol: Any, name: str | None = None, disabled: bool = False) -> C3D:
+        """Add a multi-conformer molecule as one entry whose frames are its conformers.
+
+        The entry shows one conformer at a time rather than all of them at once, and
+        :meth:`animate` plays them under the name this entry takes.
+
+        :param mol: Multi-conformer OpenEye molecule (``OEMCMolBase``), such as the
+            output of OEOmega.
+        :param name: Optional display name. Falls back to the molecule title, then to
+            ``"conformers"``.
+        :param disabled: If True, the entry is hidden when the viewer starts.
+        :returns: Self, for method chaining.
+        :raises TypeError: If *mol* is not an ``OEMCMolBase``.
+        :raises ValueError: If *mol* holds fewer than two conformers; a single model
+            has no frames to step through.
+        :raises CNotebookError: If this viewer is displayed as a widget.
+        """
+        self._assert_mutable()
+        self._molecules.append(convert_conformers(mol, name=name, disabled=disabled))
+        return self
+
+    @staticmethod
+    def _validate_interval(interval_ms: Any) -> int:
+        """Check an animation interval against the front end's own bounds.
+
+        The value is validated rather than coerced: ``int()`` would turn 12.5 ms into
+        an animation running at 12 ms, which is not the one that was asked for.
+
+        :param interval_ms: Milliseconds per frame, as the caller gave it.
+        :returns: The interval as an int.
+        :raises ValueError: If it is not a whole number of milliseconds from 1 to
+            2147483647.
+        """
+        # numbers.Real rather than int | float, so a numpy scalar out of an array of
+        # timings is accepted; bool is a Real in Python and is not an interval.
+        if not isinstance(interval_ms, bool) and isinstance(interval_ms, numbers.Real):
+            value = float(interval_ms)
+            if value.is_integer() and 1 <= value <= _MAX_ANIMATION_INTERVAL_MS:
+                return int(value)
+        raise ValueError(
+            f"interval_ms must be a whole number of milliseconds from 1 to "
+            f"{_MAX_ANIMATION_INTERVAL_MS}, got {interval_ms!r}"
+        )
+
+    def animate(self, entry: str, interval_ms: int = 100, loop: str = "forward") -> C3D:
+        """Play the frames of *entry*.
+
+        The animation starts once every entry has loaded, so *entry* may name a
+        molecule added to this same viewer.
+
+        :param entry: Name of an entry added with :meth:`add_conformers`, exactly as
+            it was registered.
+        :param interval_ms: Whole milliseconds per frame, from 1 to 2147483647.
+        :param loop: ``"forward"``, ``"backward"`` or ``"backAndForth"``.
+        :returns: Self, for method chaining.
+        :raises ValueError: If *loop* is not one of the accepted values, or
+            *interval_ms* is not a whole number of milliseconds in range.
+        :raises CNotebookError: If this viewer is displayed as a widget.
+        """
+        self._assert_mutable()
+        if loop not in _ANIMATION_LOOPS:
+            raise ValueError(
+                f"Unknown loop mode '{loop}'. Choose 'forward', 'backward', or 'backAndForth'."
+            )
+        self._operations.append(
+            {
+                "op": "animate",
+                "entry": entry,
+                "interval": self._validate_interval(interval_ms),
+                "loop": loop,
+            }
+        )
         return self
 
     # ------------------------------------------------------------------

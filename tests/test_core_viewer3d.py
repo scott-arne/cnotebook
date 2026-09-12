@@ -5,7 +5,7 @@ from pathlib import Path
 from openeye import oechem
 
 from cnotebook.core import viewer3d
-from cnotebook.core.convert import convert_molecule
+from cnotebook.core.convert import convert_conformers, convert_molecule
 from cnotebook.core.errors import CNotebookWarning
 
 
@@ -15,6 +15,18 @@ def _benzene():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", CNotebookWarning)
         return convert_molecule(mol, name="benzene")
+
+
+def _conformers():
+    from openeye import oeomega
+
+    mol = oechem.OEMol()
+    oechem.OESmilesToMol(mol, "CCCCO")
+    omega = oeomega.OEOmega()
+    omega.SetMaxConfs(3)
+    omega.SetStrictStereo(False)
+    assert omega(mol)
+    return convert_conformers(mol, name="confs")
 
 
 def test_build_init_payload_single_molecule_smart_ui():
@@ -27,6 +39,18 @@ def test_build_init_payload_single_molecule_smart_ui():
     assert payload["orient"] is True
     assert payload["molecules"][0]["name"] == "benzene"
     assert payload["theme"] == "auto"
+
+
+def test_every_payload_molecule_carries_the_frames_flag():
+    """The GUI reads `frames` per entry: an entry that omits it loads every model at
+    once, so the key is always written rather than only for the entries that set it."""
+    payload = viewer3d.build_init_payload(
+        [_benzene(), _conformers()], [], ui=None, ui_explicit=False,
+        theme="auto", background=None, zoom_to=None, orient=None,
+    )
+    assert payload["molecules"][0]["frames"] is False
+    assert payload["molecules"][1]["frames"] is True
+    assert payload["molecules"][1]["data"].count("$$$$") == 3
 
 
 def test_render_html_sets_container_size_and_inlines_payload():
