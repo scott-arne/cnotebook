@@ -24,7 +24,7 @@ from .core.render import render_molecule as render_molecule
 from .core.render import save_image as save_image
 from .helpers import highlight_smarts as highlight_smarts
 
-__version__ = '3.1.3'
+__version__ = '4.0.0'
 
 # Configure logging first
 log = logging.getLogger("cnotebook")
