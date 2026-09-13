@@ -115,7 +115,9 @@ Contents
    dataframes
    molgrid
    c3d
+   configuration
    advanced_rendering
+   migration-4
 
 .. toctree::
    :maxdepth: 2

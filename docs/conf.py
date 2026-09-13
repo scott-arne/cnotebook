@@ -1,6 +1,7 @@
 """Sphinx configuration for CNotebook documentation."""
 
 import os
+import re
 import sys
 
 from sphinx.ext.autodoc.mock import _MockObject
@@ -8,11 +9,32 @@ from sphinx.ext.autodoc.mock import _MockObject
 # Add project root to path for autodoc
 sys.path.insert(0, os.path.abspath(".."))
 
+
+def _package_version() -> str:
+    """Read ``__version__`` out of the package source.
+
+    The package cannot be imported here: ``conf.py`` runs before the autodoc mocks
+    are installed, so importing it would require OpenEye. ``vrzn`` rewrites the
+    single assignment this reads, which keeps the documented version in step with
+    the release without a second string to bump.
+
+    :returns: The version string declared in ``cnotebook/__init__.py``.
+    :raises RuntimeError: When the assignment is missing.
+    """
+    source = os.path.join(os.path.abspath(".."), "cnotebook", "__init__.py")
+    with open(source, encoding="utf-8") as handle:
+        match = re.search(r"""^__version__\s*=\s*["']([^"']+)["']""", handle.read(), re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f"No __version__ assignment found in {source}")
+    return match.group(1)
+
+
 # Project information
 project = "CNotebook"
 copyright = "2024, Scott Arne Johnson"
 author = "Scott Arne Johnson"
-release = "2.0.0"
+release = _package_version()
+version = release
 
 # General configuration
 extensions = [

@@ -66,7 +66,7 @@ pip install cnotebook
 
 **Optional backends:**
 - Pandas support: `pip install "cnotebook[pandas]"` or `pip install pandas "oepandas>=3.3.0"`
-- Polars support: `pip install "cnotebook[polars]"` or `pip install polars "oepolars>=0.3.0"`
+- Polars support: `pip install "cnotebook[polars]"` or `pip install polars "oepolars>=0.4.0"`
 - Both backends: `pip install "cnotebook[dataframes]"`
 
 Both backends can be installed together, neither are required unless you want to work with DataFrames.
@@ -198,14 +198,31 @@ viewer = (
     C3D(width=1024, height=768)
     .add_molecule(mol, name="ligand")
     .add_design_unit(du, name="protein", disabled=True)
-    .add_style({"chain": "A"}, "cartoon", color="blue")
+    .add_style("cartoon", {"chain": "A"}, color="blue")
     .set_preset("sites")
-    .set_ui(sidebar=True, menubar=True, terminal=False)
+    .set_ui(sidebar=True, menubar=True, console=False)
     .set_background("#ffffff")
     .zoom_to({"chain": "A"})
 )
 viewer.display()
 ```
+
+### Interactive use
+
+`display()` shows a live widget by default. Atom picks, the camera view and terminal commands are available from Python:
+
+```python
+viewer = C3D().add_design_unit(du, name="complex").set_preset("sites")
+viewer.on_pick(lambda pick: print(pick.atom["resn"], pick.atom["resi"]))
+viewer.display()
+
+viewer.execute("zoom resn 502")          # any GUI terminal command
+viewer.save_view("site")                 # after interacting
+png = await viewer.screenshot()          # PNG bytes
+viewer.save("complex.html")              # standalone HTML, no kernel needed
+```
+
+Use `display(static=True)`, `to_html()` or `save()` for self-contained output, or set `[display] mode = "static"` in the configuration file.
 
 ### Disabled Molecules
 
@@ -296,6 +313,25 @@ selected_mols = grid.get_selection()
 indices = grid.get_selection_indices()
 ```
 
+### Interactive grids
+
+`display()` shows a live widget by default. Cards, sorting and the colour scheme are configured when the grid is built, and a selection made in the browser comes back as a DataFrame:
+
+```python
+grid = df.chem.molgrid(
+    "Molecule",
+    badges=["MW", "HBD"],          # per-card chips
+    sort_by=("MW", True),          # initial sort; True sorts descending
+    theme="dark",                  # "auto", "light" or "dark"
+)
+grid.display()
+
+selected = grid.selection_frame()  # the selected rows of the source frame
+grid.save("grid.html")             # standalone HTML, no kernel needed
+```
+
+Use `display(static=True)`, `to_html()` or `save()` for self-contained output, or set `[display] mode = "static"` in the configuration file.
+
 ## DataFrame Integration
 
 ### Pandas DataFrames
@@ -357,16 +393,16 @@ df = oepl.read_sdf("examples/assets/rotations.sdf", no_title=True)
 # see the original unaligned molecules
 df = df.rename({"Molecule": "Original"})
 
-# # Create a new molecule column called "Aligned" so that we can
-# # see the aligned molecules
+# Create a new molecule column called "Aligned" so that we can
+# see the aligned molecules
 df = df.chem.copy_molecules("Original", "Aligned")
 
-# # Add substructure highlighting
-df.chem.highlight("Original", "c1ccccc1")
-df.chem.highlight("Aligned", "c1ccccc1")
+# Add substructure highlighting; every polars accessor returns a new frame
+df = df.chem.highlight("Original", "c1ccccc1")
+df = df.chem.highlight("Aligned", "c1ccccc1")
 
-# # Align molecules to a reference
-df["Aligned"].chem.align_depictions("first")
+# Align molecules to a reference
+df = df.chem.align_depictions("Aligned", "first")
 
 # Display the DataFrame
 df

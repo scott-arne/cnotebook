@@ -35,7 +35,7 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher
 - OpenEye Toolkits (requires license)
 - Git
 - Node.js 22 or higher and npm (needed to run the JavaScript test suite with `npm test`, and to update 3dmol-js-gui assets)
@@ -108,6 +108,25 @@ Fixes #123
 - Reference issues and PRs when relevant
 
 ## Testing
+
+### Running the checks
+
+Three invoke tasks bundle the checks that CI runs:
+
+```bash
+# Lint, type-check and both test suites
+invoke check
+
+# Both test suites only
+invoke test
+
+# Load the static MolGrid and C3D documents in a headless browser
+invoke smoke
+```
+
+- `invoke check` runs `ruff check cnotebook tests`, `mypy cnotebook`, `npm test` and `pytest tests/`.
+- `invoke test` runs `pytest tests/` and `npm test`.
+- `invoke smoke` renders the static documents and loads them in the Playwright headless shell. It prints a message and skips when no shell is installed, so it never fails a machine that has not run `npx playwright install chromium-headless-shell`. Pass `--shell` to use a specific executable and `--out` to keep the generated documents, DOM dumps and screenshots.
 
 ### Running Tests
 

@@ -288,13 +288,118 @@ All configuration methods return ``self``, enabling fluent method chaining:
         C3D(width=1024, height=768)
         .add_design_unit(du, name="protein")
         .add_molecule(ligand, name="ligand")
-        .add_style({"chain": "A"}, "cartoon", color="blue")
+        .add_style("cartoon", {"chain": "A"}, color="blue")
         .set_preset("sites")
         .set_ui(sidebar=True, menubar=True, console=False)
         .set_background("#ffffff")
         .zoom_to("resn 502")
     )
     viewer.display()
+
+Interactive use
+---------------
+
+``display()`` shows a live widget by default. Atom picks, the camera view and terminal
+commands are all available from Python:
+
+.. code-block:: python
+
+    viewer = C3D().add_design_unit(du, name="complex").set_preset("sites")
+    viewer.on_pick(lambda pick: print(pick.atom["resn"], pick.atom["resi"]))
+    viewer.display()
+
+    viewer.execute("zoom resn 502")          # any GUI terminal command
+    viewer.save_view("site")                 # after interacting
+    png = await viewer.screenshot()          # PNG bytes
+    viewer.save("complex.html")              # standalone HTML, no kernel needed
+
+Once a viewer is on screen as a widget the builder methods refuse to run and raise
+``CNotebookError``: the widget was initialized from the scene as it stood, and a later
+``add_molecule`` would make ``to_html()`` and ``save()`` disagree with what is on screen.
+Live changes go through ``execute()``, or build a new ``C3D``.
+
+Picks
+^^^^^
+
+``on_pick(callback)`` registers a callback that receives a ``PickEvent`` with ``seq``,
+``atom`` (the 3Dmol atom record) and ``modifiers`` (the keyboard modifiers held during
+the click). An exception raised by the callback is logged, not propagated.
+
+``viewer.picked`` holds the last ``PickEvent``, or ``None``. Reading it never brings a
+widget into being: with no widget there can have been no pick.
+
+The camera
+^^^^^^^^^^
+
+``viewer.view`` is a copy of the last view array the front end reported, 3Dmol's
+``getView()`` vector ``[x, y, z, zoom, qx, qy, qz, qw]``, or ``None`` if the viewer has
+not reported one yet. ``set_view(view)`` points the camera at such an array, and
+``save_view(name)`` and ``restore_view(name)`` store and recall them by name.
+
+.. code-block:: python
+
+    viewer.save_view("overview")     # remember where you are
+    viewer.execute("zoom resn 502")
+    viewer.save_view("site")
+    viewer.restore_view("overview")  # and go back
+
+``save_view`` raises ``CNotebookError`` when the viewer has not reported a view yet;
+interact with it, or call ``set_view()`` first.
+
+Terminal commands
+^^^^^^^^^^^^^^^^^
+
+``execute(command)`` queues any GUI terminal command on the live widget and returns a
+``CommandHandle`` that settles, and can be awaited, when the front end reports the
+result.
+
+.. code-block:: python
+
+    result = await viewer.execute("zoom resn 502")
+
+Measurements, labels and animation
+----------------------------------
+
+These are builder methods: they return ``self``, they are applied when the scene is
+built, and like every builder method they raise ``CNotebookError`` on a viewer that is
+already displayed as a widget.
+
+.. code-block:: python
+
+    viewer = (
+        C3D()
+        .add_design_unit(du, name="complex")
+        .label_residues("resn 502", template="{resn}{resi}")
+        .measure_distance("resn 502", "chain A and resi 45", name="contact")
+    )
+    viewer.display()
+
+``label_residues(selection, template="{resn}{resi}")`` labels every matching atom. The
+template accepts the ``{name}``, ``{atom}``, ``{resn}``, ``{resi}``, ``{chain}``,
+``{elem}`` and ``{index}`` placeholders.
+
+``measure_distance(selection_a, selection_b, name=None)`` draws a dashed distance between
+the centroids of two selections; without a name the viewer numbers the measurement the
+way the ``distance`` terminal command does.
+
+Both read their selection as text -- a selection expression such as ``"chain A"`` or an
+entry name -- so, unlike ``add_style``, they do not accept a raw 3Dmol.js selection dict.
+
+Conformers are added as one entry whose frames are the conformers, and ``animate`` plays
+them:
+
+.. code-block:: python
+
+    viewer = (
+        C3D()
+        .add_conformers(mcmol, name="poses")
+        .animate("poses", interval_ms=200, loop="backAndForth")
+    )
+    viewer.display()
+
+``add_conformers`` needs a multi-conformer molecule (``OEMCMolBase``) with at least two
+conformers. ``animate(entry, interval_ms=100, loop="forward")`` names an entry already
+added to the same viewer; ``loop`` is ``"forward"``, ``"backward"`` or ``"backAndForth"``.
 
 HTML Export
 -----------
@@ -308,3 +413,41 @@ Use ``to_html()`` to get the raw HTML string for embedding or saving:
         f.write(html)
 
 The generated HTML is fully self-contained with all JavaScript and CSS inlined.
+``viewer.save("viewer.html")`` does the same thing in one call and returns the ``Path``
+it wrote.
+
+Display modes
+-------------
+
+``display()`` produces a live widget: a small notebook output that keeps the scene in the
+kernel and supports picks, terminal commands and the camera API. That needs a running
+kernel, and it does not appear in a static render such as GitHub's notebook preview.
+Saving JupyterLab widget state re-embeds the viewer assets, so a saved notebook does show
+the viewer again.
+
+The static form embeds the whole scene in the output instead, so it survives with no
+kernel at all:
+
+.. code-block:: python
+
+    viewer.display(static=True)   # self-contained HTML in the notebook output
+    html = viewer.to_html()       # the same document as a string
+    viewer.save("viewer.html")    # written to a file
+
+To make the static form the default for every viewer, set the display mode once:
+
+.. code-block:: python
+
+    import cnotebook
+
+    cnotebook.configure(display_mode="static")
+
+or put it in the configuration file:
+
+.. code-block:: toml
+
+    [display]
+    mode = "static"
+
+``CNOTEBOOK_DISPLAY_MODE=static`` in the environment does the same for one session. See
+:doc:`configuration` for the rest of the file.

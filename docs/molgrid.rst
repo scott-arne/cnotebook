@@ -387,6 +387,112 @@ Selecting cluster label "B":
 .. image:: _static/molgrid_cluster_B.png
     :align: center
 
+Badges and sorting
+------------------
+
+Badges show a field's value as a chip on each card, and ``sort_by`` sets the field the
+grid is sorted on when it first appears. Both take field names, which are the columns of
+the DataFrame the grid was built from.
+
+.. code-block:: python
+
+    grid = df.chem.molgrid(
+        "Molecule",
+        badges=["MW"],
+        sort_by=("MW", True),
+    )
+    grid.display()
+
+``sort_by`` accepts a bare field name for an ascending sort, or a ``(field, descending)``
+pair. ``sort_by=("MW", True)`` sorts on ``MW``, largest first. The sort control in the
+grid header still works; ``sort_by`` only chooses where it starts.
+
+Themes
+------
+
+``theme`` is ``"auto"``, ``"light"`` or ``"dark"``, and defaults to the configured
+``molgrid.theme`` (``"auto"`` unless a configuration file says otherwise). Under
+``"auto"`` the grid follows the notebook: it reads JupyterLab's ``--jp-layout-color1``
+from the host document and classifies it by luminance, and outside JupyterLab, where
+there is no such variable, it falls back to the ``prefers-color-scheme`` media query.
+The theme is resolved when the grid renders, so switch the lab theme before displaying
+the grid. ``"light"`` and ``"dark"`` pin the grid regardless of the notebook.
+
+.. code-block:: python
+
+    grid = df.chem.molgrid("Molecule", theme="dark")
+    grid.display()
+
+An unknown theme raises ``ValueError``.
+
+Selections as DataFrames
+------------------------
+
+When the grid was built from a DataFrame, ``selection_frame()`` returns the selected rows
+as a frame of the same kind, in index order, with every column the source frame had.
+
+.. code-block:: python
+
+    grid = df.chem.molgrid("Molecule")
+    grid.display()
+
+    # ... tick some cards in the grid ...
+
+    selected = grid.selection_frame()
+    print(selected.shape)
+
+``get_selection()`` returns the selected molecules and ``get_selection_indices()`` the
+positions, and both work for a grid built from a plain list of molecules.
+``selection_frame()`` raises ``CNotebookError`` on a grid that has no source DataFrame.
+
+Cluster labels
+--------------
+
+``cluster`` accepts three forms:
+
+- a **column name** of the source DataFrame, as in the example above;
+- a **sequence** of one label per molecule, in the order the molecules were passed, which
+  is the form to use for a grid built from a plain list;
+- a **mapping** of ``{index: label}``, which labels only the molecules it names.
+
+.. code-block:: python
+
+    from cnotebook import molgrid
+
+    # One label per molecule
+    grid = molgrid(molecules, cluster=["A", "A", "B", "B", "C"])
+
+    # Or label only some of them
+    grid = molgrid(molecules, cluster={0: "A", 1: "A", 2: "B"})
+
+Molecules with no label are collected under ``"Uncategorized"``. A sequence whose length
+does not match the molecules, or a column name the DataFrame does not have, raises
+``ValueError``; anything that is not a name, a sequence or a mapping raises ``TypeError``.
+
+Static export
+-------------
+
+A grid displays as a live widget by default, which keeps the notebook output small and
+needs a running kernel. For output that survives without one, ask for the static form:
+
+.. code-block:: python
+
+    grid.display(static=True)     # self-contained HTML in the notebook output
+    html = grid.to_html()         # the same document as a string
+    grid.save("grid.html")        # written to a file
+
+A static document embeds every image, the front-end module and the stylesheet, so it
+works from a file, an attachment or a static web server and makes no network requests.
+That also makes it large: ``to_html()`` emits a ``CNotebookWarning`` above
+``static_max_items`` molecules (default 2000). Raise the limit if the size is expected:
+
+.. code-block:: python
+
+    grid = df.chem.molgrid("Molecule", static_max_items=5000)
+
+``configure(display_mode="static")``, or ``mode = "static"`` under ``[display]`` in the
+configuration file, makes ``display()`` produce the static form without the argument.
+
 API Reference
 -------------
 
@@ -395,59 +501,15 @@ API Reference
 MolGrid Class
 ^^^^^^^^^^^^^
 
-.. py:class:: MolGrid(mols, *, dataframe=None, mol_col=None, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, atom_label_font_scale=1.5, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None, cluster=None, cluster_counts=True)
-
-   Interactive molecule grid widget.
-
-   :param mols: Iterable of OpenEye molecule objects
-   :param dataframe: Optional DataFrame with molecule data
-   :param mol_col: Column name containing molecules (required if dataframe is provided)
-   :param title: Title display mode. True uses molecule's title, a string specifies a field name, None/False hides titles
-   :param tooltip_fields: List of fields for hover tooltip
-   :param n_items_per_page: Number of molecules per page
-   :param width: Image width in pixels
-   :param height: Image height in pixels
-   :param atom_label_font_scale: Scale factor for atom labels
-   :param image_format: Image format ("svg" or "png")
-   :param select: Enable selection checkboxes
-   :param information: Enable info button with tooltip
-   :param data: Column(s) to display in info tooltip; auto-detects if None with DataFrame
-   :param search_fields: Fields for text search; auto-detects if None with DataFrame
-   :param name: Grid identifier for tracking selections
-   :param cluster: Cluster filtering mode. A string specifies a DataFrame column name containing cluster labels. A dict maps values to display labels. None disables cluster filtering.
-   :param cluster_counts: Show molecule count next to each cluster label in the dropdown. Defaults to True.
-
-   .. py:method:: display()
-
-      Display the grid in the notebook.
-
-      :returns: HTML object for display
-
-   .. py:method:: to_html()
-
-      Generate HTML representation of the grid.
-
-      :returns: Complete HTML document as string
-
-   .. py:method:: get_selection()
-
-      Get list of selected molecules.
-
-      :returns: List of selected OEMol objects
-
-   .. py:method:: get_selection_indices()
-
-      Get indices of selected molecules.
-
-      :returns: List of selected indices (sorted)
+.. autoclass:: cnotebook.grid.MolGrid
+   :members: display, to_html, save, get_selection, get_selection_indices, selection_frame, set_render_options, close
+   :no-index:
 
 molgrid Function
 ^^^^^^^^^^^^^^^^
 
-.. py:function:: molgrid(mols, *, title=True, tooltip_fields=None, n_items_per_page=24, width=200, height=200, image_format="svg", select=True, information=True, data=None, search_fields=None, name=None, cluster=None, cluster_counts=True)
+.. autofunction:: cnotebook.grid.molgrid
+   :no-index:
 
-   Convenience function to create an interactive molecule grid.
-
-   See :py:class:`MolGrid` for parameter documentation.
-
-   :returns: MolGrid instance
+The canonical entries, with every member, are on the :doc:`api/molgrid` page; these two
+carry ``:no-index:`` so the cross-references resolve there.

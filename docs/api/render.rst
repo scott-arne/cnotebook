@@ -1,7 +1,7 @@
 render
 ======
 
-.. automodule:: cnotebook.render
+.. automodule:: cnotebook.core.render
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,9 @@ Rendering Functions
 -------------------
 
 The ``render`` module provides core functions for converting OpenEye molecules
-to HTML representations.
+to HTML representations. ``cnotebook.render`` re-exports every name on this
+page, so ``from cnotebook.render import render_molecule`` and
+``from cnotebook.core.render import render_molecule`` are the same import.
 
 Key Functions
 -------------
@@ -31,14 +33,16 @@ Convert an OpenEye molecule to an HTML representation (PNG or SVG image).
 render_molecule
 ^^^^^^^^^^^^^^^
 
-Render a molecule with optional SMARTS highlighting.
+Render a molecule to image bytes. Keyword arguments beyond ``format`` are
+:class:`~cnotebook.core.context.CNotebookContext` options applied to this call
+only; an unknown name raises ``TypeError``.
 
 .. code-block:: python
 
     from cnotebook.render import render_molecule
 
     # Basic rendering
-    render_molecule(mol)
+    png = render_molecule(mol)
 
-    # With SMARTS highlighting
-    render_molecule(mol, smarts="c1ccccc1")
+    # With per-call rendering options
+    svg = render_molecule(mol, format="svg", width=400, height=400)

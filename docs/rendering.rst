@@ -174,37 +174,42 @@ There is a single global context, which you are free to change however you like.
 
 This context object has the following attributes that can be set:
 
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| Option                 | Type             | Default       | Description                                         |
-+========================+==================+===============+=====================================================+
-| ``width``              | ``float``        | ``0`` (auto)  | Image width in pixels. When 0, determined by scale. |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``height``             | ``float``        | ``0`` (auto)  | Image height in pixels. When 0, determined by scale.|
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``min_width``          | ``float | None`` | ``200.0``     | Minimum image width in pixels.                      |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``min_height``         | ``float | None`` | ``200.0``     | Minimum image height in pixels.                     |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``max_width``          | ``float | None`` | ``None``      | Maximum image width in pixels.                      |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``max_height``         | ``float | None`` | ``None``      | Maximum image height in pixels.                     |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``structure_scale``    | ``float``        | ``0.6``       | Factor multiplied by ``OEScale_Default`` for scale. |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``auto_scale``         | ``bool``         | ``False``     | Fill the image canvas (AutoScale) instead of scale. |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``atom_label_font_scale`` | ``float``     | ``1.0``       | Scale factor for atom labels (0.5 to 2.0).          |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``title_font_scale``   | ``float``        | ``1.0``       | Scale factor for title font (0.5 to 2.0).           |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``image_format``       | ``str``          | ``"png"``     | Output format: ``"png"`` or ``"svg"``.              |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``bond_width_scaling`` | ``bool``         | ``False``     | Enable bond width scaling based on structure scale. |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``title``              | ``bool``         | ``True``      | Whether to display the molecule title.              |
-+------------------------+------------------+---------------+-----------------------------------------------------+
-| ``callbacks``          | ``list | None``  | ``[]``        | Callbacks to apply to OE2DMolDisplay before render. |
-+------------------------+------------------+---------------+-----------------------------------------------------+
++---------------------------+------------------+---------------+------------------------------------------------------+
+| Option                    | Type             | Default       | Description                                          |
++===========================+==================+===============+======================================================+
+| ``width``                 | ``float``        | ``0`` (auto)  | Image width in pixels. When 0, determined by scale.  |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``height``                | ``float``        | ``0`` (auto)  | Image height in pixels. When 0, determined by scale. |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``min_width``             | ``float | None`` | ``200.0``     | Minimum image width in pixels.                       |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``min_height``            | ``float | None`` | ``200.0``     | Minimum image height in pixels.                      |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``max_width``             | ``float | None`` | ``None``      | Maximum image width in pixels.                       |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``max_height``            | ``float | None`` | ``None``      | Maximum image height in pixels.                      |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``structure_scale``       | ``float``        | ``0.6``       | Factor multiplied by ``OEScale_Default`` for scale.  |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``auto_scale``            | ``bool``         | ``False``     | Fill the image canvas (AutoScale) instead of scale.  |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``atom_label_font_scale`` | ``float``        | ``1.15``      | Scale factor for atom labels (0.5 to 2.0).           |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``title_font_scale``      | ``float``        | ``1.0``       | Scale factor for title font (0.5 to 2.0).            |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``image_format``          | ``str``          | ``"png"``     | Output format: ``"png"`` or ``"svg"``.               |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``device_pixel_ratio``    | ``float``        | ``2.0``       | Raster oversampling for PNG output (CSS size stays   |
+|                           |                  |               | logical).                                            |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``bond_width_scaling``    | ``bool``         | ``False``     | Enable bond width scaling based on structure scale.  |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``max_heavy_atoms``       | ``int | None``   | ``100``       | Molecules above this size show a placeholder.        |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``title``                 | ``bool``         | ``True``      | Whether to display the molecule title.               |
++---------------------------+------------------+---------------+------------------------------------------------------+
+| ``callbacks``             | ``iterable``     | ``()``        | Callbacks to apply to OE2DMolDisplay before render.  |
++---------------------------+------------------+---------------+------------------------------------------------------+
 
 Here is an example of changing the global context to make all molecules a bit bigger,
 scale bond widths, and turn off displaying titles.
@@ -255,6 +260,27 @@ the local context, the change will propogate.
 You can pass any renderable object (e.g., molecules or DataFrames) to ``cnotebook.display``
 with an optional context and it will render.
 
+.. _temporary-options:
+
+Temporary options
+^^^^^^^^^^^^^^^^^
+
+``render_options`` is a context manager that applies options to the global context
+for the duration of a block and restores the previous values on exit, including when
+the block raises.
+
+.. code-block:: python
+
+    from cnotebook.context import render_options
+
+    with render_options(width=300, image_format="svg"):
+        mol
+
+Anything rendered inside the block uses the temporary values; anything rendered after
+it is back to the previous settings. ``render_options`` lives in
+:mod:`cnotebook.core.context` and is re-exported from ``cnotebook.context``; it is not
+an attribute of the top-level ``cnotebook`` package.
+
 Environment-Specific Behavior
 -----------------------------
 
@@ -284,3 +310,29 @@ Results will depend in your specific environment, but it will look something lik
     Polars: True (1.37.1)
     Jupyter Notebook: False
     Marimo Notebook: True
+
+Warnings
+--------
+
+Every user-facing warning CNotebook raises is a ``CNotebookWarning``: an unknown
+configuration key, a width above ``max_width``, an optional export whose backend
+failed to import, an ignored ``escape=`` argument. They are emitted with
+``warnings.warn``, so the standard library controls them.
+
+.. code-block:: python
+
+    import warnings
+    from cnotebook.core.errors import CNotebookWarning
+
+    warnings.filterwarnings("ignore", category=CNotebookWarning)
+
+    # Or turn them into errors while you track one down
+    warnings.simplefilter("error", CNotebookWarning)
+
+``CNotebookWarning`` is exported from :mod:`cnotebook.core.errors`; it is not an
+attribute of the top-level ``cnotebook`` package. Errors CNotebook raises itself are
+``CNotebookError`` from the same module.
+
+The ``cnotebook`` logger never gets a stream handler at import. Call
+``cnotebook.enable_debugging()`` to attach one when you want the debug log on the
+console.

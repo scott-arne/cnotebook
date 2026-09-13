@@ -11,8 +11,18 @@ CNotebook requires:
 
 Optional dependencies for DataFrame support:
 
-- **Pandas support**: ``pandas`` and ``oepandas>=3.3.0``
-- **Polars support**: ``polars`` and ``oepolars>=0.3.0``
+- **Pandas support**: ``pandas>=2.2.2`` and ``oepandas>=3.3.0``
+- **Polars support**: ``polars>=1.44.1`` and ``oepolars>=0.4.0``
+
+The pandas floor is ``2.2.2`` rather than ``2.2.0``: pandas 2.2.0 and 2.2.1 declare
+``numpy<2`` while ``oepandas>=3.3.0`` declares ``numpy>=2.0.0``, so no environment can
+hold both halves of the extra with an older pandas.
+
+Optional dependencies for notebook widgets (the ``notebook`` extra):
+
+- ``anywidget>=0.9.0``
+- ``ipython>=8.0.0``
+- ``marimo>=0.13.0``
 
 Installing CNotebook
 --------------------
@@ -51,6 +61,12 @@ To install both DataFrame backends:
 .. code-block:: bash
 
     pip install "cnotebook[dataframes]"
+
+For the interactive widgets (C3D and MolGrid in a notebook):
+
+.. code-block:: bash
+
+    pip install "cnotebook[notebook]"
 
 CNotebook will automatically detect which backends are available and use them
 accordingly.

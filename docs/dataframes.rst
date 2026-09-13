@@ -627,6 +627,27 @@ Finally, you can highlight a substructure based on the value in another column, 
 
 Note that this creates a new column with display objects instead of molecules.
 
+``color`` gives every row the same highlight colour. To vary the colour per row, put the
+colours in a column of their own and name it with ``color_column``, which overrides
+``color``. Colours are ``#RRGGBB`` strings or ``OEColor`` objects; names such as
+``"red"`` are rejected:
+
+.. code-block:: python
+
+    # One colour per row, alongside the per-row pattern
+    df["Pattern"] = ["cc", "cnc", "ncn"]
+    df["Color"] = ["#ff0000", "#00aa00", "#0000ff"]
+
+    df.chem.highlight_using_column("SMILES", "Pattern", color_column="Color")
+
+Like the other pandas highlight helpers this returns a highlighted copy unless you pass
+``inplace=True``. The same parameter exists on the polars accessor, which always returns
+a new frame:
+
+.. code-block:: python
+
+    df = df.chem.highlight_using_column("smiles", "Pattern", color_column="Color")
+
 Molecular Alignment
 ^^^^^^^^^^^^^^^^^^^
 
@@ -1951,6 +1972,28 @@ This will output aligned structures that are colored by fingerprint similarity f
       </tbody>
     </table></div>
 
+Styling a Frame
+^^^^^^^^^^^^^^^
+
+``df.chem.style()`` returns a ``pandas.io.formats.style.Styler`` whose molecule cells are
+rendered by CNotebook and whose other cells are escaped, so the whole pandas styling API
+is available on a frame that contains molecules:
+
+.. code-block:: python
+
+    styler = df.chem.style()
+    styler.background_gradient(subset=["MW"])
+
+The Styler captures the frame and each column's render options at the moment it is
+built: changes made to the frame or its render options afterwards show up only in a
+Styler built after the change. Objects stored in cells are shared, so mutating one in
+place does show.
+
+``style()`` needs unique column labels, because ``Styler.format`` resolves its ``subset``
+by label while the CNotebook adapters address columns by position; a frame with duplicate
+labels raises ``ValueError``. Use :func:`~cnotebook.pandas_ext.render_dataframe` for such
+a frame. A duplicate index is fine.
+
 Polars Integration
 ------------------
 
@@ -2077,7 +2120,7 @@ matches, using the ``oechem.OEGetLightColors()`` scheme.
 .. code-block:: python
 
     # Highlight a single pattern using the DataFrame above
-    df.chem.highlight("smiles", "c1ccccc1")  # Highlight benzene rings
+    df = df.chem.highlight("smiles", "c1ccccc1")  # Highlight benzene rings
 
     # Display the DataFrame
     df
@@ -2167,7 +2210,8 @@ Outputs:
     </div></td></tr></tbody></table></div>
 
 .. note::
-    Highlighting persists until you remove it with ``df.chem.clear_formatting_rules()``
+    Highlighting persists until you remove it with ``df = df.chem.clear_formatting_rules()``, which
+    returns a new frame like every other polars accessor method.
 
 Finally, you can highlight a substructure based on the value in another column, rather than a fixed pattern:
 
@@ -2389,7 +2433,7 @@ Align molecule depictions:
 
     # Align the depictions based on the first molecule
     # By default this does a path fingerprint-based alignment
-    df["Aligned"].chem.align_depictions("first")
+    df = df.chem.align_depictions("Aligned", "first")
 
     # Show the structures
     df.head()
@@ -2621,7 +2665,7 @@ Color molecules by similarity:
     oechem.OESmilesToMol(gefitinib, "COc1cc2c(cc1OCCCN3CCOCC3)c(ncn2)Nc4ccc(c(c4)Cl)F")
 
     # Align all molecules to Gefitinib
-    df["Molecule"].chem.align_depictions(gefitinib)
+    df = df.chem.align_depictions("Molecule", gefitinib)
 
     # Show similarity to Gefitinib
     df = df.chem.fingerprint_similarity("Molecule", gefitinib, inplace=True)
@@ -3630,6 +3674,40 @@ This outputs:
 
     </div></td></tr></tbody></table></div>
 
+Concatenating Frames
+^^^^^^^^^^^^^^^^^^^^
+
+A molecule column's polars dtype carries a token identifying the render settings applied
+to it, so two frames whose molecule columns were given different settings have different
+dtypes and cannot be concatenated:
+
+.. code-block:: python
+
+    left = left.chem.set_render_options("mol", width=300)
+
+    pl.concat([left, right])
+
+raises:
+
+.. code-block:: text
+
+    polars.exceptions.SchemaError: type Extension(PyExtensionType(name='molecule'), Object)
+    is incompatible with expected type Extension(PyExtensionType(name='molecule',
+    metadata='4731ee...'), Object)
+
+Clear the settings on both sides before concatenating, then apply them to the result:
+
+.. code-block:: python
+
+    combined = pl.concat([
+        left.chem.reset_depictions("mol"),
+        right.chem.reset_depictions("mol"),
+    ])
+    combined = combined.chem.set_render_options("mol", width=300)
+
+Applying the render options after the concatenation keeps one token across the whole
+result. ``vstack`` is subject to the same rule. See :doc:`migration-4` (M23).
+
 MolGrid from DataFrames
 -----------------------
 
@@ -3681,6 +3759,22 @@ The exact same code works above, just swap out ``oepolars`` for ``oepandas``:
     grid.display()
 
 You should get the exact same molecule grid as with Pandas.
+
+Series accessors and the source frame
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A grid built from a Series has only the molecules, so its cards carry no data fields and
+``selection_frame()`` has nothing to return. The pandas Series accessor takes a ``frame``
+argument to supply the rest of the columns:
+
+.. code-block:: python
+
+    # The grid knows about every column of df, not just the molecules
+    grid = df["Molecule"].chem.molgrid(frame=df)
+
+This replaces the automatic DataFrame discovery of earlier releases, which guessed the
+frame a Series came from. The polars Series accessor has no ``frame`` argument; use the
+frame-level accessor, ``df.chem.molgrid("Molecule")``, which is equivalent.
 
 See the :ref:`molgrid-class` documentation for more details on MolGrid features.
 

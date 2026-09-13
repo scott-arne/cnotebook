@@ -11,6 +11,7 @@ This section provides detailed API documentation for all CNotebook modules.
    c3d
    context
    render
+   core
    pandas_ext
    polars_ext
 
@@ -32,6 +33,8 @@ Core Modules
      - Global rendering context and configuration
    * - :doc:`render`
      - Core rendering functions for molecules
+   * - :doc:`core`
+     - Backend-neutral table, column, formatter and configuration modules
 
 Visualization
 ^^^^^^^^^^^^^

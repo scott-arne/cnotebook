@@ -26,6 +26,20 @@ Usage
     oechem.OESmilesToMol(mol, "c1ccccc1")
     mol  # Automatically rendered as chemical structure
 
+Lazy and Optional Exports
+-------------------------
+
+``C3D``, ``MolGrid``, ``molgrid``, ``BEST_FIT_ORIENTATION``, ``render_dataframe``
+and ``render_polars_dataframe`` are resolved on first access (PEP 562), so
+``import cnotebook`` never imports anywidget, pandas or polars. Each name stays
+reachable as an attribute whether or not its backend is installed; a backend that
+fails to import is reported once as a ``CNotebookWarning`` and the attribute
+lookup then raises ``AttributeError``.
+
+``render_dataframe`` and ``render_polars_dataframe`` are dropped from ``__all__``
+when their backend is not installed, which keeps ``from cnotebook import *``
+working in an environment without pandas or polars.
+
 Module Attributes
 -----------------
 

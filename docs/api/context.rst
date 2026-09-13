@@ -1,7 +1,7 @@
 context
 =======
 
-.. automodule:: cnotebook.context
+.. automodule:: cnotebook.core.context
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,9 @@ CNotebookContext Class
 ----------------------
 
 The ``CNotebookContext`` class manages global rendering settings for molecule
-visualization.
+visualization. ``cnotebook.context`` re-exports every name on this page, so
+``from cnotebook.context import render_options`` and
+``from cnotebook.core.context import render_options`` are the same import.
 
 Usage
 -----
@@ -36,17 +38,26 @@ Configuration Options
 Image Dimensions
 ^^^^^^^^^^^^^^^^
 
-- ``width``: Default image width in pixels (default: 250)
-- ``height``: Default image height in pixels (default: 250)
-- ``max_width``: Maximum allowed width (default: 1200)
-- ``max_height``: Maximum allowed height (default: 800)
+- ``width``: Image width in pixels; ``0`` lets the structure scale decide (default: 0)
+- ``height``: Image height in pixels; ``0`` lets the structure scale decide (default: 0)
+- ``min_width``: Minimum image width enforced under ``auto_scale`` (default: 200.0)
+- ``min_height``: Minimum image height enforced under ``auto_scale`` (default: 200.0)
+- ``max_width``: Maximum allowed width, or ``None`` for no limit (default: None)
+- ``max_height``: Maximum allowed height, or ``None`` for no limit (default: None)
 
 Output Format
 ^^^^^^^^^^^^^
 
 - ``image_format``: Output format, either "png" or "svg" (default: "png")
+- ``device_pixel_ratio``: Raster oversampling factor for PNG output (default: 2.0)
 
 Scaling
 ^^^^^^^
 
-- ``scale``: Scaling factor for depictions (default: 1.0)
+- ``structure_scale``: Multiplier on OpenEye's default structure scale (default: 0.6)
+- ``auto_scale``: Size the structure to fill the canvas instead (default: False)
+- ``atom_label_font_scale``: Scale factor for atom labels (default: 1.15)
+- ``title_font_scale``: Scale factor for the title font (default: 1.0)
+
+The full table of options, including the ones not listed here, is in
+:doc:`../rendering`.
