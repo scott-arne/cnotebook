@@ -2332,10 +2332,16 @@ def test_attach_is_idempotent_and_guarded(monkeypatch):
     pe._attach()
 
 
-def test_attach_survives_a_failing_marimo_tail(monkeypatch):
-    """A marimo that blows up must cost the caller marimo tables, not pandas support."""
+def test_attach_survives_a_failing_marimo_tail(monkeypatch, caplog):
+    """A marimo that blows up must cost the caller marimo tables, not pandas support.
+
+    The strict filter is the point of the test: a session running with warnings as
+    errors is exactly where the tail must not raise past ``_ATTACHED = True``.
+    """
+    import logging
     import sys
     import types
+    import warnings
 
     from cnotebook import marimo_ext
 
@@ -2346,9 +2352,11 @@ def test_attach_survives_a_failing_marimo_tail(monkeypatch):
     monkeypatch.setattr(marimo_ext, "_attach", boom)
     monkeypatch.setattr(pe, "_ATTACHED", False)
 
-    with pytest.warns(CNotebookWarning, match="marimo table integration disabled: marimo exploded"):
+    with caplog.at_level(logging.WARNING, logger="cnotebook"), warnings.catch_warnings():
+        warnings.simplefilter("error", CNotebookWarning)
         pe._attach()
 
+    assert "marimo table integration disabled: marimo exploded" in caplog.text
     assert pe._ATTACHED
 
 

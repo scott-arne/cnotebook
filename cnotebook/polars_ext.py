@@ -16,7 +16,7 @@ from .context import create_local_context, pass_cnotebook_context
 from .core import columnops
 from .core import formatters as _fmt
 from .core.columnops import AlignmentReport
-from .core.errors import warn
+from .core.errors import _report, warn
 from .core.table import ColumnKind, RowWindow, polars_row_window, render_table
 from .core.versions import at_least as _at_least
 from .render import CNotebookContext
@@ -1038,7 +1038,9 @@ def _attach() -> None:
 
             marimo_ext._attach()
         except Exception as exc:  # noqa: BLE001 - reported, never fatal to polars support
-            warn(f"cnotebook marimo table integration disabled: {exc}")
+            # _report, not warn: under -W error a warning here would raise past
+            # _ATTACHED = True and leave the module flagged as never finished.
+            _report(f"cnotebook marimo table integration disabled: {exc}")
     _ATTACHED = True
 
 

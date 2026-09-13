@@ -21,7 +21,7 @@ from openeye import oechem, oedepict
 
 from cnotebook.core import formatters as _fmt
 from cnotebook.core.context import CNotebookContext, cnotebook_context
-from cnotebook.core.errors import warn
+from cnotebook.core.errors import _report
 from cnotebook.core.render import (
     make_depiction,
     oedisp_to_html,
@@ -471,7 +471,10 @@ def _attach() -> None:
             _WARNED = True
             message = f"cnotebook marimo table integration disabled: {exc}"
             if _running_under_marimo():
-                warn(message)
+                # _report, not warn: _attach() runs from an import hook and from the
+                # pandas and polars tails, so under -W error a warning here would abort
+                # an import that had otherwise succeeded.
+                _report(message)
             else:
                 log.debug(message)
         return
