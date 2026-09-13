@@ -23,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tests/js/gui_entry_names.test.js imports the GUI's own state.js, so this job
+          # needs the gitlink populated; the build job deliberately does not.
+          submodules: true
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -55,6 +59,7 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    environment: openeye-licence
     strategy:
       fail-fast: false
       matrix:

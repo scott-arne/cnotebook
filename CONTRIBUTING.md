@@ -71,6 +71,22 @@ CNotebook requires the OpenEye Toolkits. You'll need:
 
 If you don't have access to OpenEye Toolkits, please note this in your PR and maintainers can test on your behalf.
 
+### OpenEye Licence in CI
+
+The CI job that installs the OpenEye Toolkits reads the licence from an `OE_LICENSE` secret. That
+secret must be configured on the `openeye-licence` GitHub environment, not at repository scope: a
+repository secret is readable by every workflow run, including one started by a branch that any
+collaborator with write access can push, which would hand the commercial licence to unreviewed
+code.
+
+The environment itself carries the protection and only a repository administrator can configure it:
+
+- Required reviewers, so a run that needs the licence waits for a human.
+- A deployment-branch rule limited to `master` and `release/*`.
+
+Until the environment exists and holds the secret, the licence-bearing job queues for approval
+instead of running. That is the intended failure mode; the other jobs are unaffected.
+
 ## Making Changes
 
 ### Branching Strategy
