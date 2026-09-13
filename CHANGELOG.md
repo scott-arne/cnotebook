@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - D37 No logging handler is attached at import
 - D38 DataFrame output truncates like pandas and polars
 - D39 Only displayed rows are copied and depicted
-- D40 Packaging metadata corrected (extras, classifiers, package data)
+- D40 Packaging metadata corrected (extras, classifiers)
 - D41 Optional libraries are no longer imported at import time
 - D42 Ordinary cells escape ampersands
 - D43 Documentation examples use the correct `add_style` argument order
