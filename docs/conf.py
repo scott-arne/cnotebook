@@ -59,7 +59,9 @@ napoleon_use_ivar = True
 
 # Autodoc settings
 autodoc_default_options = {
-    "members": True,
+    # No "members" default: it is applied to every autodoc directive, so it would
+    # override the curated ":members:" list in docs/molgrid.rst. Each directive that
+    # wants its members documented asks for them itself.
     "member-order": "bysource",
     "special-members": "__init__",
     "undoc-members": True,
