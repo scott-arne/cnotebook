@@ -274,15 +274,20 @@ def selection_grid(molecules):
 @app.cell
 def display_selection_grid(selection_grid):
     """Display selection grid."""
-    selection_grid.display()
-    return
+    # Bind the element display() returns to a global: marimo only reruns dependents
+    # for a named UI element, so discarding it would leave the cell below frozen
+    selection_grid_ui = selection_grid.display()
+    selection_grid_ui
+    return (selection_grid_ui,)
 
 
 @app.cell
-def get_selection(selection_grid):
+def get_selection(selection_grid, selection_grid_ui):
     """Display selected molecules."""
+    # Reading the element's value is what subscribes this cell to card clicks; the
+    # widget's observer has already written the same indices onto the grid
+    indices = selection_grid_ui.value["selection"]
     selected_mols = selection_grid.get_selection()
-    indices = selection_grid.get_selection_indices()
 
     if selected_mols:
         _names = [_mol.GetTitle() for _mol in selected_mols]
@@ -489,8 +494,9 @@ def complete_grid(df):
 @app.cell
 def display_complete_grid(complete_grid):
     """Display comprehensive grid."""
-    complete_grid.display()
-    return
+    complete_grid_ui = complete_grid.display()
+    complete_grid_ui
+    return (complete_grid_ui,)
 
 
 @app.cell
@@ -509,9 +515,11 @@ def selection_frame_header():
 
 
 @app.cell
-def selected_rows(complete_grid):
+def selected_rows(complete_grid, complete_grid_ui):
     """Show the selected rows of the source DataFrame."""
-    if complete_grid.get_selection_indices():
+    # The element's value carries the selection trait, so this cell reruns on every
+    # card click; selection_frame() then reads the indices the observer stored
+    if complete_grid_ui.value["selection"]:
         mo.output.append(complete_grid.selection_frame())
     else:
         mo.output.append(
@@ -536,11 +544,11 @@ def api_reference():
         | `mol_col` | str | None | Column name containing molecules |
         | `title` | bool/str | True | True uses mol title, string for field name, None/False hides |
         | `tooltip_fields` | List[str] | None | Fields for hover tooltip |
-        | `n_items_per_page` | int | 24 | Molecules per page |
-        | `width` | int | 200 | Image width in pixels |
-        | `height` | int | 200 | Image height in pixels |
-        | `atom_label_font_scale` | float | 1.5 | Scale factor for atom labels |
-        | `image_format` | str | "svg" | Image format ("svg" or "png") |
+        | `n_items_per_page` | int | 24 | Molecules per page; the configured `molgrid.n_items_per_page` |
+        | `width` | int | 260 | Image width in pixels; the configured `molgrid.width` |
+        | `height` | int | 240 | Image height in pixels; the configured `molgrid.height` |
+        | `atom_label_font_scale` | float | 1.15 | Scale factor for atom labels |
+        | `image_format` | str | "svg" | Image format ("svg" or "png"); the configured `molgrid.image_format` |
         | `select` | bool | True | Enable selection checkboxes |
         | `information` | bool | True | Enable info button |
         | `data` | str/List[str] | None | Columns for info tooltip |
@@ -548,7 +556,7 @@ def api_reference():
         | `name` | str | None | Grid identifier |
         | `badges` | Sequence[str] | None | Fields shown as chips on each card |
         | `sort_by` | str/tuple | None | Initial sort field, or `(field, descending)` |
-        | `theme` | str | "auto" | Colour scheme: "auto", "light" or "dark" |
+        | `theme` | str | "auto" | Colour scheme: "auto", "light" or "dark"; the configured `molgrid.theme` |
         | `cluster` | str/Sequence/Mapping | None | Cluster labels for grouping cards |
         | `static_max_items` | int | 2000 | `to_html()` warns above this many molecules |
 
