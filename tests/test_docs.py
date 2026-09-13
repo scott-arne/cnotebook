@@ -38,7 +38,13 @@ def test_rendering_docs_defaults_match_code():
     assert "device_pixel_ratio" in text and "``2.0``" in text
 
 
-_DISPLAY_BLOCK_SOURCES = ("README.md", "docs/c3d.rst", "docs/molgrid.rst")
+_DISPLAY_BLOCK_SOURCES = (
+    "README.md",
+    "docs/c3d.rst",
+    "docs/molgrid.rst",
+    "docs/dataframes.rst",
+    "docs/rendering.rst",
+)
 
 
 def _markdown_python_blocks(text):
