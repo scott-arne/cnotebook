@@ -408,7 +408,10 @@ Finally, you can highlight a substructure based on the value in another column, 
     df["Pattern"] = ["cc", "cnc", "ncn"]
 
     # Highlight using that pattern with a slightly different style
-    df.chem.highlight_using_column("SMILES", "Pattern")
+    df = df.chem.highlight_using_column("SMILES", "Pattern")
+
+    # Display the DataFrame
+    df
 
 .. raw:: html
 
@@ -638,11 +641,12 @@ colours in a column of their own and name it with ``color_column``, which overri
     df["Pattern"] = ["cc", "cnc", "ncn"]
     df["Color"] = ["#ff0000", "#00aa00", "#0000ff"]
 
-    df.chem.highlight_using_column("SMILES", "Pattern", color_column="Color")
+    df = df.chem.highlight_using_column("SMILES", "Pattern", color_column="Color")
 
-Like the other pandas highlight helpers this returns a highlighted copy unless you pass
-``inplace=True``. The same parameter exists on the polars accessor, which always returns
-a new frame:
+Unlike the in-place pandas helpers, ``highlight_using_column`` defaults to
+``inplace=False``: it copies the frame, adds the display column to the copy and returns
+it, leaving the original untouched. Assign the result, as above, or pass ``inplace=True``.
+The same parameter exists on the polars accessor, which always returns a new frame:
 
 .. code-block:: python
 

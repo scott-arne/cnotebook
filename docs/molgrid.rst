@@ -431,13 +431,18 @@ Selections as DataFrames
 When the grid was built from a DataFrame, ``selection_frame()`` returns the selected rows
 as a frame of the same kind, in index order, with every column the source frame had.
 
+``display()`` returns the displayable object rather than publishing it, so it has to end
+its cell; read the selection from a later one, after ticking cards in the rendered grid.
+
 .. code-block:: python
 
+    # Cell 1
     grid = df.chem.molgrid("Molecule")
     grid.display()
 
-    # ... tick some cards in the grid ...
+.. code-block:: python
 
+    # Cell 2: run after ticking some cards in the grid above
     selected = grid.selection_frame()
     print(selected.shape)
 
@@ -478,8 +483,14 @@ needs a running kernel. For output that survives without one, ask for the static
 .. code-block:: python
 
     grid.display(static=True)     # self-contained HTML in the notebook output
+
+.. code-block:: python
+
     html = grid.to_html()         # the same document as a string
     grid.save("grid.html")        # written to a file
+
+These are three ways to reach the same document, not a sequence: ``display(static=True)``
+has to end its cell like any other ``display()`` call.
 
 A static document embeds every image, the front-end module and the stylesheet, so it
 works from a file, an attachment or a static web server and makes no network requests.

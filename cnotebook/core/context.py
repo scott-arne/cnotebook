@@ -208,8 +208,10 @@ class CNotebookContext:
             canvas (OpenEye AutoScale) instead of using ``structure_scale``.
             Enables the min/max width/height enforcement in
             :meth:`create_molecule_display`. Defaults to ``False``.
-        :param atom_label_font_scale: Scale factor for atom labels (0.5 to 2.0).
-        :param title_font_scale: Scale factor for title font (0.5 to 2.0).
+        :param atom_label_font_scale: Scale factor for atom labels. Must be greater
+            than 0; 0.5 to 2.0 is a recommended range, not a limit.
+        :param title_font_scale: Scale factor for title font. Must be greater than 0;
+            0.5 to 2.0 is a recommended range, not a limit.
         :param image_format: Output image format ("png" or "svg").
         :param bond_width_scaling: Whether to scale bond widths with structure scale.
         :param callbacks: List of callables to invoke on OE2DMolDisplay before rendering.

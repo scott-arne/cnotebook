@@ -300,18 +300,35 @@ Interactive use
 ---------------
 
 ``display()`` shows a live widget by default. Atom picks, the camera view and terminal
-commands are all available from Python:
+commands are all available from Python.
+
+``display()`` returns a displayable object; it does not publish one. The notebook renders
+it because it is the value of the cell, so it has to be the cell's last expression: a
+statement after it discards the widget, nothing appears, and the interaction that follows
+has no front end to reach. Build and display in one cell:
 
 .. code-block:: python
 
+    # Cell 1: build the viewer, register callbacks, display it last
     viewer = C3D().add_design_unit(du, name="complex").set_preset("sites")
     viewer.on_pick(lambda pick: print(pick.atom["resn"], pick.atom["resi"]))
     viewer.display()
 
-    viewer.execute("zoom resn 502")          # any GUI terminal command
-    viewer.save_view("site")                 # after interacting
+Then drive it from later cells, once the viewer above has rendered:
+
+.. code-block:: python
+
+    # Cell 2
+    await viewer.execute("zoom resn 502")    # any GUI terminal command
+
+.. code-block:: python
+
+    # Cell 3: run once the camera shows what you want to keep
+    viewer.save_view("site")
     png = await viewer.screenshot()          # PNG bytes
-    viewer.save("complex.html")              # standalone HTML, no kernel needed
+
+``viewer.save("complex.html")`` writes the standalone document at any point; it needs no
+kernel to open.
 
 Once a viewer is on screen as a widget the builder methods refuse to run and raise
 ``CNotebookError``: the widget was initialized from the scene as it stood, and a later
@@ -336,15 +353,32 @@ The camera
 not reported one yet. ``set_view(view)`` points the camera at such an array, and
 ``save_view(name)`` and ``restore_view(name)`` store and recall them by name.
 
+``save_view`` is the one place where the asynchrony is visible. It copies ``viewer.view``
+synchronously, and ``viewer.view`` holds whatever the browser last sent: the front end
+publishes a camera a short debounce after the camera stops moving, not when the command
+that moved it returns. Awaiting ``execute()`` therefore says the command ran, not that its
+camera has arrived, and a ``save_view`` on the next line can store the previous camera.
+Save the view from a later cell, once the frame shows what you mean to keep:
+
 .. code-block:: python
 
-    viewer.save_view("overview")     # remember where you are
-    viewer.execute("zoom resn 502")
-    viewer.save_view("site")
-    viewer.restore_view("overview")  # and go back
+    # Cell 1: remember where you are, then move
+    viewer.save_view("overview")
+    await viewer.execute("zoom resn 502")
 
-``save_view`` raises ``CNotebookError`` when the viewer has not reported a view yet;
-interact with it, or call ``set_view()`` first.
+.. code-block:: python
+
+    # Cell 2: the frame now shows the site, so this stores the site
+    viewer.save_view("site")
+
+.. code-block:: python
+
+    # Cell 3: and go back
+    viewer.restore_view("overview")
+
+``save_view`` raises ``CNotebookError`` when the viewer has not reported a view at all
+yet, which is the state a freshly displayed viewer is in until it is moved: interact with
+it, or call ``set_view()`` first, to give it one.
 
 Terminal commands
 ^^^^^^^^^^^^^^^^^
@@ -356,6 +390,13 @@ result.
 .. code-block:: python
 
     result = await viewer.execute("zoom resn 502")
+
+``result`` is a ``CommandResult`` with ``ok`` (whether the front end accepted the command)
+and ``output`` (the terminal lines it produced). Awaiting the handle guarantees that much
+and no more: any camera the command moved is reported separately, so do not read
+``viewer.view`` or call ``save_view()`` on the following line and expect the new camera.
+A command submitted before the widget is on screen is queued and runs when it connects; a
+command submitted after ``close()`` comes back already failed rather than queued.
 
 Measurements, labels and animation
 ----------------------------------
@@ -431,8 +472,14 @@ kernel at all:
 .. code-block:: python
 
     viewer.display(static=True)   # self-contained HTML in the notebook output
+
+.. code-block:: python
+
     html = viewer.to_html()       # the same document as a string
     viewer.save("viewer.html")    # written to a file
+
+These are three ways to reach the same document, not a sequence: ``display(static=True)``
+has to end its cell like any other ``display()`` call.
 
 To make the static form the default for every viewer, set the display mode once:
 

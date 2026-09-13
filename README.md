@@ -209,18 +209,29 @@ viewer.display()
 
 ### Interactive use
 
-`display()` shows a live widget by default. Atom picks, the camera view and terminal commands are available from Python:
+`display()` shows a live widget by default. It *returns* a displayable object rather than publishing one, so it has to be the last expression of its cell; a statement after it discards the widget and nothing is rendered. Build and display in one cell, and interact from later ones:
 
 ```python
+# Cell 1: build the viewer, register callbacks, display it last
 viewer = C3D().add_design_unit(du, name="complex").set_preset("sites")
 viewer.on_pick(lambda pick: print(pick.atom["resn"], pick.atom["resi"]))
 viewer.display()
-
-viewer.execute("zoom resn 502")          # any GUI terminal command
-viewer.save_view("site")                 # after interacting
-png = await viewer.screenshot()          # PNG bytes
-viewer.save("complex.html")              # standalone HTML, no kernel needed
 ```
+
+```python
+# Cell 2: run once the viewer above is on screen
+await viewer.execute("zoom resn 502")    # any GUI terminal command
+```
+
+```python
+# Cell 3: run once the camera shows what you want to keep
+viewer.save_view("site")
+png = await viewer.screenshot()          # PNG bytes
+```
+
+`viewer.save("complex.html")` writes a standalone document at any point, with no kernel needed to open it.
+
+Awaiting `execute()` tells you the command finished and gives you its terminal output; the camera is reported back separately and asynchronously, a moment after it stops moving. So `save_view()` captures the last camera the front end reported, not necessarily the one the command just produced: call it once the view you want is visible, not on the line after a command. On a viewer that has never reported a camera, `viewer.view` is `None` and `save_view()` raises `CNotebookError`.
 
 Use `display(static=True)`, `to_html()` or `save()` for self-contained output, or set `[display] mode = "static"` in the configuration file.
 
@@ -315,9 +326,10 @@ indices = grid.get_selection_indices()
 
 ### Interactive grids
 
-`display()` shows a live widget by default. Cards, sorting and the colour scheme are configured when the grid is built, and a selection made in the browser comes back as a DataFrame:
+`display()` shows a live widget by default, and like C3D it returns the displayable object instead of publishing it, so it has to end its cell. Cards, sorting and the colour scheme are configured when the grid is built; a selection made in the browser is read back from a later cell:
 
 ```python
+# Cell 1: build the grid and display it last
 grid = df.chem.molgrid(
     "Molecule",
     badges=["MW", "HBD"],          # per-card chips
@@ -325,12 +337,14 @@ grid = df.chem.molgrid(
     theme="dark",                  # "auto", "light" or "dark"
 )
 grid.display()
-
-selected = grid.selection_frame()  # the selected rows of the source frame
-grid.save("grid.html")             # standalone HTML, no kernel needed
 ```
 
-Use `display(static=True)`, `to_html()` or `save()` for self-contained output, or set `[display] mode = "static"` in the configuration file.
+```python
+# Cell 2: run after ticking cards in the grid above
+selected = grid.selection_frame()  # the selected rows of the source frame
+```
+
+`grid.save("grid.html")` writes a standalone document at any point. Use `display(static=True)`, `to_html()` or `save()` for self-contained output, or set `[display] mode = "static"` in the configuration file.
 
 ## DataFrame Integration
 
