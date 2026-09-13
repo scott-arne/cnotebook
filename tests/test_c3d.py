@@ -2185,6 +2185,7 @@ def test_a_closed_viewer_refuses_what_needs_the_front_end(viewer, tmp_path, monk
         lambda: viewer.display(),
         lambda: viewer.display(static=False),
         lambda: viewer.execute("zoom resn LIG"),
+        lambda: viewer.on_pick(lambda event: None),
         lambda: viewer.set_view(_VIEW_B),
         lambda: viewer.restore_view("start"),
     ]

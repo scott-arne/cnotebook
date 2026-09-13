@@ -1255,10 +1255,11 @@ class C3D:
         rendered statically, does nothing.
 
         Closing is final. Anything that needs the live widget - :attr:`widget`,
-        :meth:`display` in widget mode, :meth:`execute`, :meth:`set_view`,
-        :meth:`restore_view`, :meth:`screenshot` and :meth:`save_png` - raises
-        afterwards, because reusing the cached widget would send to a dead comm and
-        wait for an answer that cannot come. What needs no front end goes on working:
+        :meth:`display` in widget mode, :meth:`execute`, :meth:`on_pick`,
+        :meth:`set_view`, :meth:`restore_view`, :meth:`screenshot` and
+        :meth:`save_png` - raises afterwards, because reusing the cached widget would
+        send to a dead comm and wait for an answer that cannot come. What needs no
+        front end goes on working:
         :meth:`to_html`, :meth:`save`, ``display(static=True)``, and the last
         :attr:`view`, :attr:`views` and :attr:`picked` the viewer reported.
         """
@@ -1287,6 +1288,7 @@ class C3D:
         :param callback: Callback taking the event; an exception from it is logged,
             not raised.
         :raises ImportError: If anywidget is not installed.
+        :raises CNotebookError: If the viewer has been closed.
         """
         self.widget.on_pick(callback)
 
