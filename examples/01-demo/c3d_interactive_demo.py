@@ -89,7 +89,8 @@ def _(C3D, design_unit_path, du, mo, set_pick):
         .zoom_to("resn 502")
     )
 
-    # Register the callback before displaying, while the viewer is still being built
+    # Register the callback before displaying; this creates the widget and freezes the
+    # builder, so every builder call has to come before it
     viewer.on_pick(lambda pick: set_pick(pick))
 
     viewer.display()
@@ -148,11 +149,11 @@ async def _(mo, viewer, zoom_button):
 
     _result = await viewer.execute("zoom resn 502")
 
-    mo.md(f"""
-    Command accepted: **{_result.ok}**
+    # output is the terminal's lines, so join them; an indented fence inside a
+    # triple-quoted mo.md would be dedented into the surrounding markdown
+    _lines = "\n".join(_result.output) or "(no output)"
 
-    Terminal output: ```{_result.output}```
-    """)
+    mo.md(f"Command accepted: **{_result.ok}**\n\n```\n{_lines}\n```")
     return
 
 
