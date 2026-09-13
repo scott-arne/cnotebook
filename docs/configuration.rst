@@ -12,14 +12,18 @@ equivalents.
 Where the file is read from
 ---------------------------
 
-The first of these that applies wins:
+There are two candidates, and the environment decides between them:
 
-1. ``$CNOTEBOOK_CONFIG``, if it is set. The path is used as given (``~`` expanded);
-   a missing file there is reported as a ``CNotebookWarning`` rather than silently
-   falling through to the next candidate.
-2. ``$XDG_CONFIG_HOME/cnotebook/config.toml``, if ``XDG_CONFIG_HOME`` is set and the
-   file exists.
-3. ``~/.config/cnotebook/config.toml``, if it exists.
+1. ``$CNOTEBOOK_CONFIG``, if it is set. The path is used as given (``~`` expanded) and
+   nothing else is consulted; a missing file there is reported as a ``CNotebookWarning``
+   rather than silently falling back to the second candidate.
+2. Otherwise one path under the configuration root, which is ``$XDG_CONFIG_HOME`` when
+   that variable is set and ``~/.config`` when it is not: ``<root>/cnotebook/config.toml``,
+   used if it exists.
+
+The second candidate is a single path, not a search. With ``XDG_CONFIG_HOME`` set to a
+directory that has no ``cnotebook/config.toml``, no file is read at all, and a
+``~/.config/cnotebook/config.toml`` that does exist is never looked at.
 
 ``CNOTEBOOK_DISPLAY_MODE`` is applied after the file and overrides ``[display] mode``.
 A value that is neither ``widget`` nor ``static`` produces a ``CNotebookWarning`` and

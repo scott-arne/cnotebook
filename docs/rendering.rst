@@ -193,9 +193,13 @@ This context object has the following attributes that can be set:
 +---------------------------+------------------+---------------+------------------------------------------------------+
 | ``auto_scale``            | ``bool``         | ``False``     | Fill the image canvas (AutoScale) instead of scale.  |
 +---------------------------+------------------+---------------+------------------------------------------------------+
-| ``atom_label_font_scale`` | ``float``        | ``1.15``      | Scale factor for atom labels (0.5 to 2.0).           |
+| ``atom_label_font_scale`` | ``float``        | ``1.15``      | Scale factor for atom labels; must be greater        |
+|                           |                  |               | than 0. 0.5 to 2.0 is a recommended range, not       |
+|                           |                  |               | a limit.                                             |
 +---------------------------+------------------+---------------+------------------------------------------------------+
-| ``title_font_scale``      | ``float``        | ``1.0``       | Scale factor for title font (0.5 to 2.0).            |
+| ``title_font_scale``      | ``float``        | ``1.0``       | Scale factor for the title; must be greater than     |
+|                           |                  |               | 0. 0.5 to 2.0 is a recommended range, not a          |
+|                           |                  |               | limit.                                               |
 +---------------------------+------------------+---------------+------------------------------------------------------+
 | ``image_format``          | ``str``          | ``"png"``     | Output format: ``"png"`` or ``"svg"``.               |
 +---------------------------+------------------+---------------+------------------------------------------------------+

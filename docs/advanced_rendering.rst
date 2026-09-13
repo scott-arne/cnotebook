@@ -4,9 +4,10 @@ Advanced Rendering
 Configuration file
 ------------------
 
-CNotebook reads ``$CNOTEBOOK_CONFIG``, then ``$XDG_CONFIG_HOME/cnotebook/config.toml``,
-then ``~/.config/cnotebook/config.toml`` at import, and uses the first of those that
-applies:
+At import CNotebook reads ``$CNOTEBOOK_CONFIG`` if it is set, and otherwise the single
+path ``<root>/cnotebook/config.toml``, where ``<root>`` is ``$XDG_CONFIG_HOME`` when that
+variable is set and ``~/.config`` when it is not. Setting ``XDG_CONFIG_HOME`` therefore
+takes ``~/.config`` out of play entirely:
 
 .. code-block:: toml
 
