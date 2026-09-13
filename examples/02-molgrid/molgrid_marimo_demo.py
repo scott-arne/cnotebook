@@ -61,6 +61,8 @@ def toc():
 
         - [Basic Usage](#basic-usage)
         - [Customizing the Display](#customizing-the-display)
+          - [Image Size and Format](#image-size-and-format)
+          - [Badges, Sorting and Themes](#badges-sorting-and-themes)
         - [Search and Filtering](#search-and-filtering)
         - [Selection](#selection)
         - [Info Button and Tooltips](#info-button-and-tooltips)
@@ -168,6 +170,44 @@ def display_custom_grid(custom_grid):
 
 
 @app.cell
+def badges_header():
+    """Badges, sorting and themes header."""
+    mo.md(
+        """
+        ### Badges, Sorting and Themes
+
+        Badges put field values on the cards themselves, `sort_by` sets the order the
+        cards start in, and `theme` picks the colour scheme ("auto" follows the notebook).
+
+        Use `sort_by="MW"` to sort ascending, or `sort_by=("MW", True)` to sort
+        descending. Fields whose values look numeric sort numerically.
+        """
+    )
+    return
+
+
+@app.cell
+def badge_grid(molecules):
+    """Create a grid with badges, an initial sort and an explicit theme."""
+    badge_grid = MolGrid(
+        molecules,
+        data=["MW", "Formula"],
+        badges=["MW"],
+        sort_by=("MW", True),
+        theme="auto",
+        n_items_per_page=6,
+    )
+    return (badge_grid,)
+
+
+@app.cell
+def display_badge_grid(badge_grid):
+    """Display the badge grid."""
+    badge_grid.display()
+    return
+
+
+@app.cell
 def search_header():
     """Search and filtering header."""
     mo.md(
@@ -246,19 +286,23 @@ def get_selection(selection_grid):
 
     if selected_mols:
         _names = [_mol.GetTitle() for _mol in selected_mols]
-        mo.md(
-            f"""
-            ### Selected Molecules
+        mo.output.append(
+            mo.md(
+                f"""
+                ### Selected Molecules
 
-            **Count:** {len(selected_mols)}
+                **Count:** {len(selected_mols)}
 
-            **Names:** {', '.join(_names)}
+                **Names:** {', '.join(_names)}
 
-            **Indices:** {indices}
-            """
+                **Indices:** {indices}
+                """
+            )
         )
     else:
-        mo.md("*No molecules selected. Click on molecules in the grid above to select them.*")
+        mo.output.append(
+            mo.md("*No molecules selected. Click on molecules in the grid above to select them.*")
+        )
     return
 
 
@@ -429,6 +473,8 @@ def complete_grid(df):
         title="Name",
         tooltip_fields=["SMILES"],
         data=["Category", "MW"],
+        badges=["Category"],
+        sort_by=("MW", True),
         n_items_per_page=6,
         width=180,
         height=180,
@@ -444,6 +490,33 @@ def complete_grid(df):
 def display_complete_grid(complete_grid):
     """Display comprehensive grid."""
     complete_grid.display()
+    return
+
+
+@app.cell
+def selection_frame_header():
+    """Selection frame header."""
+    mo.md(
+        """
+        ### Selected Rows
+
+        A grid built from a DataFrame can hand back the selected rows as a frame of the
+        same kind with `selection_frame()`. On a grid built from a plain list of
+        molecules it raises `CNotebookError`; use `get_selection()` there instead.
+        """
+    )
+    return
+
+
+@app.cell
+def selected_rows(complete_grid):
+    """Show the selected rows of the source DataFrame."""
+    if complete_grid.get_selection_indices():
+        mo.output.append(complete_grid.selection_frame())
+    else:
+        mo.output.append(
+            mo.md("*No molecules selected. Select molecules in the grid above to see their rows.*")
+        )
     return
 
 
@@ -473,15 +546,22 @@ def api_reference():
         | `data` | str/List[str] | None | Columns for info tooltip |
         | `search_fields` | List[str] | None | Fields for text search |
         | `name` | str | None | Grid identifier |
+        | `badges` | Sequence[str] | None | Fields shown as chips on each card |
+        | `sort_by` | str/tuple | None | Initial sort field, or `(field, descending)` |
+        | `theme` | str | "auto" | Colour scheme: "auto", "light" or "dark" |
+        | `cluster` | str/Sequence/Mapping | None | Cluster labels for grouping cards |
+        | `static_max_items` | int | 2000 | `to_html()` warns above this many molecules |
 
         ### MolGrid Methods
 
         | Method | Returns | Description |
         |--------|---------|-------------|
-        | `display()` | HTML | Display the grid in the notebook |
-        | `to_html()` | str | Generate HTML representation |
+        | `display(static=None)` | widget/HTML | Show the grid; the live widget by default, the self-contained document with `static=True` |
+        | `to_html()` | str | Self-contained HTML document with every image embedded |
+        | `save(path)` | Path | Write the self-contained document to a file |
         | `get_selection()` | List[OEMol] | Get selected molecule objects |
         | `get_selection_indices()` | List[int] | Get indices of selected molecules |
+        | `selection_frame()` | DataFrame | Selected rows of the source DataFrame |
         """
     )
     return

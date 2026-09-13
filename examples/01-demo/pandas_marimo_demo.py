@@ -9,6 +9,7 @@ def _():
     import marimo as mo
     import cnotebook
     from cnotebook import molgrid
+    from cnotebook.context import render_options
     import pandas as pd
     import oepandas as oepd
     from pathlib import Path
@@ -24,6 +25,7 @@ def _():
         oedepict,
         oepd,
         pd,
+        render_options,
     )
 
 
@@ -38,6 +40,7 @@ def _(mo):
       - [Advanced: Changing the Rendering Options](#advanced-changing-the-rendering-options)
     - [Pandas Usage](#pandas-usage)
       - [Substructure Highlighting](#substructure-highlighting)
+    - [Styling DataFrames](#styling-dataframes)
     - [Empty Molecules](#empty-molecules)
     - [Design Unit DataFrames](#design-unit-dataframes)
     - [Aligned Molecule Depictions](#aligned-molecule-depictions)
@@ -272,6 +275,22 @@ def _(ctx):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    Editing the global context affects everything that comes after it. To change the options for one block only, use the ```render_options``` context manager, which puts the previous values back when the block ends - even if the block raises.
+    """)
+    return
+
+
+@app.cell
+def _(example_mols, mo, render_options):
+    # Render one molecule as SVG without disturbing the global context
+    with render_options(image_format="svg", width=150, height=150):
+        mo.output.append(example_mols[0])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     # Pandas Usage
 
     Similar to the simple examples above, the idea was to develop something that "just works" in a Notebook. Most of the
@@ -419,6 +438,30 @@ def _(df):
 @app.cell
 def _(mo):
     mo.md(r"""
+    # Styling DataFrames
+
+    ```df.chem.style()``` hands back a Pandas ```Styler``` that renders the molecule columns and escapes everything else, so the usual Pandas styling can be layered on top of the structures. The Styler captures the frame and its render options when ```style()``` is called, so build it after the frame is the way you want it.
+    """)
+    return
+
+
+@app.cell
+def _(oechem, pd):
+    styled_df = pd.DataFrame({
+        "Name": ["Ethanol", "Benzene", "Acetaminophen"],
+        "Molecule": ["CCO", "c1ccccc1", "CC(=O)Nc1ccc(O)cc1"]
+    })
+    styled_df.chem.as_molecule("Molecule", inplace=True)
+    styled_df["MW"] = styled_df.Molecule.apply(oechem.OECalculateMolecularWeight)
+
+    # Colour the MW column; the molecule column still renders as structures
+    styled_df.chem.style().background_gradient(subset=["MW"])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     # Empty Molecules
 
     Empty molecules render an image in blue text. By default the size is 200x200 px.
@@ -503,7 +546,7 @@ def _(EXAMPLES_DIRECTORY, oechem):
 @app.cell
 def _(mo):
     mo.md(r"""
-    Let's take a look at the ```align_depictions``` route, first. We're creating a new column called ```Aligned``` so that we can compare it to the original structure.
+    Let's take a look at the ```align_depictions``` route, first. We're creating a new column called ```Aligned``` so that we can compare it to the original structure. Aligning replaces the molecules in that column with copies, which is why we align the copy and leave ```Original``` alone.
     """)
     return
 
@@ -511,8 +554,17 @@ def _(mo):
 @app.cell
 def _(alignment_template, egfr_df):
     egfr_df["Aligned"] = egfr_df.Original.chem.copy_molecules()
-    egfr_df.Aligned.chem.align_depictions(alignment_template)
+
+    # Aligning reports what it aligned and what it skipped
+    alignment_report = egfr_df.Aligned.chem.align_depictions(alignment_template)
+
     egfr_df.head()
+    return (alignment_report,)
+
+
+@app.cell
+def _(alignment_report):
+    alignment_report
     return
 
 

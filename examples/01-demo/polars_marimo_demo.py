@@ -359,28 +359,28 @@ def _(mo):
     mo.md(r"""
     ## Substructure Highlighting
 
-    We can easily highlight substructures. With Polars, highlighting is applied at the DataFrame level to ensure metadata persists across column accesses:
+    We can easily highlight substructures. With Polars, highlighting is applied at the DataFrame level, and the accessor returns a **new** DataFrame: keep the return value, because the frame you called it on is left untouched.
     """)
     return
 
 
 @app.cell
 def _(df_with_count):
-    # Highlight aromatic N-C-N bonds
-    df_with_count.chem.highlight("Molecule", "ncn")
+    # Highlight aromatic N-C-N bonds; the highlighted frame is the return value
+    df_highlighted_ncn = df_with_count.chem.highlight("Molecule", "ncn")
 
     # Display it
-    df_with_count
-    return
+    df_highlighted_ncn
+    return (df_highlighted_ncn,)
 
 
 @app.cell
-def _(df_with_count):
+def _(df_highlighted_ncn):
     # Remove the highlighting (also removes any other display callbacks)
-    df_with_count.chem.reset_depictions()
+    df_plain = df_highlighted_ncn.chem.reset_depictions("Molecule")
 
     # Display it
-    df_with_count
+    df_plain
     return
 
 
@@ -520,19 +520,17 @@ def _(mo):
     mo.md(r"""
     Let's take a look at the ```align_depictions``` route, first. We're creating a new column called ```Aligned``` so that we can compare it to the original structure.
 
-    **Note**: With Polars, we need to use ```deepcopy``` to create a copy of the molecules, then align them:
+    **Note**: With Polars, ```copy_molecules``` makes the copy and ```align_depictions``` aligns it; both hand back a new DataFrame, so each step is an assignment:
     """)
     return
 
 
 @app.cell
 def _(alignment_template, egfr_df):
-    # Create a deep copy of the Original column for alignment
-    aligned_series = egfr_df.get_column("Original").chem.deepcopy()
-    aligned_series.chem.align_depictions(alignment_template)
+    # Copy the Original column into a new column, then align the copy
+    egfr_df_aligned = egfr_df.chem.copy_molecules("Original", "Aligned")
+    egfr_df_aligned = egfr_df_aligned.chem.align_depictions("Aligned", alignment_template)
 
-    # Add the aligned column to the DataFrame
-    egfr_df_aligned = egfr_df.with_columns(aligned_series.alias("Aligned"))
     egfr_df_aligned.head()
     return (egfr_df_aligned,)
 
@@ -540,22 +538,19 @@ def _(alignment_template, egfr_df):
 @app.cell
 def _(mo):
     mo.md(r"""
-    Now lets look at the highlight route. We first align the molecules using ```align_depictions```, then highlight the template substructure at the DataFrame level. This allows you to align and highlight using different templates if you wish.
+    Now lets look at the highlight route. Passing ```ref``` to ```highlight``` aligns the depictions and highlights the template substructure in one call, so you can align and highlight using different templates if you wish.
     """)
     return
 
 
 @app.cell
 def _(alignment_template, egfr_df_aligned):
-    # Create a deep copy for highlighting and align to the template
-    highlighted_series = egfr_df_aligned.get_column("Original").chem.deepcopy()
-    highlighted_series.chem.align_depictions(alignment_template)
+    # Copy the Original column again, for the highlighted version
+    egfr_df_full = egfr_df_aligned.chem.copy_molecules("Original", "Highlighted")
 
-    # Add the aligned column to the DataFrame
-    egfr_df_full = egfr_df_aligned.with_columns(highlighted_series.alias("Highlighted"))
+    # Align to the template and highlight it, in one call
+    egfr_df_full = egfr_df_full.chem.highlight("Highlighted", alignment_template, ref=alignment_template)
 
-    # Highlight the template substructure
-    egfr_df_full.chem.highlight("Highlighted", alignment_template)
     egfr_df_full.head()
     return
 
