@@ -215,7 +215,11 @@ class CNotebookContext:
         :param image_format: Output image format ("png" or "svg").
         :param bond_width_scaling: Whether to scale bond widths with structure scale.
         :param callbacks: List of callables to invoke on OE2DMolDisplay before rendering.
-            Each callback receives the display object and can modify it.
+            Each callback receives a per-render copy of the display, so annotations it
+            adds never reach the caller's own display object. That copy shares the
+            caller's underlying molecule, so a callback must annotate the display
+            (labels, highlights, colours) and must not mutate the molecule; mutating it
+            breaks the M05 guarantee that displaying a molecule never changes it.
         :param scope: Context scope - "local" defers unset values to global context,
             "global" uses defaults directly.
         :param title: Whether to display molecule titles.
@@ -413,6 +417,14 @@ class CNotebookContext:
 
     @property
     def callbacks(self) -> tuple[Callable[[oedepict.OE2DMolDisplay], None], ...]:
+        """Callables invoked on the OE2DMolDisplay before each render.
+
+        Each callback receives a per-render copy of the display, so annotations it adds
+        never reach the caller's own display object. That copy shares the caller's
+        underlying molecule, so a callback must annotate the display (labels, highlights,
+        colours) and must not mutate the molecule; mutating it breaks the M05 guarantee
+        that displaying a molecule never changes it.
+        """
         # noinspection PyTypeChecker
         return tuple(self._callbacks.get())
 

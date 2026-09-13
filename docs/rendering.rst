@@ -212,8 +212,15 @@ This context object has the following attributes that can be set:
 +---------------------------+------------------+---------------+------------------------------------------------------+
 | ``title``                 | ``bool``         | ``True``      | Whether to display the molecule title.               |
 +---------------------------+------------------+---------------+------------------------------------------------------+
-| ``callbacks``             | ``iterable``     | ``()``        | Callbacks to apply to OE2DMolDisplay before render.  |
+| ``callbacks``             | ``iterable``     | ``()``        | Callbacks applied to a per-render copy of the        |
+|                           |                  |               | OE2DMolDisplay; annotate, never mutate.              |
 +---------------------------+------------------+---------------+------------------------------------------------------+
+
+Each callback receives a per-render copy of the display, so annotations it adds never leak
+into the display object the caller holds. That copy shares the caller's underlying
+molecule, however: a callback must annotate the display (labels, highlights, colours) and
+must not mutate the molecule, or it breaks the guarantee in M05 that displaying a molecule
+never changes it.
 
 Here is an example of changing the global context to make all molecules a bit bigger,
 scale bond widths, and turn off displaying titles.
