@@ -258,6 +258,10 @@ class CNotebookContext:
                 "callbacks",
                 DEFERRED if scope == "local" else []
             )
+        elif isinstance(callbacks, (str, bytes)):
+            # A str is iterable, so the branch below would otherwise store one
+            # "callback" per character and fail much later, inside a render.
+            raise TypeError(f'Invalid type for display callbacks: {type(callbacks).__name__}')
         elif isinstance(callbacks, Iterable):
             self._callbacks = DeferredValue[list[Callable[[oedepict.OE2DMolDisplay], None]]](
                 "callbacks",
@@ -430,6 +434,10 @@ class CNotebookContext:
 
     @callbacks.setter
     def callbacks(self, value: Iterable[Callable[[oedepict.OE2DMolDisplay], None]]) -> None:
+        # str and bytes are iterable, so the Iterable check alone would accept "foo" and
+        # store three single-character "callbacks" that only fail inside a later render.
+        if isinstance(value, (str, bytes)):
+            raise TypeError(f"callbacks must be an iterable of callables (got {type(value).__name__})")
         if not isinstance(value, Iterable):
             raise TypeError(f"callbacks must be iterable (got {type(value).__name__})")
         self._callbacks.set(list(value))

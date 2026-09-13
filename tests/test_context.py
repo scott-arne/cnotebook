@@ -517,6 +517,20 @@ class TestCNotebookContextEdgeCases:
         with pytest.raises(TypeError, match="Invalid type for display callbacks"):
             CNotebookContext(callbacks=123)
 
+    def test_constructor_rejects_a_string_of_callbacks(self):
+        """A str is iterable, so it must be rejected at construction rather than
+        stored as one callback per character."""
+        with pytest.raises(TypeError, match="Invalid type for display callbacks"):
+            CNotebookContext(callbacks="foo")
+
+    def test_setter_rejects_a_string_of_callbacks(self):
+        """The same guard on the assignment path: the mistake has to fail here, not
+        inside a later render as "'str' object is not callable"."""
+        ctx = CNotebookContext()
+        with pytest.raises(TypeError, match="callbacks must be an iterable of callables"):
+            ctx.callbacks = "foo"
+        assert ctx.callbacks == ()
+
     def test_max_width_below_width_warns(self):
         """Test that setting max_width below current width triggers a warning."""
         ctx = CNotebookContext(width=500)
