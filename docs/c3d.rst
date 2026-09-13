@@ -395,8 +395,12 @@ result.
 and ``output`` (the terminal lines it produced). Awaiting the handle guarantees that much
 and no more: any camera the command moved is reported separately, so do not read
 ``viewer.view`` or call ``save_view()`` on the following line and expect the new camera.
-A command submitted before the widget is on screen is queued and runs when it connects; a
-command submitted after ``close()`` comes back already failed rather than queued.
+A command submitted before the widget is on screen is queued and runs when it connects;
+``execute()`` on a closed viewer raises ``CNotebookError`` rather than returning a handle.
+When the same viewer is displayed in more than one cell the views mirror each other, but a
+command result is pruned once the first view reports it, so a view still working through an
+earlier asynchronous command can miss later ones: treat the first view as the authoritative
+one.
 
 Measurements, labels and animation
 ----------------------------------
