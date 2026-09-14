@@ -228,6 +228,15 @@ def render_molecule(mol: oechem.OEMolBase, width: int = 250) -> str:
 - **Comments**: Use sparingly, prefer self-documenting code
 - **README updates**: Include if adding features or changing behavior
 
+Build the Sphinx site the way CI and Read the Docs do. The package is not installed for
+the build: `docs/conf.py` puts the checkout on `sys.path` and mocks the OpenEye toolkits,
+so a build needs only the documentation requirements. CI treats warnings as errors.
+
+```bash
+pip install -r docs/requirements.txt
+sphinx-build -W -b html docs docs/_build/html
+```
+
 ## Submitting Changes
 
 ### Before Submitting

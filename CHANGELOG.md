@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - pandas `df.chem.style()`, `color_column` for `highlight_using_column`, `alignment_report`
 - polars token-based column settings that survive frame operations (requires oepolars 0.4.0)
 - Post-import hooks, lazy exports, `CNotebookWarning`, `CNotebookError`
+- API reference pages for the live widget types (`C3DWidget`, `CommandHandle`, `CommandResult`, `PickEvent`, `MolGridWidget`), `cnotebook.core.errors`, `BEST_FIT_ORIENTATION` and `DEFERRED`
 - JavaScript test suite, headless smoke check, GitHub Actions CI
 
 ### Changed

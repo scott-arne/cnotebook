@@ -18,11 +18,7 @@ sphinx:
 # See https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html
 python:
   install:
-    # Install Sphinx and theme
+    # Sphinx, the theme and the iframe extension. The package itself is not installed:
+    # docs/conf.py puts the checkout on sys.path and mocks the OpenEye toolkits, which are
+    # not on PyPI, so a pip install of the package cannot succeed on Read the Docs.
     - requirements: docs/requirements.txt
-    # Install the package itself for autodoc
-    # Note: OpenEye toolkits require OE_LICENSE environment variable.
-    # Configure this as a secret in RTD project settings if autodoc needs
-    # to extract docstrings from OpenEye-dependent modules.
-    - method: pip
-      path: .
