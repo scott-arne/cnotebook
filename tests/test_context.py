@@ -531,6 +531,44 @@ class TestCNotebookContextEdgeCases:
             ctx.callbacks = "foo"
         assert ctx.callbacks == ()
 
+    def test_setter_rejects_non_callable_callbacks(self):
+        """An element that cannot be called has to fail here rather than inside a
+        render, where it surfaces as "'NoneType' object is not callable"."""
+        ctx = CNotebookContext()
+
+        def dummy_callback(disp):
+            pass
+
+        with pytest.raises(TypeError, match="callbacks must be an iterable of callables"):
+            ctx.callbacks = [None]
+        with pytest.raises(TypeError, match="callbacks must be an iterable of callables"):
+            ctx.callbacks = [1, dummy_callback]
+        assert ctx.callbacks == ()
+
+    def test_constructor_rejects_non_callable_callbacks(self):
+        """The constructor applies the same per-element guard as the setter."""
+
+        def dummy_callback(disp):
+            pass
+
+        with pytest.raises(TypeError, match="Invalid type for display callback"):
+            CNotebookContext(callbacks=[None])
+        with pytest.raises(TypeError, match="Invalid type for display callback"):
+            CNotebookContext(callbacks=[1, dummy_callback])
+
+    def test_setter_materialises_a_generator_of_callbacks(self):
+        """A one-shot iterable is consumed once, so every later read sees the same
+        callbacks instead of an empty sequence."""
+        ctx = CNotebookContext()
+
+        def dummy_callback(disp):
+            pass
+
+        ctx.callbacks = (callback for callback in [dummy_callback])
+
+        assert ctx.callbacks == (dummy_callback,)
+        assert ctx.callbacks == (dummy_callback,)
+
     def test_max_width_below_width_warns(self):
         """Test that setting max_width below current width triggers a warning."""
         ctx = CNotebookContext(width=500)

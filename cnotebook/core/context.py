@@ -263,9 +263,17 @@ class CNotebookContext:
             # "callback" per character and fail much later, inside a render.
             raise TypeError(f'Invalid type for display callbacks: {type(callbacks).__name__}')
         elif isinstance(callbacks, Iterable):
+            # A one-shot iterable is spent by the first pass over it, so materialise it
+            # before checking the elements; the list below is the only copy that exists.
+            _callbacks = list(callbacks)
+            for _index, _callback in enumerate(_callbacks):
+                if not callable(_callback):
+                    raise TypeError(
+                        f'Invalid type for display callback at index {_index}: {type(_callback).__name__}'
+                    )
             self._callbacks = DeferredValue[list[Callable[[oedepict.OE2DMolDisplay], None]]](
                 "callbacks",
-                list(callbacks)
+                _callbacks
             )
         elif callbacks is DEFERRED:
             self._callbacks = DeferredValue[list[Callable[[oedepict.OE2DMolDisplay], None]]](
@@ -440,7 +448,16 @@ class CNotebookContext:
             raise TypeError(f"callbacks must be an iterable of callables (got {type(value).__name__})")
         if not isinstance(value, Iterable):
             raise TypeError(f"callbacks must be iterable (got {type(value).__name__})")
-        self._callbacks.set(list(value))
+        # A one-shot iterable is spent by the first pass over it, so materialise it
+        # before checking the elements; the list below is the only copy that exists.
+        callbacks = list(value)
+        for index, callback in enumerate(callbacks):
+            if not callable(callback):
+                raise TypeError(
+                    f"callbacks must be an iterable of callables "
+                    f"(got {type(callback).__name__} at index {index})"
+                )
+        self._callbacks.set(callbacks)
 
     def reset_callbacks(self) -> None:
         self._callbacks.set([])

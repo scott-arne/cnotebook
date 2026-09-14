@@ -225,9 +225,12 @@ def configure(
         # Try setting on probe to let the context's own setters validate
         try:
             setattr(probe, key, value)
-            validated_render[key] = value
         except (ValueError, TypeError, AttributeError) as exc:
             raise ValueError(f"Cannot set render option {key!r} to {value!r}: {exc}") from exc
+        # Apply what the probe made of the value rather than the original object: a
+        # one-shot iterable of callbacks is already spent by the assignment above, so
+        # replaying it on the real context would install nothing.
+        validated_render[key] = getattr(probe, key)
 
     # All validation passed; now apply changes atomically
     cfg = get_config()

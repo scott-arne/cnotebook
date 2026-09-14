@@ -334,3 +334,32 @@ def test_render_option_validation(fresh_config, tmp_path, monkeypatch, option, v
     # Test invalid value through configure()
     with pytest.raises((ValueError, TypeError, KeyError)):
         fresh_config.configure(**{option: invalid_value})
+
+
+def test_configure_materialises_a_generator_of_callbacks(fresh_config):
+    """A one-shot iterable of callbacks reaches the global context.
+
+    Render options are validated by setting them on a probe context, which consumes a
+    generator; the real context has to receive what the probe made of it, not the
+    exhausted iterable.
+    """
+    fresh_config.get_config()
+
+    def dummy_callback(disp):
+        pass
+
+    fresh_config.configure(callbacks=(callback for callback in [dummy_callback]))
+
+    assert cnotebook_context.get().callbacks == (dummy_callback,)
+    assert tuple(fresh_config.get_config().render["callbacks"]) == (dummy_callback,)
+
+
+def test_configure_rejects_non_callable_callbacks(fresh_config):
+    """A non-callable element is refused up front, not at the first render."""
+    fresh_config.get_config()
+    original = cnotebook_context.get().callbacks
+
+    with pytest.raises(ValueError):
+        fresh_config.configure(callbacks=[None])
+
+    assert cnotebook_context.get().callbacks == original
