@@ -114,6 +114,41 @@ def test_display_is_the_last_statement_of_its_example():
             )
 
 
+_SEMVER_LITERAL = r"""["']([0-9]+\.[0-9]+\.[0-9]+[^"']*)["']"""
+
+
+def _gui_bundle_version():
+    """Return the version the 3dmol GUI bundle reports on its host API object."""
+    text = (_REPO_ROOT / "cnotebook/core/static/3dmol-gui.js").read_text()
+    direct = re.search(r"version\s*:\s*" + _SEMVER_LITERAL, text)
+    if direct is not None:
+        return direct.group(1)
+    # Minification moves the literal into a module-level binding, so the host API
+    # object only points at an identifier; resolve it before reading the string.
+    indirect = re.search(r"version\s*:\s*([A-Za-z_$][\w$]*)\s*[,}]", text)
+    assert indirect is not None, "3dmol-gui.js exposes no version on its host API"
+    name = indirect.group(1)
+    assignment = re.search(rf"\b{re.escape(name)}\s*=\s*" + _SEMVER_LITERAL, text)
+    assert assignment is not None, f"3dmol-gui.js never assigns {name!r} a version"
+    return assignment.group(1)
+
+
+def test_embedded_c3d_documents_ship_the_current_viewer():
+    """Every embedded viewer document carries the GUI bundle this package ships.
+
+    The ``c3d-*.html`` files under ``docs/_static`` are generated artifacts that inline
+    the bundle, so a bundle upgrade that is not followed by a regeneration leaves the
+    documentation demonstrating a viewer the release no longer installs.
+    """
+    version = _gui_bundle_version()
+    documents = sorted((_REPO_ROOT / "docs/_static").glob("c3d-*.html"))
+    assert documents, "no embedded C3D viewer documents found"
+    for path in documents:
+        text = path.read_text()
+        assert "window.c3d" in text, f"{path.name}: no window.c3d host API"
+        assert version in text, f"{path.name}: does not embed GUI bundle version {version}"
+
+
 def test_font_scale_range_is_documented_as_a_recommendation():
     """Nothing states the 0.5 to 2.0 font scale range as a hard limit.
 
