@@ -202,11 +202,14 @@ MolGrid provides an interactive grid for browsing molecules:
     grid = molgrid(molecules)
     grid.display()
 
-    # Later, retrieve selected molecules
-    selected = grid.get_selection()
-
 .. image:: _static/small_molgrid.png
     :align: center
+
+The selection made in the grid is read back in a later cell:
+
+.. code-block:: python
+
+    selected = grid.get_selection()
 
 For more details, see the :doc:`molgrid` documentation.
 

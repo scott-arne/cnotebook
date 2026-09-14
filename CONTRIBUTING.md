@@ -58,9 +58,10 @@ This project adheres to a Code of Conduct that all contributors are expected to 
    pip install -e .
    ```
 
-4. **Install development dependencies**:
+4. **Install development dependencies** (the same extras the CI test job installs, so the
+   DataFrame and widget tests run locally instead of skipping):
    ```bash
-   pip install -e ".[dev,test]"
+   pip install -e ".[dev,test,dataframes,notebook]"
    ```
 
 ### OpenEye Toolkits Setup
@@ -206,20 +207,16 @@ We follow [PEP 8](https://pep8.org/) with some modifications:
 
 ### Type Hints
 
-Use type hints for function signatures:
+Use type hints for function signatures, and reStructuredText field lists in docstrings:
 ```python
-def render_molecule(mol: oechem.OEMolBase, width: int = 250) -> str:
-    """
-    Render a molecule as HTML.
+def render_molecule(mol: oechem.OEMolBase, *, format: str = "png", ctx: CNotebookContext | None = None) -> bytes:
+    """Render a molecule to an image.
 
-    Args:
-        mol: OpenEye molecule object
-        width: Image width in pixels
-
-    Returns:
-        HTML string containing the rendered molecule
+    :param mol: OpenEye molecule to depict.
+    :param format: ``"png"`` or ``"svg"``.
+    :param ctx: Rendering context; the global context when ``None``.
+    :returns: The encoded image.
     """
-    pass
 ```
 
 ### Documentation
@@ -230,7 +227,8 @@ def render_molecule(mol: oechem.OEMolBase, width: int = 250) -> str:
 
 Build the Sphinx site the way CI and Read the Docs do. The package is not installed for
 the build: `docs/conf.py` puts the checkout on `sys.path` and mocks the OpenEye toolkits,
-so a build needs only the documentation requirements. CI treats warnings as errors.
+so a build needs only the documentation requirements. CI treats warnings as errors, and so
+does `invoke docs`, which runs the same build.
 
 ```bash
 pip install -r docs/requirements.txt

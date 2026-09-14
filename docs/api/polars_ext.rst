@@ -23,16 +23,17 @@ Usage
     import oepolars as oeplr
 
     # The accessor is automatically registered when cnotebook is imported
-    df = pl.DataFrame({"smiles": ["CCO", "c1ccccc1"]})
+    df = pl.DataFrame({"smiles": ["Oc1ccccc1", "COc1ccccc1"]})
 
     # Convert SMILES to molecules
     df = df.chem.as_molecule("smiles")
 
-    # Highlight substructures
-    df.get_column("smiles").chem.highlight("c1ccccc1")
+    # Highlight substructures; polars frames are immutable, so keep the result
+    df = df.chem.highlight("smiles", "c1ccccc1")
 
-    # Align depictions
-    df.get_column("smiles").chem.align_depictions("first")
+    # Align depictions to the first molecule and inspect the outcome
+    df = df.chem.align_depictions("smiles", "first")
+    report = df.chem.alignment_report("smiles")
 
 DataFrame Methods
 -----------------
@@ -58,15 +59,35 @@ DataFrame Methods
 
    :returns: New DataFrame with similarity coloring
 
+.. py:method:: DataFrame.chem.highlight(column, smarts)
+   :no-index:
+
+   Highlight a SMARTS pattern in a molecule column.
+
+   :returns: New DataFrame with the highlight applied
+
+.. py:method:: DataFrame.chem.align_depictions(column, reference)
+   :no-index:
+
+   Align the depictions of a molecule column to a reference (a molecule, SMARTS, or ``"first"``).
+
+   :returns: New DataFrame with aligned depictions
+
+.. py:method:: DataFrame.chem.alignment_report(column)
+   :no-index:
+
+   The :class:`~cnotebook.core.columnops.AlignmentReport` of the last alignment of
+   *column*, or ``None`` when none has run.
+
 Series Methods
 --------------
 
-.. py:method:: Series.chem.highlight(smarts)
-   :no-index:
-
-   Highlight a SMARTS pattern in the molecule column.
+The Series accessor offers ``align_depictions``, ``recalculate_depiction_coordinates`` and
+``molgrid``; highlighting is a DataFrame method. Every Series method returns a new Series.
 
 .. py:method:: Series.chem.align_depictions(reference)
    :no-index:
 
    Align molecule depictions to a reference.
+
+   :returns: New Series with aligned depictions

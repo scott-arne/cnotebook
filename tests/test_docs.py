@@ -44,6 +44,7 @@ _DISPLAY_BLOCK_SOURCES = (
     "docs/molgrid.rst",
     "docs/dataframes.rst",
     "docs/rendering.rst",
+    "docs/quickstart.rst",
 )
 
 

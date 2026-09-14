@@ -287,7 +287,7 @@ Outputs:
 
 .. note::
     Highlighting persists until you remove it with ``df.chem.clear_formatting_rules()`` for a DataFrame or
-    ``df["column_name"].clear_formatting_rules()``.
+    ``df["column_name"].chem.clear_formatting_rules()``.
 
 You can also use any of the normal highlighting capabilities:
 
@@ -408,7 +408,7 @@ Finally, you can highlight a substructure based on the value in another column, 
     df["Pattern"] = ["cc", "cnc", "ncn"]
 
     # Highlight using that pattern with a slightly different style
-    df = df.chem.highlight_using_column("SMILES", "Pattern")
+    df = df.chem.highlight_using_column("Molecule", "Pattern")
 
     # Display the DataFrame
     df
@@ -641,7 +641,7 @@ colours in a column of their own and name it with ``color_column``, which overri
     df["Pattern"] = ["cc", "cnc", "ncn"]
     df["Color"] = ["#ff0000", "#00aa00", "#0000ff"]
 
-    df = df.chem.highlight_using_column("SMILES", "Pattern", color_column="Color")
+    df = df.chem.highlight_using_column("Molecule", "Pattern", color_column="Color")
 
 Unlike the in-place pandas helpers, ``highlight_using_column`` defaults to
 ``inplace=False``: it copies the frame, adds the display column to the copy and returns
@@ -911,6 +911,18 @@ The ``align_depictions`` method accepts the following parameters:
 |               | - ``"fingerprint"`` / ``"fp"`` - Fingerprint-based alignment     |                   |
 |               | - ``None`` - Auto-detect based on ``ref`` type                   |                   |
 +---------------+------------------------------------------------------------------+-------------------+
+
+``align_depictions`` returns an :class:`~cnotebook.core.columnops.AlignmentReport` saying
+how many rows aligned and which did not; the Series keeps the last report as
+``alignment_report``:
+
+.. code-block:: python
+
+    report = df.Aligned.chem.align_depictions("first")
+    print(report.aligned, "of", report.total, "aligned; failed rows:", report.failed)
+
+    # The same report, later
+    report = df.Aligned.chem.alignment_report
 
 Fingerprint Similarity
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -2649,6 +2661,15 @@ The ``align_depictions`` method accepts the following parameters:
 |               | - ``None`` - Auto-detect based on ``ref`` type                   |                   |
 +---------------+------------------------------------------------------------------+-------------------+
 
+The frame keeps the outcome of the last alignment of each column as an
+:class:`~cnotebook.core.columnops.AlignmentReport`:
+
+.. code-block:: python
+
+    df = df.chem.align_depictions("Aligned", "first")
+    report = df.chem.alignment_report("Aligned")
+    print(report.aligned, "of", report.total, "aligned; failed rows:", report.failed)
+
 Fingerprint Similarity
 ^^^^^^^^^^^^^^^^^^^^^^
 
@@ -2672,7 +2693,7 @@ Color molecules by similarity:
     df = df.chem.align_depictions("Molecule", gefitinib)
 
     # Show similarity to Gefitinib
-    df = df.chem.fingerprint_similarity("Molecule", gefitinib, inplace=True)
+    df = df.chem.fingerprint_similarity("Molecule", gefitinib)
 
     # # Show just the fingerprint similarity
     df[["reference_similarity", "target_similarity"]]
@@ -3781,6 +3802,23 @@ frame a Series came from. The polars Series accessor has no ``frame`` argument; 
 frame-level accessor, ``df.chem.molgrid("Molecule")``, which is equivalent.
 
 See the :ref:`molgrid-class` documentation for more details on MolGrid features.
+
+Row Limits
+----------
+
+A rendered table follows the display limits of its library rather than drawing every
+molecule. A pandas frame longer than ``pandas.options.display.max_rows`` shows
+``display.min_rows`` rows around an ellipsis, exactly as pandas prints it, and a polars
+frame shows the ``tbl_rows`` configured through ``pl.Config``. The renderers take a
+``max_rows`` argument for one call: ``0`` (or any value at or below zero) renders every
+row, and a positive value is an explicit row budget.
+
+.. code-block:: python
+
+    from cnotebook import render_dataframe, render_polars_dataframe
+
+    html = render_dataframe(df, max_rows=0)               # every row of a pandas frame
+    html = render_polars_dataframe(polars_df, max_rows=50)  # at most 50 rows of a polars frame
 
 Best Practices
 --------------

@@ -95,7 +95,8 @@ def docs(c):
     """Build Sphinx documentation"""
     docs_dir = ROOT / "docs"
     build_dir = docs_dir / "_build"
-    c.run(f"cd {docs_dir} && {sys.executable} -m sphinx -b html . {build_dir}/html")
+    # -W matches the CI docs job, so a warning fails here before it fails there.
+    c.run(f"cd {docs_dir} && {sys.executable} -m sphinx -W -b html . {build_dir}/html")
 
 
 @task

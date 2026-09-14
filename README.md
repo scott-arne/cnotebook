@@ -50,9 +50,9 @@ View proteins, ligands, and design units in an interactive 3Dmol.js-powered view
 - [MolGrid Interactive Visualization](#molgrid-interactive-visualization)
 - [DataFrame Integration](#dataframe-integration)
 - [Example Notebooks](#example-notebooks)
-- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
+- [Support](#support)
 
 ## Installation
 
@@ -68,8 +68,9 @@ pip install cnotebook
 - Pandas support: `pip install "cnotebook[pandas]"` or `pip install pandas "oepandas>=3.3.0"`
 - Polars support: `pip install "cnotebook[polars]"` or `pip install polars "oepolars>=0.4.0"`
 - Both backends: `pip install "cnotebook[dataframes]"`
+- Live widgets in Jupyter and Marimo: `pip install "cnotebook[notebook]"`
 
-Both backends can be installed together, neither are required unless you want to work with DataFrames.
+Neither DataFrame backend is required unless you work with DataFrames. Without the `notebook` extra, `display()` falls back to static HTML and warns once.
 
 ## Getting Started
 
