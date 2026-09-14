@@ -941,7 +941,7 @@ class MolGrid:
         chemistry accessors. The ``title`` option controls titles drawn inside
         molecule images; grid card labels remain controlled by the MolGrid
         ``title`` constructor argument. Applying any option clears the rendered
-        images, increments :attr:`revision` and, when a live widget exists,
+        images, increments ``revision`` and, when a live widget exists,
         publishes the new revision to it.
 
         :param width: Image width in pixels. If 0, determined by structure scale.

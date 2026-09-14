@@ -554,7 +554,7 @@ class C3DWidget(anywidget.AnyWidget):
         The camera and its origin are assigned first and the request counter last, so a
         front end woken by the counter always reads the view that goes with it.
 
-        :param view: The 3Dmol view array to apply, as :meth:`getView` returns it. Any
+        :param view: The 3Dmol view array to apply, as 3Dmol's ``getView()`` returns it. Any
             iterable of eight numbers is accepted; a saved camera is as likely to be a
             tuple or a numpy row as a list.
         :raises ValueError: If the view is not a sequence of eight finite numbers.

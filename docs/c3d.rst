@@ -262,7 +262,7 @@ Control which GUI panels are visible:
 
 When the console is visible and ``height`` was not set explicitly, C3D uses a
 taller default cell height so the molecule viewer is not compressed by the
-console. Pass ``height=...`` to :class:`C3D` when you want to control the exact
+console. Pass ``height=...`` to :class:`~cnotebook.c3d.C3D` when you want to control the exact
 JupyterLab iframe height.
 
 .. iframe:: _static/c3d-full-ui.html

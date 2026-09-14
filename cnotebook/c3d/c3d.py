@@ -192,7 +192,7 @@ class C3D:
     ) -> C3D:
         """Add an OpenEye molecule to the viewer.
 
-        The molecule is converted to SDF format via :func:`convert_molecule`.
+        The molecule is converted to SDF format via :func:`~cnotebook.core.convert.convert_molecule`.
         If the molecule lacks 3D coordinates, conformer generation is
         attempted automatically.
 
@@ -215,7 +215,7 @@ class C3D:
         """Add an OpenEye design unit to the viewer.
 
         The design unit is converted to PDB format via
-        :func:`convert_design_unit`.
+        :func:`~cnotebook.core.convert.convert_design_unit`.
 
         :param du: OpenEye design unit (``OEDesignUnit``).
         :param name: Optional display name for the design unit.

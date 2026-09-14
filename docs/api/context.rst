@@ -61,3 +61,16 @@ Scaling
 
 The full table of options, including the ones not listed here, is in
 :doc:`../rendering`.
+
+Deferring to the Global Context
+-------------------------------
+
+Every option of a local context can hold the sentinel below instead of a value, which is
+why the constructor parameters above are typed ``float | _Deferred``. Reading a deferred
+option returns the global context's value at that moment.
+:func:`~cnotebook.core.context.create_local_context` leaves every option it is not given
+deferred, and :meth:`CNotebookContext.copy` preserves deferral.
+
+.. py:data:: DEFERRED
+
+   Sentinel meaning "take this option from the global context".

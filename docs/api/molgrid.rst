@@ -7,6 +7,25 @@ molgrid
    :show-inheritance:
    :special-members: __init__
 
+.. py:data:: BEST_FIT_ORIENTATION
+   :value: -1
+
+   Sentinel for the ``depict_orientation`` parameter of :class:`~cnotebook.grid.MolGrid`
+   and :func:`~cnotebook.grid.molgrid`: each molecule is prepared in whichever of OpenEye's
+   default and horizontal orientations renders largest in its card. Real
+   ``OEDepictOrientation`` values are positive, so the sentinel cannot collide with one.
+   Also available as ``cnotebook.BEST_FIT_ORIENTATION``.
+
+Live Widget
+-----------
+
+``MolGrid.display()`` shows a :class:`~cnotebook.grid.widget.MolGridWidget` unless static
+output is requested, and ``MolGrid.widget`` returns it.
+
+.. autoclass:: cnotebook.grid.widget.MolGridWidget
+   :members: attach_observer, close
+   :exclude-members: __init__
+
 Usage Examples
 --------------
 

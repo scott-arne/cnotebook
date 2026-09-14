@@ -75,7 +75,7 @@ def molgrid(
     :param render_title: Whether to draw titles inside molecule images.
         Card labels remain controlled by the ``title`` parameter.
     :param depict_orientation: Preferred 2D depiction orientation for grid
-        renderings. Defaults to :data:`BEST_FIT_ORIENTATION`, which prepares
+        renderings. Defaults to :data:`~cnotebook.grid.BEST_FIT_ORIENTATION`, which prepares
         each molecule in whichever orientation renders largest in the card.
     :param max_heavy_atoms: Maximum heavy atom count to render, or None to disable.
     :param select: Enable selection checkboxes.

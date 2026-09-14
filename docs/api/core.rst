@@ -39,6 +39,23 @@ Cell formatters shared by the pandas, polars and marimo adapters.
    :undoc-members:
    :show-inheritance:
 
+cnotebook.core.errors
+---------------------
+
+The warning category and the error base class shared by every cnotebook message.
+Filter the warnings with the standard ``warnings`` module:
+
+.. code-block:: python
+
+    import warnings
+    from cnotebook.core.errors import CNotebookWarning
+
+    warnings.simplefilter("ignore", CNotebookWarning)
+
+.. automodule:: cnotebook.core.errors
+   :members: CNotebookWarning, CNotebookError, warn
+   :show-inheritance:
+
 cnotebook.config
 ----------------
 

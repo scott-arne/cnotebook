@@ -380,7 +380,7 @@ The C3D viewer's JavaScript and CSS assets come from the [3dmol-js-gui](https://
 invoke update-gui
 
 # Build from a specific tag or commit
-invoke update-gui --ref v0.3.0
+invoke update-gui --ref v0.4.0
 ```
 
 This requires Node.js and npm to be installed. The task fetches the specified version, runs the Vite build, and copies the output to `cnotebook/core/static/`.
