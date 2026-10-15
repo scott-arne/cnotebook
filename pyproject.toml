@@ -133,6 +133,19 @@ version = {attr = "cnotebook.__version__"}
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = {file = ["requirements.txt"]}
 
+[tool.uv]
+# uv rebuilds a local package's metadata only when one of these changes. Its
+# default list holds pyproject.toml, setup.py and setup.cfg, so a pull that
+# changed only the version in cnotebook/__init__.py or a pin in requirements.txt
+# left uv on the old version and dependencies.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "setup.py" },
+    { file = "requirements.txt" },
+    { file = "cnotebook/__init__.py" },
+    { git = { commit = true } },
+]
+
 # ----------------------------------------------------------------------------------------
 # Pytest configuration
 # ----------------------------------------------------------------------------------------
